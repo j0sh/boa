@@ -1861,6 +1861,157 @@ func prependPersistentPipelineToDescendants(cmd *cobra.Command, pipeline func(*c
 	}
 }
 
+type commandFlagRef struct {
+	flag       *pflag.Flag
+	command    *cobra.Command
+	persistent bool
+}
+
+// resolvePersistentAutoShorthands keeps auto-derived persistent shorthands
+// only when they are unique across the declaring command and its assembled
+// descendant tree. Resolution happens before the persistent flag is bound, so
+// pflag's internal shorthand index is never populated for an omitted short.
+// Explicit shorts and non-persistent auto shorts take precedence; any conflict
+// involving explicit persistent shorts is reported later by
+// validateTreeShorthands.
+func resolvePersistentAutoShorthands(cmd *cobra.Command, params []Param) {
+	used := make(map[string]bool)
+
+	var collectCommandFlags func(*cobra.Command)
+	collectCommandFlags = func(current *cobra.Command) {
+		current.Flags().VisitAll(func(flag *pflag.Flag) {
+			if flag.Shorthand != "" {
+				used[flag.Shorthand] = true
+			}
+		})
+		current.PersistentFlags().VisitAll(func(flag *pflag.Flag) {
+			if flag.Shorthand != "" {
+				used[flag.Shorthand] = true
+			}
+		})
+		for _, child := range current.Commands() {
+			collectCommandFlags(child)
+		}
+	}
+	collectCommandFlags(cmd)
+
+	// Reserve every explicit short and every local auto-derived short first,
+	// so an automatic persistent short always yields to a concrete flag in its
+	// inheritance scope regardless of struct field order.
+	for _, param := range params {
+		pm := param.(*paramMeta)
+		if pm.short != "" && (!pm.persistent || !pm.autoShort) {
+			used[pm.short] = true
+		}
+	}
+	for _, param := range params {
+		pm := param.(*paramMeta)
+		if !pm.persistent || !pm.autoShort || pm.short == "" {
+			continue
+		}
+		if used[pm.short] {
+			pm.setAutoShort("")
+			continue
+		}
+		used[pm.short] = true
+	}
+}
+
+// validateTreeShorthands checks shorthand uniqueness after the complete Cobra
+// tree has been assembled. pflag detects these collisions only while merging
+// inherited flags during execution, where it panics. Boa reports them as a
+// construction error instead. Long-name shadowing follows Cobra semantics: a
+// local flag hides an inherited persistent flag on that command only, while a
+// persistent flag also hides it throughout its own subtree.
+func validateTreeShorthands(root *cobra.Command) error {
+	var walk func(*cobra.Command, []commandFlagRef) error
+	walk = func(cmd *cobra.Command, inherited []commandFlagRef) error {
+		ownPersistent := make(map[string]commandFlagRef)
+		cmd.PersistentFlags().VisitAll(func(flag *pflag.Flag) {
+			ownPersistent[flag.Name] = commandFlagRef{flag: flag, command: cmd, persistent: true}
+		})
+
+		inheritedPointers := make(map[*pflag.Flag]bool, len(inherited))
+		for _, ref := range inherited {
+			inheritedPointers[ref.flag] = true
+		}
+		ownLocal := make(map[string]commandFlagRef)
+		cmd.Flags().VisitAll(func(flag *pflag.Flag) {
+			// Cobra may already have merged an own or inherited persistent flag
+			// into Flags(). Those are not local declarations and must not be
+			// considered twice.
+			if persistent, ok := ownPersistent[flag.Name]; ok && persistent.flag == flag {
+				return
+			}
+			if inheritedPointers[flag] {
+				return
+			}
+			ownLocal[flag.Name] = commandFlagRef{flag: flag, command: cmd}
+		})
+
+		allOwnNames := make(map[string]bool, len(ownLocal)+len(ownPersistent))
+		for name := range ownLocal {
+			allOwnNames[name] = true
+		}
+		for name := range ownPersistent {
+			allOwnNames[name] = true
+		}
+
+		active := make([]commandFlagRef, 0, len(inherited)+len(ownLocal)+len(ownPersistent))
+		for _, ref := range inherited {
+			if !allOwnNames[ref.flag.Name] {
+				active = append(active, ref)
+			}
+		}
+		for _, ref := range ownLocal {
+			active = append(active, ref)
+		}
+		for _, ref := range ownPersistent {
+			active = append(active, ref)
+		}
+
+		byShorthand := make(map[string]commandFlagRef)
+		for _, ref := range active {
+			short := ref.flag.Shorthand
+			if short == "" {
+				continue
+			}
+			if previous, exists := byShorthand[short]; exists && previous.flag != ref.flag {
+				previousKind := "local"
+				if previous.persistent {
+					previousKind = "persistent"
+				}
+				return fmt.Errorf(
+					"shorthand -%s for flag --%s on command %q conflicts with %s flag --%s declared on command %q",
+					short, ref.flag.Name, cmd.CommandPath(), previousKind, previous.flag.Name, previous.command.CommandPath(),
+				)
+			}
+			byShorthand[short] = ref
+		}
+
+		// Local flags shadow inherited flags only on this command. Persistent
+		// declarations shadow the same long name for the whole subtree.
+		nextInherited := make([]commandFlagRef, 0, len(inherited)+len(ownPersistent))
+		for _, ref := range inherited {
+			if _, shadowed := ownPersistent[ref.flag.Name]; !shadowed {
+				nextInherited = append(nextInherited, ref)
+			}
+		}
+		for _, ref := range ownPersistent {
+			nextInherited = append(nextInherited, ref)
+		}
+
+		for _, child := range cmd.Commands() {
+			if err := walk(child, nextInherited); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+
+	return walk(root, nil)
+}
+
 // toCobraBase sets up the cobra command with all common configuration (flags, validation, lifecycle hooks)
 // but does NOT set the Run/RunE function. Returns both the command and the processing context
 // so callers can set up the appropriate run function with access to the context.
@@ -2225,6 +2376,7 @@ func (b Cmd) toCobraBase() (*cobra.Command, *processingContext, error) {
 				positional = append(positional, param)
 			}
 		}
+		resolvePersistentAutoShorthands(cmd, processed)
 
 		// Check that no required positional arg exists after on optional positional arg
 		numReqPositional := 0
@@ -2558,6 +2710,9 @@ func (b Cmd) toCobraBase() (*cobra.Command, *processingContext, error) {
 		prependPersistentPipelineToDescendants(cmd, paramPipeline)
 	} else {
 		cmd.PreRunE = paramPipeline
+	}
+	if err := validateTreeShorthands(cmd); err != nil {
+		return nil, nil, err
 	}
 
 	return cmd, ctx, nil

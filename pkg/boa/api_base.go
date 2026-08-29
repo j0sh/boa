@@ -163,7 +163,9 @@ var (
 	// ParamEnricherShort sets a short name (single character) for a parameter
 	// using the first character of the parameter name if available.
 	// Skips setting if the character would be 'h' (reserved for help) or
-	// if another parameter already uses that character.
+	// if another parameter already uses that character. Auto-derived persistent
+	// shorthands are finalized against the assembled command subtree before
+	// flag binding and omitted if they would conflict with a descendant flag.
 	ParamEnricherShort ParamEnricher = func(alreadyProcessed []Param, param Param, paramFieldName string) error {
 		if param.GetShort() == "" && param.GetName() != "" {
 			wantShort := string(param.GetName()[0])
@@ -177,7 +179,7 @@ var (
 				}
 			}
 			if shortAvailable {
-				param.SetShort(wantShort)
+				param.(*paramMeta).setAutoShort(wantShort)
 			}
 		}
 		return nil
@@ -692,7 +694,7 @@ func structTagForExt(ext string) string {
 
 // resolveDumpFieldName picks the key name for a struct field in a
 // source-aware dump. It honours the format-appropriate struct tag so
-// `Host string `json:"hostname"`` dumps as `"hostname"` (and round-trips
+// `Host string `json:"hostname"“ dumps as `"hostname"` (and round-trips
 // through LoadConfigFile). A "-" tag value means "skip this field";
 // callers should drop the field entirely when this returns ("", true).
 // An empty tagName means "no tag lookup"; fall back to the field name.
