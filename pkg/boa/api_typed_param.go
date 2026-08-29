@@ -104,6 +104,12 @@ type ParamT[T any] interface {
 	// rather than a named flag. Cannot be combined with SetNoFlag(true).
 	SetPositional(positional bool)
 
+	// SetCollection controls repeated CLI flag parsing for slice parameters.
+	// CollectionSlice keeps CSV splitting; CollectionArray appends one opaque
+	// scalar value per occurrence. Other input sources keep their existing
+	// parsing behavior.
+	SetCollection(mode CollectionMode)
+
 	// SetPersistent toggles whether this parameter is registered as a Cobra
 	// persistent flag and inherited by descendant commands. It cannot be
 	// combined with SetPositional(true).
@@ -279,6 +285,11 @@ func (w *ParamTView[T]) SetRequired(required bool) {
 // SetNoFlag toggles CLI flag suppression.
 func (w *ParamTView[T]) SetNoFlag(noFlag bool) {
 	w.param.SetNoFlag(noFlag)
+}
+
+// SetCollection controls repeated CLI flag parsing for slice parameters.
+func (w *ParamTView[T]) SetCollection(mode CollectionMode) {
+	w.param.SetCollection(mode)
 }
 
 // SetNoEnv toggles env var suppression.

@@ -20,6 +20,7 @@ type paramMeta struct {
 	env        string
 	descr      string
 	positional bool
+	collection CollectionMode
 	persistent bool
 
 	alternatives     []string
@@ -206,6 +207,15 @@ func (f *paramMeta) GetType() reflect.Type {
 func (f *paramMeta) GetKind() reflect.Kind {
 	return f.fieldType.Kind()
 }
+
+func (f *paramMeta) GetCollection() CollectionMode {
+	if f.collection == "" {
+		return CollectionSlice
+	}
+	return f.collection
+}
+
+func (f *paramMeta) SetCollection(mode CollectionMode) { f.collection = mode }
 
 // --- Default value ---
 
