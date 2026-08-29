@@ -155,6 +155,8 @@ type Param interface {
 	wasSetPositionally() bool
 	markSetPositionally()
 	setPositional(bool)
+	isPersistent() bool
+	setPersistent(bool)
 	setDescription(descr string)
 	IsEnabled() bool
 	GetAlternatives() []string
@@ -210,6 +212,11 @@ type Param interface {
 	// IsPositional / SetPositional mirror `positional:"true"`.
 	IsPositional() bool
 	SetPositional(bool)
+
+	// IsPersistent / SetPersistent mirror `persistent:"true"`. Persistent
+	// flags are inherited by descendant commands.
+	IsPersistent() bool
+	SetPersistent(bool)
 
 	// GetMin / SetMin / ClearMin / GetMax / SetMax / ClearMax / GetPattern /
 	// SetPattern mirror the validation tags. GetMin / GetMax return the bound
@@ -1185,6 +1192,9 @@ func toTypedSlice[T any](slice any) []T {
 }
 
 func connect(f Param, cmd *cobra.Command, posArgs []Param, ctx *processingContext) error {
+	if f.isPositional() && f.isPersistent() {
+		return fmt.Errorf("param %s cannot be both positional and persistent", f.GetName())
+	}
 
 	// Params marked noflag or ignored are not registered with cobra at all.
 	// They still participate in env-var reading (unless ignored), config-file
@@ -1356,13 +1366,29 @@ func connect(f Param, cmd *cobra.Command, posArgs []Param, ctx *processingContex
 		}
 	}()
 
+	// Type handlers bind through cobra.Command.Flags(). For a persistent
+	// parameter, bind on a temporary command and transfer the resulting flag
+	// to the declaring command's PersistentFlags set. The flag's Value retains
+	// the same typed pointer returned by the handler.
+	bindFlag := func(handler *typeHandler, defaultVal any) {
+		bindingCmd := cmd
+		if f.isPersistent() {
+			bindingCmd = &cobra.Command{}
+		}
+		valuePtr := handler.bindFlag(bindingCmd, f.GetName(), f.GetShort(), descr, defaultVal)
+		if f.isPersistent() {
+			cmd.PersistentFlags().AddFlag(bindingCmd.Flags().Lookup(f.GetName()))
+		}
+		f.setValuePtr(valuePtr)
+	}
+
 	// Look up type handler for scalar types (including net.IP which is []byte but treated as scalar)
 	if handler, _ := lookupHandler(f.GetType()); handler != nil {
 		var defVal any
 		if f.hasDefaultValue() {
 			defVal = f.defaultValuePtr()
 		}
-		f.setValuePtr(handler.bindFlag(cmd, f.GetName(), f.GetShort(), descr, defVal))
+		bindFlag(handler, defVal)
 		return nil
 	}
 
@@ -1376,7 +1402,7 @@ func connect(f Param, cmd *cobra.Command, posArgs []Param, ctx *processingContex
 		if f.hasDefaultValue() {
 			defVal = f.defaultValuePtr()
 		}
-		f.setValuePtr(mapHandler.bindFlag(cmd, f.GetName(), f.GetShort(), descr, defVal))
+		bindFlag(mapHandler, defVal)
 		return nil
 	}
 
@@ -1399,7 +1425,7 @@ func connect(f Param, cmd *cobra.Command, posArgs []Param, ctx *processingContex
 				}
 				defVal = f.defaultValuePtr()
 			}
-			f.setValuePtr(sliceHandler.bindFlag(cmd, f.GetName(), f.GetShort(), descr, defVal))
+			bindFlag(sliceHandler, defVal)
 			return nil
 		}
 
@@ -1409,7 +1435,7 @@ func connect(f Param, cmd *cobra.Command, posArgs []Param, ctx *processingContex
 		if f.hasDefaultValue() {
 			defVal = f.defaultValuePtr()
 		}
-		f.setValuePtr(fallback.bindFlag(cmd, f.GetName(), f.GetShort(), descr, defVal))
+		bindFlag(fallback, defVal)
 		return nil
 	}
 
@@ -1750,6 +1776,47 @@ func traverseAt(
 	return nil
 }
 
+// prependPersistentPipelineToDescendants composes a declaring command's Boa
+// parameter pipeline with persistent hooks already installed below it. Cobra
+// normally executes only the nearest persistent hook, so without this
+// composition an intermediate hook would suppress the declaring ancestor's
+// sourcing and validation. Descendants without their own persistent hook need
+// no wrapper: Cobra naturally finds the nearest composed ancestor hook.
+func prependPersistentPipelineToDescendants(cmd *cobra.Command, pipeline func(*cobra.Command, []string) error) {
+	for _, child := range cmd.Commands() {
+		if child.PersistentPreRunE != nil {
+			next := child.PersistentPreRunE
+			child.PersistentPreRunE = func(executed *cobra.Command, args []string) error {
+				// When callers explicitly enable Cobra's global traversal, Cobra
+				// invokes the ancestor pipeline itself. Skip the composed prefix
+				// in that mode so each hook still runs exactly once.
+				if !cobra.EnableTraverseRunHooks {
+					if err := pipeline(executed, args); err != nil {
+						return err
+					}
+				}
+				return next(executed, args)
+			}
+		} else if child.PersistentPreRun != nil {
+			next := child.PersistentPreRun
+			child.PersistentPreRunE = func(executed *cobra.Command, args []string) error {
+				if !cobra.EnableTraverseRunHooks {
+					if err := pipeline(executed, args); err != nil {
+						return err
+					}
+				}
+				next(executed, args)
+				return nil
+			}
+		}
+
+		// Prefix only this declaring pipeline at each level. A descendant Boa
+		// command has already composed its own pipeline into hooks below it;
+		// prefixing the accumulated chain here would run those pipelines twice.
+		prependPersistentPipelineToDescendants(child, pipeline)
+	}
+}
+
 // toCobraBase sets up the cobra command with all common configuration (flags, validation, lifecycle hooks)
 // but does NOT set the Run/RunE function. Returns both the command and the processing context
 // so callers can set up the appropriate run function with access to the context.
@@ -1862,6 +1929,7 @@ func (b Cmd) toCobraBase() (*cobra.Command, *processingContext, error) {
 	}
 
 	var positional []Param
+	hasPersistentParams := false
 
 	if b.Params != nil {
 
@@ -1870,6 +1938,16 @@ func (b Cmd) toCobraBase() (*cobra.Command, *processingContext, error) {
 		err := traverse(ctx, b.Params, func(param Param, _ string, tags reflect.StructTag) error {
 			if tags.Get("positional") == "true" || tags.Get("pos") == "true" {
 				param.setPositional(true)
+			}
+			if persistent, ok := tags.Lookup("persistent"); ok {
+				switch persistent {
+				case "true":
+					param.setPersistent(true)
+				case "false":
+					param.setPersistent(false)
+				default:
+					return fmt.Errorf("invalid persistent value for param %s: %s", param.GetName(), persistent)
+				}
 			}
 			if param.getDescr() == "" {
 				if descr, ok := tags.Lookup("help"); ok {
@@ -2076,6 +2154,9 @@ func (b Cmd) toCobraBase() (*cobra.Command, *processingContext, error) {
 		}
 
 		for _, param := range processed {
+			if param.isPersistent() {
+				hasPersistentParams = true
+			}
 			if param.isPositional() {
 				// if the last positional is a slice, error out
 				if len(positional) >= 1 {
@@ -2191,7 +2272,7 @@ func (b Cmd) toCobraBase() (*cobra.Command, *processingContext, error) {
 	}
 
 	// now wrap the run function of the command to validate the flags
-	cmd.PreRunE = func(cmd *cobra.Command, args []string) error {
+	paramPipeline := func(cmd *cobra.Command, args []string) error {
 		if b.Params != nil {
 
 			// Reset the live-reload path registries at the top of every
@@ -2414,6 +2495,12 @@ func (b Cmd) toCobraBase() (*cobra.Command, *processingContext, error) {
 
 		}
 		return nil
+	}
+	if hasPersistentParams {
+		cmd.PersistentPreRunE = paramPipeline
+		prependPersistentPipelineToDescendants(cmd, paramPipeline)
+	} else {
+		cmd.PreRunE = paramPipeline
 	}
 
 	return cmd, ctx, nil
