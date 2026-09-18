@@ -20,7 +20,7 @@ func TestNoFlag_NoCLIFlagRegistered(t *testing.T) {
 	}
 
 	// --secret should be rejected as an unknown flag.
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -34,28 +34,13 @@ func TestNoFlag_NoCLIFlagRegistered(t *testing.T) {
 	}
 
 	// And the help output should not list --secret.
-	usage := captureUsage(t, CmdT[Params]{
+	usage := captureUsage(t, Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
 	})
 	if strings.Contains(usage, "--secret") || strings.Contains(usage, "api token") {
 		t.Errorf("noflag field should not appear in --help:\n%s", usage)
-	}
-}
-
-func TestNoFlag_AliasNoCLI(t *testing.T) {
-	type Params struct {
-		Name   string `descr:"public name"`
-		Secret string `descr:"api token" boa:"nocli" optional:"true"`
-	}
-	err := (CmdT[Params]{
-		Use:         "test",
-		ParamEnrich: ParamEnricherName,
-		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
-	}).RunArgsE([]string{"--name", "alice", "--secret", "hunter2"})
-	if err == nil {
-		t.Fatal("expected unknown-flag error for --secret (boa:\"nocli\" alias)")
 	}
 }
 
@@ -68,7 +53,7 @@ func TestNoFlag_StillReadsEnv(t *testing.T) {
 	t.Setenv("BOA_NOFLAG_TEST_TOKEN", "hunter2")
 
 	var gotSecret string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -99,7 +84,7 @@ func TestNoFlag_StillReadsConfigFile(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var gotSecret string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -122,11 +107,11 @@ func TestNoFlag_CustomValidatorStillRuns(t *testing.T) {
 	}
 	t.Setenv("BOA_NOFLAG_CV_TOKEN", "short")
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.Token).SetCustomValidatorT(func(v string) error {
+			Param(ctx, &params.Token).SetCustomValidator(func(v string) error {
 				if len(v) < 10 {
 					return fmt.Errorf("token must be at least 10 chars, got %d", len(v))
 				}
@@ -153,7 +138,7 @@ func TestNoFlag_ValidationStillRuns(t *testing.T) {
 
 	t.Setenv("BOA_NOFLAG_TEST_PORT", "99999")
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -173,7 +158,7 @@ func TestNoFlag_DefaultValueApplies(t *testing.T) {
 	}
 
 	var gotTimeout int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -193,7 +178,7 @@ func TestNoFlag_RequiredAndMissingFails(t *testing.T) {
 	type Params struct {
 		Secret string `boa:"noflag"` // no optional → required
 	}
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -211,7 +196,7 @@ func TestNoFlag_WithPositionalIsError(t *testing.T) {
 	type Params struct {
 		Arg string `boa:"noflag" positional:"true"`
 	}
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -232,11 +217,11 @@ func TestSetIgnored_WithPositionalIsError(t *testing.T) {
 	type Params struct {
 		Target string `positional:"true"`
 	}
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.Target).SetIgnored(true)
+			Param(ctx, &params.Target).SetIgnored(true)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
@@ -254,11 +239,11 @@ func TestSetNoFlag_WithPositionalProgrammaticIsError(t *testing.T) {
 	type Params struct {
 		Target string `positional:"true"`
 	}
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.Target).SetNoFlag(true)
+			Param(ctx, &params.Target).SetNoFlag(true)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
@@ -279,11 +264,11 @@ func TestNoFlag_ProgrammaticViaHook(t *testing.T) {
 
 	var gotSecret string
 	var usage string
-	cmd := CmdT[Params]{
+	cmd := Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.Secret).SetNoFlag(true)
+			Param(ctx, &params.Secret).SetNoFlag(true)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -321,7 +306,7 @@ func TestNoEnv_EnvIsSkipped(t *testing.T) {
 	t.Setenv("BOA_NOENV_TEST_NAME", "from-env")
 
 	var got string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -341,7 +326,7 @@ func TestNoEnv_CLIStillWorks(t *testing.T) {
 		Name string `descr:"name" boa:"noenv" optional:"true"`
 	}
 	var got string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -369,7 +354,7 @@ func TestNoEnv_SuppressesAutoGeneratedEnvName(t *testing.T) {
 	t.Setenv("BOA_NOENV_INTERNAL", "leaked-from-env")
 
 	var gotName, gotInternal string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherCombine(ParamEnricherName, ParamEnricherEnv),
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -404,7 +389,7 @@ func TestNoEnv_SuppressesNamedStructAutoPrefix(t *testing.T) {
 	t.Setenv("DB_PASS", "leaked-from-env")
 
 	var gotHost, gotPass string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherCombine(ParamEnricherName, ParamEnricherEnv),
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -423,7 +408,7 @@ func TestNoEnv_SuppressesNamedStructAutoPrefix(t *testing.T) {
 	}
 
 	// And the CLI flag should still work.
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherCombine(ParamEnricherName, ParamEnricherEnv),
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -445,11 +430,11 @@ func TestNoEnv_ProgrammaticViaHook(t *testing.T) {
 	t.Setenv("BOA_NOENV_HOOK_NAME", "from-env")
 
 	var got string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.Name).SetNoEnv(true)
+			Param(ctx, &params.Name).SetNoEnv(true)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -474,11 +459,11 @@ func TestSetIgnored_ProgrammaticSkipsEverything(t *testing.T) {
 	t.Setenv("BOA_IGNORED_TEST", "from-env")
 
 	var gotInternal string
-	cmd := CmdT[Params]{
+	cmd := Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.Internal).SetIgnored(true)
+			Param(ctx, &params.Internal).SetIgnored(true)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -504,11 +489,11 @@ func TestSetDescription_Programmatic(t *testing.T) {
 	type Params struct {
 		Name string `descr:"original" optional:"true"`
 	}
-	usage := captureUsage(t, CmdT[Params]{
+	usage := captureUsage(t, Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.Name).SetDescription("overridden help text")
+			Param(ctx, &params.Name).SetDescription("overridden help text")
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
@@ -525,13 +510,13 @@ func TestSetMinMax_Programmatic(t *testing.T) {
 	type Params struct {
 		Port int `descr:"port" optional:"true"`
 	}
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			p := GetParamT(ctx, &params.Port)
-			p.SetMinT(1)
-			p.SetMaxT(100)
+			p := Param(ctx, &params.Port)
+			p.SetMin(1)
+			p.SetMax(100)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
@@ -548,11 +533,11 @@ func TestSetPattern_Programmatic(t *testing.T) {
 	type Params struct {
 		Name string `optional:"true"`
 	}
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.Name).SetPattern(`^[a-z]+$`)
+			Param(ctx, &params.Name).SetPattern(`^[a-z]+$`)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
@@ -570,11 +555,11 @@ func TestSetRequired_ProgrammaticTrue(t *testing.T) {
 	type Params struct {
 		Name string `optional:"true"`
 	}
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.Name).SetRequired(true)
+			Param(ctx, &params.Name).SetRequired(true)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
@@ -590,11 +575,11 @@ func TestSetPositional_Programmatic(t *testing.T) {
 		Target string `optional:"true"`
 	}
 	var got string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.Target).SetPositional(true)
+			Param(ctx, &params.Target).SetPositional(true)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -614,11 +599,11 @@ func TestSetRequired_ProgrammaticFalse(t *testing.T) {
 	type Params struct {
 		Name string
 	}
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.Name).SetRequired(false)
+			Param(ctx, &params.Name).SetRequired(false)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
@@ -628,10 +613,10 @@ func TestSetRequired_ProgrammaticFalse(t *testing.T) {
 	}
 }
 
-// --- SetMinT / SetMaxT / SetPattern type guards ---
+// --- SetMin / SetMax / SetPattern type guards ---
 
-func TestSetMinT_PanicsOnUnsupportedType(t *testing.T) {
-	// bool isn't numeric and isn't length-based — SetMinT must panic with the
+func TestSetMin_PanicsOnUnsupportedType(t *testing.T) {
+	// bool isn't numeric and isn't length-based — SetMin must panic with the
 	// "numeric T required" message.
 	type Params struct {
 		Flag bool `optional:"true"`
@@ -639,61 +624,61 @@ func TestSetMinT_PanicsOnUnsupportedType(t *testing.T) {
 	defer func() {
 		r := recover()
 		if r == nil {
-			t.Fatal("expected SetMinT on bool to panic")
+			t.Fatal("expected SetMin on bool to panic")
 		}
-		if !strings.Contains(fmt.Sprint(r), "SetMinT") {
-			t.Errorf("expected panic mentioning SetMinT, got: %v", r)
+		if !strings.Contains(fmt.Sprint(r), "SetMin") {
+			t.Errorf("expected panic mentioning SetMin, got: %v", r)
 		}
 	}()
-	_ = (CmdT[Params]{
+	_ = (Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.Flag).SetMinT(true)
+			Param(ctx, &params.Flag).SetMin(true)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
 	}).RunArgsE([]string{})
 }
 
-func TestSetMaxT_PanicsOnUnsupportedType(t *testing.T) {
+func TestSetMax_PanicsOnUnsupportedType(t *testing.T) {
 	type Params struct {
 		Flag bool `optional:"true"`
 	}
 	defer func() {
 		r := recover()
 		if r == nil {
-			t.Fatal("expected SetMaxT on bool to panic")
+			t.Fatal("expected SetMax on bool to panic")
 		}
 	}()
-	_ = (CmdT[Params]{
+	_ = (Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.Flag).SetMaxT(true)
+			Param(ctx, &params.Flag).SetMax(true)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
 	}).RunArgsE([]string{})
 }
 
-func TestSetMinT_PanicsOnStringField(t *testing.T) {
-	// string is length-based — SetMinT must redirect to SetMinLen.
+func TestSetMin_PanicsOnStringField(t *testing.T) {
+	// string is length-based — SetMin must redirect to SetMinLen.
 	type Params struct {
 		Name string `optional:"true"`
 	}
 	defer func() {
 		r := recover()
 		if r == nil {
-			t.Fatal("expected SetMinT on string to panic")
+			t.Fatal("expected SetMin on string to panic")
 		}
 		msg := fmt.Sprint(r)
 		if !strings.Contains(msg, "SetMinLen") {
 			t.Errorf("expected panic to recommend SetMinLen, got: %v", r)
 		}
 	}()
-	_ = (CmdT[Params]{
+	_ = (Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.Name).SetMinT("abc")
+			Param(ctx, &params.Name).SetMin("abc")
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
@@ -701,7 +686,7 @@ func TestSetMinT_PanicsOnStringField(t *testing.T) {
 }
 
 func TestSetMinLen_PanicsOnNumericField(t *testing.T) {
-	// int is numeric — SetMinLen must redirect to SetMinT.
+	// int is numeric — SetMinLen must redirect to SetMin.
 	type Params struct {
 		Port int `optional:"true"`
 	}
@@ -711,14 +696,14 @@ func TestSetMinLen_PanicsOnNumericField(t *testing.T) {
 			t.Fatal("expected SetMinLen on int to panic")
 		}
 		msg := fmt.Sprint(r)
-		if !strings.Contains(msg, "SetMinT") {
-			t.Errorf("expected panic to recommend SetMinT, got: %v", r)
+		if !strings.Contains(msg, "SetMin") {
+			t.Errorf("expected panic to recommend SetMin, got: %v", r)
 		}
 	}()
-	_ = (CmdT[Params]{
+	_ = (Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.Port).SetMinLen(1)
+			Param(ctx, &params.Port).SetMinLen(1)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
@@ -738,10 +723,10 @@ func TestSetPattern_PanicsOnNonString(t *testing.T) {
 			t.Errorf("expected panic mentioning SetPattern, got: %v", r)
 		}
 	}()
-	_ = (CmdT[Params]{
+	_ = (Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.Port).SetPattern("^[0-9]+$")
+			Param(ctx, &params.Port).SetPattern("^[0-9]+$")
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
@@ -754,10 +739,10 @@ func TestClearMin_AllowedOnUnsupportedType(t *testing.T) {
 	type Params struct {
 		Flag bool `optional:"true"`
 	}
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.Flag).ClearMin() // no-op, must not panic
+			Param(ctx, &params.Flag).ClearMin() // no-op, must not panic
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
@@ -773,13 +758,13 @@ func TestSetMin_Programmatic_BelowIntMin(t *testing.T) {
 	type Params struct {
 		Port int `descr:"port" optional:"true"`
 	}
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			p := GetParamT(ctx, &params.Port)
-			p.SetMinT(10)
-			p.SetMaxT(100)
+			p := Param(ctx, &params.Port)
+			p.SetMin(10)
+			p.SetMax(100)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
@@ -806,13 +791,13 @@ func TestSetMinMax_Programmatic_Float(t *testing.T) {
 		{"in_range", "0.5", ""},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			err := (CmdT[Params]{
+			err := (Cmd[Params]{
 				Use:         "test",
 				ParamEnrich: ParamEnricherName,
 				InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-					p := GetParamT(ctx, &params.Rate)
-					p.SetMinT(0)
-					p.SetMaxT(1)
+					p := Param(ctx, &params.Rate)
+					p.SetMin(0)
+					p.SetMax(1)
 					return nil
 				},
 				RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
@@ -837,12 +822,12 @@ func TestSetMinMaxLen_Programmatic_StringLength(t *testing.T) {
 	type Params struct {
 		Name string `descr:"name" optional:"true"`
 	}
-	makeCmd := func() CmdT[Params] {
-		return CmdT[Params]{
+	makeCmd := func() Cmd[Params] {
+		return Cmd[Params]{
 			Use:         "test",
 			ParamEnrich: ParamEnricherName,
 			InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-				p := GetParamT(ctx, &params.Name)
+				p := Param(ctx, &params.Name)
 				p.SetMinLen(3)
 				p.SetMaxLen(10)
 				return nil
@@ -865,12 +850,12 @@ func TestSetMinMaxLen_Programmatic_SliceLength(t *testing.T) {
 	type Params struct {
 		Tags []string `descr:"tags" optional:"true"`
 	}
-	makeCmd := func() CmdT[Params] {
-		return CmdT[Params]{
+	makeCmd := func() Cmd[Params] {
+		return Cmd[Params]{
 			Use:         "test",
 			ParamEnrich: ParamEnricherName,
 			InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-				p := GetParamT(ctx, &params.Tags)
+				p := Param(ctx, &params.Tags)
 				p.SetMinLen(2)
 				p.SetMaxLen(3)
 				return nil
@@ -894,13 +879,13 @@ func TestClearMinMax_Programmatic_RemovesBound(t *testing.T) {
 	type Params struct {
 		Port int `descr:"port" optional:"true"`
 	}
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			p := GetParamT(ctx, &params.Port)
-			p.SetMinT(10)
-			p.SetMaxT(20)
+			p := Param(ctx, &params.Port)
+			p.SetMin(10)
+			p.SetMax(20)
 			p.ClearMin()
 			p.ClearMax()
 			return nil
@@ -913,24 +898,24 @@ func TestClearMinMax_Programmatic_RemovesBound(t *testing.T) {
 }
 
 func TestSetMinMax_Programmatic_GetRoundTrip(t *testing.T) {
-	// SetMinT / GetMin should round-trip at full int precision, and
+	// SetMin / GetMin should round-trip at full int precision, and
 	// ClearMin should reset to nil. GetMin / GetMax live on the non-generic
-	// Param interface (the typed view only exposes setters), so we read them
-	// via ctx.GetParam. Int fields store as *int64.
+	// Parameter interface (the typed view only exposes setters), so we read them
+	// via ctx.Param. Int fields store as *int64.
 	type Params struct {
 		Port int `descr:"port" optional:"true"`
 	}
 	var sawMinSet, sawMinCleared any
 	var sawMaxSet, sawMaxCleared any
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			tp := GetParamT(ctx, &params.Port)
-			tp.SetMinT(42)
-			tp.SetMaxT(99)
+			tp := Param(ctx, &params.Port)
+			tp.SetMin(42)
+			tp.SetMax(99)
 
-			raw := ctx.GetParam(&params.Port)
+			raw := Param(ctx, &params.Port)
 			sawMinSet = raw.GetMin()
 			sawMaxSet = raw.GetMax()
 
@@ -961,10 +946,10 @@ func TestSetMinMax_Programmatic_GetRoundTrip(t *testing.T) {
 	}
 }
 
-// --- boa:"configonly" new semantics (not an ignore alias) ---
+// --- boa:"configonly" semantics ---
 
 func TestConfigOnly_NoFlagNoEnvButValidationRuns(t *testing.T) {
-	// Under the new semantics, `boa:"configonly"` is `noflag + noenv` with
+	// `boa:"configonly"` is `noflag + noenv` with
 	// the mirror preserved, so min/max/pattern tags (and custom validators)
 	// still run on the config-loaded value.
 	type Params struct {
@@ -974,7 +959,7 @@ func TestConfigOnly_NoFlagNoEnvButValidationRuns(t *testing.T) {
 	}
 
 	// First: the CLI flag must not exist
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -986,7 +971,7 @@ func TestConfigOnly_NoFlagNoEnvButValidationRuns(t *testing.T) {
 	// Second: the env binding must be ignored
 	t.Setenv("PORT", "leaked")
 	var gotPort int
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherCombine(ParamEnricherName, ParamEnricherEnv),
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -1006,7 +991,7 @@ func TestConfigOnly_NoFlagNoEnvButValidationRuns(t *testing.T) {
 	cfgPath := filepath.Join(tmpDir, "config.json")
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -1022,7 +1007,7 @@ func TestConfigOnly_NoFlagNoEnvButValidationRuns(t *testing.T) {
 	cfgDataOK, _ := json.Marshal(map[string]any{"Port": 8080})
 	_ = os.WriteFile(cfgPath, cfgDataOK, 0644)
 
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -1063,18 +1048,18 @@ func TestSetIgnored_ConfigDoesNotMarkSetByConfig(t *testing.T) {
 
 	var hiddenHasValue bool
 	var hiddenRaw string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.Hidden).SetIgnored(true)
+			Param(ctx, &params.Hidden).SetIgnored(true)
 			return nil
 		},
 		PreExecuteFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command, args []string) error {
 			// By the time PreExecute runs, the config file has been loaded
 			// and setByConfig has been applied. The ignored mirror must NOT
 			// have been marked.
-			hidden := ctx.GetParam(&params.Hidden)
+			hidden := Param(ctx, &params.Hidden)
 			hiddenHasValue = hidden.HasValue()
 			hiddenRaw = params.Hidden
 			return nil
@@ -1097,7 +1082,7 @@ func TestSetIgnored_ConfigDoesNotMarkSetByConfig(t *testing.T) {
 
 // --- helpers ---
 
-func captureUsage[P any](t *testing.T, spec CmdT[P]) string {
+func captureUsage[P any](t *testing.T, spec Cmd[P]) string {
 	t.Helper()
 	cmd, err := spec.ToCobraE()
 	if err != nil {

@@ -49,7 +49,7 @@ You can compose your own enricher to change the default behavior.
 ### Enable Auto Env Vars
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "cmd",
     ParamEnrich: boa.ParamEnricherCombine(
         boa.ParamEnricherName,
@@ -63,7 +63,7 @@ boa.CmdT[Params]{
 ### Prefix Env Vars
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "cmd",
     ParamEnrich: boa.ParamEnricherCombine(
         boa.ParamEnricherName,
@@ -78,7 +78,7 @@ This turns `MY_PARAM` into `MYAPP_MY_PARAM`.
 ### Disable Auto Short Flags
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "cmd",
     ParamEnrich: boa.ParamEnricherCombine(
         boa.ParamEnricherName,
@@ -91,7 +91,7 @@ boa.CmdT[Params]{
 ### Disable All Enrichment
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use:         "cmd",
     ParamEnrich: boa.ParamEnricherNone,
 }

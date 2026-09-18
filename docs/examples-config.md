@@ -23,7 +23,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "server",
         Short: "Start the server",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -90,7 +90,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "server",
         Short: "Demonstrate value priority",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -162,7 +162,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "app",
         Short: "Multi-config demo",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -280,7 +280,7 @@ func init() {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "server",
         Short: "Server that accepts either JSON or YAML config files",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -342,7 +342,7 @@ This matters whenever you care about the difference between "the config file men
 `RegisterConfigFormat` uses it internally; you only ever call it directly when you want to set a format inline on `Cmd.ConfigFormat`:
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use:          "server",
     ConfigFormat: boa.UniversalConfigFormat(yaml.Unmarshal),
     RunFunc: func(p *Params, cmd *cobra.Command, args []string) { ... },
@@ -361,16 +361,16 @@ The runnable example at [`internal/example_custom_config_format`](https://github
 
 ### Per-Command Override (Escape Hatch)
 
-Setting a format on `Cmd.ConfigFormat` (or the legacy `ConfigUnmarshal`) **bypasses** the extension registry for that one command and locks it to a single format. That is almost never what you want — prefer the registry so the same binary stays format-agnostic — but the escape hatch is there for niche cases like:
+Setting `Cmd.ConfigFormat` **bypasses** the extension registry for that command and locks it to a single format. Prefer the registry when a binary accepts multiple formats. A per-command format is useful for application-specific inputs and test parsers.
 
-- A command that must accept a custom-extension blob from a legacy system.
+- A command that accepts one application-specific file format.
 - Tests that want to inject a fake parser without polluting the global registry.
 
 ```go
-boa.CmdT[Params]{
-    Use: "ingest-legacy-blob",
+boa.Cmd[Params]{
+    Use: "ingest-custom-blob",
     ConfigFormat: boa.ConfigFormat{
-        Unmarshal: myLegacyUnmarshal,
+        Unmarshal: myCustomUnmarshal,
         // KeyTree optional
     },
     RunFunc: func(p *Params, cmd *cobra.Command, args []string) { ... },
@@ -380,9 +380,8 @@ boa.CmdT[Params]{
 Resolution order for each `loadConfigFileInto` call:
 
 1. `Cmd.ConfigFormat` (if `Unmarshal` is non-nil) — locks this one command to a single format
-2. `Cmd.ConfigUnmarshal` (legacy; unmarshal-only, also command-locked)
-3. Format registered by file extension — **the default path; supports any number of formats in one binary**
-4. Built-in JSON fallback (with `KeyTree`)
+2. Format registered by file extension — **the default path; supports any number of formats in one binary**
+3. Built-in JSON fallback (with `KeyTree`)
 
 ## Config-File-Only Fields (`boa:"configonly"` and `boa:"ignore"`)
 
@@ -415,7 +414,7 @@ type RouteConfig struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "server",
         Short: "Server with config-only fields",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -507,7 +506,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:      "myapp",
         Short:    "App with auto-discovery",
         InitFunc: boaviper.AutoConfig[Params]("myapp"),
@@ -579,7 +578,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:  "myapp",
         Short: "Viper-like CLI",
         // Auto-discover config files
@@ -631,7 +630,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "app",
         Short: "Explicit config loading",
         PreValidateFunc: func(p *Params, cmd *cobra.Command, args []string) error {
@@ -687,7 +686,7 @@ After the chain loads, the resolved parameters are `Host=app.example.com` (from 
 
 - **Order**: left-to-right is lowest-to-highest precedence. The rightmost file wins for any key it mentions.
 - **Missing keys**: leave earlier values alone. Not-mentioned ≠ reset.
-- **Slices and maps**: *fully replaced* by the later file, not merged. If base has `Tags: [a, b]` and local has `Tags: [c]`, the final value is `[c]`. This is standard `json.Unmarshal` behavior and matches what almost every config-cascade user expects. (Deep merging is deliberately out of scope.)
+- **Collections** follow the selected decoder. JSON replaces slices and merges map members by key.
 - **CLI and env still win**: the full precedence chain is unchanged — CLI > env > root config chain > substruct config chain > defaults. The multi-file chain slots in at "root config" (or "substruct config" for nested declarations).
 - **Substructs** can declare their own `[]string` configfile chain too, and each chain loads independently. Substruct chains load first, the root chain loads last.
 - **Empty strings** in the list are skipped silently — handy when an optional overlay is computed at runtime.
@@ -699,7 +698,7 @@ If you'd rather build the path list yourself (e.g. from environment, computed fr
 
 ```go
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use: "app",
         PreValidateFunc: func(p *Params, cmd *cobra.Command, args []string) error {
             paths := []string{
@@ -748,7 +747,7 @@ type Params struct {
 func main() {
     boa.RegisterConfigFormat(".yaml", yaml.Unmarshal)
 
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use: "app",
         PreValidateFunc: func(p *Params, cmd *cobra.Command, args []string) error {
             // Seed defaults from the embedded YAML blob. CLI and env vars
@@ -811,7 +810,7 @@ func main() {
     boa.RegisterConfigFormat(".yaml", yaml.Unmarshal)
     boa.RegisterConfigMarshaler(".yaml", yaml.Marshal)
 
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use: "app",
         RunFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command, args []string) {
             // Persist the resolved config so the next run reuses it.
@@ -893,7 +892,7 @@ func main() {
     // Register YAML in addition to built-in JSON
     boa.RegisterConfigFormat(".yaml", yaml.Unmarshal)
 
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "app",
         Short: "Mixed format configs",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {

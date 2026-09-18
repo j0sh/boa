@@ -82,7 +82,7 @@ func TestAutoConfig_SetsPath(t *testing.T) {
 	}
 
 	var gotPort int
-	err := (boa.CmdT[Params]{
+	err := (boa.Cmd[Params]{
 		Use:         "myapp",
 		ParamEnrich: boa.ParamEnricherName,
 		InitFunc:    AutoConfig[Params]("myapp", tmpDir),
@@ -120,7 +120,7 @@ func TestAutoConfig_CLIOverridesAutoDiscovery(t *testing.T) {
 	}
 
 	var gotPort int
-	err := (boa.CmdT[Params]{
+	err := (boa.Cmd[Params]{
 		Use:         "myapp",
 		ParamEnrich: boa.ParamEnricherName,
 		InitFunc:    AutoConfig[Params]("myapp", tmpDir),
@@ -146,7 +146,7 @@ func TestAutoConfig_NoConfigFileFound(t *testing.T) {
 	}
 
 	var gotPort int
-	err := (boa.CmdT[Params]{
+	err := (boa.Cmd[Params]{
 		Use:         "myapp",
 		ParamEnrich: boa.ParamEnricherName,
 		InitFunc:    AutoConfig[Params]("myapp", tmpDir),
@@ -172,7 +172,7 @@ func TestSetEnvPrefix(t *testing.T) {
 	defer func() { _ = os.Unsetenv("MYAPP_PORT") }()
 
 	var gotPort int
-	err := (boa.CmdT[Params]{
+	err := (boa.Cmd[Params]{
 		Use: "myapp",
 		ParamEnrich: boa.ParamEnricherCombine(
 			boa.ParamEnricherDefault,

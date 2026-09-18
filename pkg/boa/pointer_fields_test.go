@@ -13,7 +13,7 @@ func TestPointerField_OptionalString(t *testing.T) {
 	}
 
 	var got *string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			got = p.Name
@@ -34,7 +34,7 @@ func TestPointerField_StringWithValue(t *testing.T) {
 	}
 
 	var got *string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -59,7 +59,7 @@ func TestPointerField_IntWithValue(t *testing.T) {
 	}
 
 	var got *int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -84,7 +84,7 @@ func TestPointerField_IntNotProvided(t *testing.T) {
 	}
 
 	var got *int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			got = p.Port
@@ -105,7 +105,7 @@ func TestPointerField_BoolWithValue(t *testing.T) {
 	}
 
 	var got *bool
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -130,7 +130,7 @@ func TestPointerField_DefaultOptional(t *testing.T) {
 		Name *string `descr:"optional name"`
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 		},
@@ -147,7 +147,7 @@ func TestPointerField_ExplicitRequired(t *testing.T) {
 		Name *string `descr:"required name" required:"true"`
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -169,7 +169,7 @@ func TestPointerField_EnvVar(t *testing.T) {
 	defer func() { _ = os.Unsetenv("TEST_PTR_NAME") }()
 
 	var got *string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -194,7 +194,7 @@ func TestPointerField_DefaultValue(t *testing.T) {
 	}
 
 	var got *string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -215,15 +215,15 @@ func TestPointerField_DefaultValue(t *testing.T) {
 
 func TestPointerField_MixedWithPlainFields(t *testing.T) {
 	type Params struct {
-		Name    string  `descr:"required name"`
-		Port    *int    `descr:"optional port"`
-		Verbose *bool   `descr:"optional verbose"`
+		Name    string `descr:"required name"`
+		Port    *int   `descr:"optional port"`
+		Verbose *bool  `descr:"optional verbose"`
 	}
 
 	var gotName string
 	var gotPort *int
 	var gotVerbose *bool
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {

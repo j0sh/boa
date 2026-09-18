@@ -121,7 +121,7 @@ func TestRegisterConfigFormat_SimpleFormGivesFullDetection(t *testing.T) {
 
 	var gotDB *Inner
 	var dbBothSetViaCfg bool
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
@@ -242,7 +242,7 @@ func TestSnapshotFallbackIsScopedPerLoad(t *testing.T) {
 	// file wrote this" from "the parameter has a default".
 	var gotDB *DB
 	var hostSetByConfig, portSetByConfig bool
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
@@ -250,10 +250,10 @@ func TestSnapshotFallbackIsScopedPerLoad(t *testing.T) {
 			if p.DB == nil {
 				return
 			}
-			if pm, ok := ctx.GetParam(&p.DB.Host).(*paramMeta); ok {
+			if pm, ok := ctx.parameter(&p.DB.Host).(*paramMeta); ok {
 				hostSetByConfig = pm.setByConfig
 			}
-			if pm, ok := ctx.GetParam(&p.DB.Port).(*paramMeta); ok {
+			if pm, ok := ctx.parameter(&p.DB.Port).(*paramMeta); ok {
 				portSetByConfig = pm.setByConfig
 			}
 		},
@@ -338,7 +338,7 @@ func TestRegisterConfigFormatFull_NormalizesDotlessExtension(t *testing.T) {
 		t.Fatalf("write cfg: %v", err)
 	}
 	var gotHost string
-	if err := (CmdT[Params]{
+	if err := (Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			gotHost = p.Host
@@ -430,7 +430,7 @@ func TestCustomConfigFormat_KeyTreeDetectsZeroValueWrite(t *testing.T) {
 
 	var gotDB *Inner
 	var dbSetByConfig bool
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
@@ -471,7 +471,7 @@ func TestCustomConfigFormat_RegisteredFormatAppliesToCmd(t *testing.T) {
 	}
 
 	var gotHost string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			gotHost = p.Host
@@ -510,7 +510,7 @@ func TestCustomConfigFormat_CmdConfigFormatOverridesExtension(t *testing.T) {
 	}
 
 	var gotDB *Inner
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		ConfigFormat: ConfigFormat{
@@ -551,8 +551,8 @@ func TestCustomConfigFormat_MultipleFormatsOneBinary(t *testing.T) {
 		DB         *Inner
 	}
 
-	newCmd := func(captured **Inner, ctxCapture *bool, _ **HookContext) CmdT[Params] {
-		return CmdT[Params]{
+	newCmd := func(captured **Inner, ctxCapture *bool, _ **HookContext) Cmd[Params] {
+		return Cmd[Params]{
 			Use:         "test",
 			ParamEnrich: ParamEnricherName,
 			RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
@@ -621,7 +621,7 @@ func TestCustomConfigFormat_DeepNestingUnderCustomFormat(t *testing.T) {
 	}
 	type Middle struct {
 		// Non-pointer substruct inside a pointer group.
-		Region string `descr:"middle region" default:"us-east-1"`
+		Region  string `descr:"middle region" default:"us-east-1"`
 		Deepest *Leaf
 	}
 	type Top struct {
@@ -657,7 +657,7 @@ func TestCustomConfigFormat_DeepNestingUnderCustomFormat(t *testing.T) {
 	var gotTop *Top
 	var deepestHostSet, deepestPortSet bool
 	var middleRegionSet, topNameSet bool
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
@@ -736,7 +736,7 @@ func TestCustomConfigFormat_KeyTreeHandlesMapAnyAny(t *testing.T) {
 	}
 
 	var gotDB *Inner
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -970,12 +970,12 @@ func TestConfigFile_FormatAwareFieldTag_MiniKV(t *testing.T) {
 	// want: "the config file mentioned this key, therefore setByConfig".
 	var gotRetries int
 	var retriesSetByConfig bool
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			gotRetries = p.Retries
-			if pm, ok := ctx.GetParam(&p.Retries).(*paramMeta); ok {
+			if pm, ok := ctx.parameter(&p.Retries).(*paramMeta); ok {
 				retriesSetByConfig = pm.setByConfig
 			}
 		},
@@ -1021,12 +1021,12 @@ func TestConfigFile_FormatAwareFieldTag_MiniKV_NonZeroValue(t *testing.T) {
 
 	var gotRetries int
 	var retriesSetByConfig bool
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			gotRetries = p.Retries
-			if pm, ok := ctx.GetParam(&p.Retries).(*paramMeta); ok {
+			if pm, ok := ctx.parameter(&p.Retries).(*paramMeta); ok {
 				retriesSetByConfig = pm.setByConfig
 			}
 		},
@@ -1075,16 +1075,16 @@ func TestConfigFile_FormatAwareFieldTag_MiniKV_NestedPointerGroup(t *testing.T) 
 
 	var gotDB *DB
 	var hostSet, portSet bool
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			gotDB = p.DB
 			if p.DB != nil {
-				if pm, ok := ctx.GetParam(&p.DB.Host).(*paramMeta); ok {
+				if pm, ok := ctx.parameter(&p.DB.Host).(*paramMeta); ok {
 					hostSet = pm.setByConfig
 				}
-				if pm, ok := ctx.GetParam(&p.DB.Port).(*paramMeta); ok {
+				if pm, ok := ctx.parameter(&p.DB.Port).(*paramMeta); ok {
 					portSet = pm.setByConfig
 				}
 			}
@@ -1130,11 +1130,11 @@ func TestConfigFile_FormatAwareFieldTag_MiniKV_TagDashSkipsField(t *testing.T) {
 	}
 
 	var secretSet bool
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
-			if pm, ok := ctx.GetParam(&p.Secret).(*paramMeta); ok {
+			if pm, ok := ctx.parameter(&p.Secret).(*paramMeta); ok {
 				secretSet = pm.setByConfig
 			}
 		},
@@ -1171,12 +1171,12 @@ func TestConfigFile_FormatAwareFieldTag_MiniKV_TagWithOptions(t *testing.T) {
 
 	var gotName string
 	var nameSet bool
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			gotName = p.Name
-			if pm, ok := ctx.GetParam(&p.Name).(*paramMeta); ok {
+			if pm, ok := ctx.parameter(&p.Name).(*paramMeta); ok {
 				nameSet = pm.setByConfig
 			}
 		},
@@ -1215,11 +1215,11 @@ func TestConfigFile_FormatAwareFieldTag_MiniKV_CaseInsensitiveLookup(t *testing.
 	}
 
 	var nameSet bool
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
-			if pm, ok := ctx.GetParam(&p.Name).(*paramMeta); ok {
+			if pm, ok := ctx.parameter(&p.Name).(*paramMeta); ok {
 				nameSet = pm.setByConfig
 			}
 		},
@@ -1261,11 +1261,11 @@ func TestConfigFile_FormatAwareFieldTag_YmlExtensionUsesYamlTag(t *testing.T) {
 	}
 
 	var retriesSet bool
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
-			if pm, ok := ctx.GetParam(&p.Retries).(*paramMeta); ok {
+			if pm, ok := ctx.parameter(&p.Retries).(*paramMeta); ok {
 				retriesSet = pm.setByConfig
 			}
 		},
@@ -1304,11 +1304,11 @@ func TestConfigFile_FormatAwareFieldTag_UnknownExtDefaultsToExtMinusDot(t *testi
 	}
 
 	var magicSet bool
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
-			if pm, ok := ctx.GetParam(&p.Magic).(*paramMeta); ok {
+			if pm, ok := ctx.parameter(&p.Magic).(*paramMeta); ok {
 				magicSet = pm.setByConfig
 			}
 		},
@@ -1342,12 +1342,12 @@ func TestConfigFile_FormatAwareFieldTag_ZeroIntFlatJsonNoTag(t *testing.T) {
 
 	var gotRetries int
 	var retriesSet bool
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			gotRetries = p.Retries
-			if pm, ok := ctx.GetParam(&p.Retries).(*paramMeta); ok {
+			if pm, ok := ctx.parameter(&p.Retries).(*paramMeta); ok {
 				retriesSet = pm.setByConfig
 			}
 		},
@@ -1394,12 +1394,12 @@ func TestConfigFile_FormatAwareFieldTag_MixedFormatsInOneBinary(t *testing.T) {
 	run := func(cfgPath string) (int, bool) {
 		var gotRetries int
 		var retriesSet bool
-		err := (CmdT[Params]{
+		err := (Cmd[Params]{
 			Use:         "test",
 			ParamEnrich: ParamEnricherName,
 			RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 				gotRetries = p.Retries
-				if pm, ok := ctx.GetParam(&p.Retries).(*paramMeta); ok {
+				if pm, ok := ctx.parameter(&p.Retries).(*paramMeta); ok {
 					retriesSet = pm.setByConfig
 				}
 			},
@@ -1479,13 +1479,13 @@ func runDeepApp(t *testing.T, cfgPath string) (*deepApp, map[string]bool) {
 	// Record setByConfig for every mirror we care about. Using direct
 	// paramMeta access keeps the assertions precise — HasValue is
 	// polluted by defaults and would give spurious passes.
-	err := (CmdT[deepApp]{
+	err := (Cmd[deepApp]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *deepApp, cmd *cobra.Command, args []string) {
 			got = *p
 			record := func(label string, addr any) {
-				if pm, ok := ctx.GetParam(addr).(*paramMeta); ok {
+				if pm, ok := ctx.parameter(addr).(*paramMeta); ok {
 					marked[label] = pm.setByConfig
 				} else {
 					marked[label] = false

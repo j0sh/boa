@@ -1,5 +1,14 @@
 # Migration Guide
 
+## Go 1.27 consolidation
+
+- Go 1.27 is now required. Commands use `boa.Cmd[T]`, and `boa.Param(ctx, &p.Field)` returns the type-safe `*boa.Field[T]` view.
+- JSON uses one decoder pass with registered string parsers. Custom format functions are authoritative: no retries, proxy structs, or discarded errors. For a portable custom scalar, implement `encoding.TextUnmarshaler` or use `boa.Text[T]` and access `.Value`. See [config decoding](config-decoding.md).
+- `Validate` validates the current command, skipping child routing and all action hooks. `Reload` skips all action hooks, preserves parsed invocation values, and refreshes watched files after success. See [reload](live-reload.md).
+- False Boolean defaults no longer clutter help. Enum completions suppress file candidates. Subcommand-only roots retain Cobra's suggestions.
+- Empty JSON collection arguments are rejected instead of silently retaining an unparsed string. Recursive CLI parameter groups return a construction error; ignore recursive config-only fields or register a scalar parser.
+
+
 ## From Old BOA (pre-v1.0) to BOA v1.0
 
 BOA v1.0 removes the builder pattern and the `Required[T]`/`Optional[T]` generic wrapper types. Commands are now configured via struct literals, and parameters use plain Go types.
@@ -8,7 +17,7 @@ BOA v1.0 removes the builder pattern and the `Required[T]`/`Optional[T]` generic
 
 | Old API (pre-v1.0) | New API (v1.0) |
 |---------------------|----------------|
-| `boa.NewCmdT[P]("name")` | `boa.CmdT[P]{Use: "name"}` |
+| Builder-chain command construction | `boa.Cmd[P]{Use: "name"}` |
 | `.WithShort("desc")` | `Short: "desc"` |
 | `.WithLong("desc")` | `Long: "desc"` |
 | `.WithRunFunc(func(p *P) { ... })` | `RunFunc: func(p *P, cmd *cobra.Command, args []string) { ... }` |
@@ -20,23 +29,10 @@ BOA v1.0 removes the builder pattern and the `Required[T]`/`Optional[T]` generic
 
 ### Command Definition
 
-**Before:**
+Replace builder chains with a struct literal:
 
 ```go
-cmd := boa.NewCmdT[Params]("myapp").
-    WithShort("My application").
-    WithLong("A detailed description").
-    WithRunFunc(func(params *Params) {
-        fmt.Println(params.Name.Value())
-    }).
-    WithSubCmds(subCmd1, subCmd2)
-cmd.Run()
-```
-
-**After:**
-
-```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use:   "myapp",
     Short: "My application",
     Long:  "A detailed description",
@@ -222,7 +218,7 @@ boa.RegisterConfigFormat(".toml", toml.Unmarshal)
 
 `RegisterConfigFormat` wraps the unmarshal function in a `boa.UniversalConfigFormat`, which synthesizes the `KeyTree` probe by asking the same parser to decode into a `map[string]any`. For inline per-command overrides you can call the helper directly: `ConfigFormat: boa.UniversalConfigFormat(yaml.Unmarshal)`. Only drop to the explicit `boa.ConfigFormat{Unmarshal: ..., KeyTree: ...}` literal (via `RegisterConfigFormatFull`) when your parser genuinely cannot decode into `map[string]any` — that is almost never a third-party library, only a handwritten custom format.
 
-Resolution: `Cmd.ConfigFormat` > `Cmd.ConfigUnmarshal` > registered format by extension > `json.Unmarshal` fallback. See the [Config Format Registry section in Advanced Usage](advanced.md#config-format-registry) for details.
+Resolution: `Cmd.ConfigFormat` > registered format by extension > `boa.UnmarshalJSON` fallback. See the [Config Format Registry section in Advanced Usage](advanced.md#config-format-registry) for details.
 
 #### Named Struct Auto-Prefixing
 
@@ -269,7 +265,7 @@ Optional subpackage for automatic config file discovery:
 ```go
 import "github.com/GiGurra/boa/pkg/boaviper"
 
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use:      "myapp",
     InitFunc: boaviper.AutoConfig[Params]("myapp"),
     ParamEnrich: boa.ParamEnricherCombine(
@@ -290,27 +286,18 @@ type Params struct {
 }
 ```
 
-### HookContext and GetParam
+### Programmatic field configuration
 
-The `HookContext` API is largely the same, but `GetParamT` no longer requires a `SupportedTypes` constraint -- it works with `any`:
-
-**Before:**
+Use `boa.Param` inside a context-aware init hook. The field pointer determines `T`, so type arguments are normally unnecessary:
 
 ```go
-// GetParamT required SupportedTypes constraint
-nameParam := boa.GetParamT[string](ctx, &params.Name)
-```
-
-**After:**
-
-```go
-// Works with any type
-nameParam := boa.GetParamT(ctx, &params.Name)
+nameParam := boa.Param(ctx, &params.Name)
+nameParam.SetDefault("anonymous")
 ```
 
 ### Step-by-Step Migration
 
-1. **Replace command construction**: Change `boa.NewCmdT[P]("name").WithX(...)` chains to `boa.CmdT[P]{Use: "name", X: ...}` struct literals.
+1. **Replace command construction**: Change builder chains to `boa.Cmd[P]{Use: "name", ...}` struct literals.
 
 2. **Update RunFunc signatures**: Add `cmd *cobra.Command, args []string` parameters.
 
@@ -360,7 +347,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "myapp",
         Short: "My application",
         RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
@@ -382,7 +369,7 @@ rootCmd.AddCommand(serveCmd, migrateCmd, configCmd)
 rootCmd.AddCommand(
     serveCmd,   // Still Cobra
     migrateCmd, // Still Cobra
-    boa.CmdT[ConfigParams]{
+    boa.Cmd[ConfigParams]{
         Use: "config",
         RunFunc: func(p *ConfigParams, cmd *cobra.Command, args []string) { /* ... */ },
     }.ToCobra(), // Now BOA

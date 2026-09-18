@@ -10,7 +10,7 @@
 //	    Port       int    `descr:"server port" default:"8080"`
 //	}
 //
-//	boa.CmdT[Params]{
+//	boa.Cmd[Params]{
 //	    Use:      "myapp",
 //	    InitFunc: boaviper.AutoConfig("myapp"),
 //	    RunFunc:  func(p *Params, cmd *cobra.Command, args []string) { ... },
@@ -111,7 +111,7 @@ func FindConfig(appName string, searchPaths ...string) string {
 //
 // Usage:
 //
-//	boa.CmdT[Params]{
+//	boa.Cmd[Params]{
 //	    Use:      "myapp",
 //	    InitFunc: boaviper.AutoConfig("myapp"),
 //	    // ...
@@ -119,7 +119,7 @@ func FindConfig(appName string, searchPaths ...string) string {
 //
 // With custom search paths:
 //
-//	boa.CmdT[Params]{
+//	boa.Cmd[Params]{
 //	    Use:      "myapp",
 //	    InitFunc: boaviper.AutoConfig("myapp", "./config", "/opt/myapp"),
 //	    // ...
@@ -164,7 +164,7 @@ func AutoConfigCtx[T any](appName string, searchPaths ...string) func(ctx *boa.H
 //
 // Usage:
 //
-//	boa.CmdT[Params]{
+//	boa.Cmd[Params]{
 //	    ParamEnrich: boa.ParamEnricherCombine(
 //	        boa.ParamEnricherDefault,
 //	        boaviper.SetEnvPrefix("MYAPP"),

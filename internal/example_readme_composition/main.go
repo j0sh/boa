@@ -30,7 +30,7 @@ type Combined struct {
 }
 
 func main() {
-	boa.CmdT[Combined]{
+	boa.Cmd[Combined]{
 		Use:   "hello-world",
 		Short: "a generic cli tool",
 		Long:  "A generic cli tool that has a longer description",

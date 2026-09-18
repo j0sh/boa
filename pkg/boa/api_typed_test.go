@@ -24,7 +24,7 @@ func TestTyped1(t *testing.T) {
 	os.Args = []string{"test", "--flag1", "value1", "--flag2", "42"}
 
 	ran := false
-	CmdT[TestStruct]{
+	Cmd[TestStruct]{
 		Use: "test",
 		RunFunc: func(params *TestStruct, cmd *cobra.Command, args []string) {
 			ran = true
@@ -61,7 +61,7 @@ func TestTypedCustType1(t *testing.T) {
 	os.Args = []string{"test", "--flag1", "value1", "--flag2", "42"}
 
 	ran := false
-	CmdT[TestStructCustType]{
+	Cmd[TestStructCustType]{
 		Use: "test",
 		RunFunc: func(params *TestStructCustType, cmd *cobra.Command, args []string) {
 			ran = true
@@ -95,7 +95,7 @@ func TestTypedCustTypeOptional(t *testing.T) {
 	os.Args = []string{"test", "--flag1", "value1", "--flag2", "42"}
 
 	ran := false
-	CmdT[TestStructCustTypeOptional]{
+	Cmd[TestStructCustTypeOptional]{
 		Use: "test",
 		RunFunc: func(params *TestStructCustTypeOptional, cmd *cobra.Command, args []string) {
 			ran = true
@@ -117,7 +117,7 @@ func TestTypedCustTypeOptional(t *testing.T) {
 func TestTyped2(t *testing.T) {
 
 	ran := false
-	CmdT[TestStruct]{
+	Cmd[TestStruct]{
 		Use:     "test",
 		RawArgs: []string{"--flag1", "value1", "--flag2", "42"},
 		RunFunc: func(params *TestStruct, cmd *cobra.Command, args []string) {
@@ -140,10 +140,10 @@ func TestTyped2(t *testing.T) {
 func TestTypedWithInitFunc(t *testing.T) {
 
 	ran := false
-	CmdT[TestStruct]{
+	Cmd[TestStruct]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, params *TestStruct, cmd *cobra.Command) error {
-			ctx.GetParam(&params.Flag2).SetDefault(Default(42))
+			Param(ctx, &params.Flag2).SetDefault(42)
 			return nil
 		},
 		RunFunc: func(params *TestStruct, cmd *cobra.Command, args []string) {
@@ -173,7 +173,7 @@ func TestNoParams(t *testing.T) {
 	os.Args = []string{"test"}
 
 	ran := false
-	cmd := CmdT[NoParams]{
+	cmd := Cmd[NoParams]{
 		Use: "test",
 		RunFunc: func(_ *NoParams, cmd *cobra.Command, args []string) {
 			ran = true
@@ -190,7 +190,7 @@ func TestNoParams(t *testing.T) {
 	}
 }
 
-func TestCmdTree(t *testing.T) {
+func TestCommandTree(t *testing.T) {
 	prevArgs := os.Args
 	defer func() {
 		os.Args = prevArgs
@@ -199,10 +199,10 @@ func TestCmdTree(t *testing.T) {
 	os.Args = []string{"test", "subcmd1", "--flag1", "value1", "--flag2", "42"}
 
 	ranInnerCommand := false
-	Cmd{
+	command{
 		Use: "test",
 		SubCmds: SubCmds(
-			CmdT[TestStruct]{
+			Cmd[TestStruct]{
 				Use: "subcmd1",
 				RunFunc: func(params *TestStruct, cmd *cobra.Command, args []string) {
 					fmt.Printf("params: %+v\n", params)
@@ -224,7 +224,7 @@ func TestGolangUpcastBullShit(t *testing.T) {
 	ran := false
 	type Args struct {
 	}
-	CmdT[Args]{
+	Cmd[Args]{
 		Use: "test",
 		RunFunc: func(params *Args, cmd *cobra.Command, args []string) {
 			ran = true
@@ -241,7 +241,7 @@ func TestTypedManual(t *testing.T) {
 	type Args struct {
 		MyInt int
 	}
-	CmdT[Args]{
+	Cmd[Args]{
 		Use:    "test",
 		Params: &Args{},
 		RunFunc: func(params *Args, cmd *cobra.Command, args []string) {
@@ -262,7 +262,7 @@ func TestAutoGenerateParamsFieldWhenOmitted(t *testing.T) {
 	type Args struct {
 		MyInt int
 	}
-	CmdT[Args]{
+	Cmd[Args]{
 		Use: "test",
 		RunFunc: func(params *Args, cmd *cobra.Command, args []string) {
 			ran = true
@@ -277,20 +277,20 @@ func TestAutoGenerateParamsFieldWhenOmitted(t *testing.T) {
 	}
 }
 
-func TestCmdList(t *testing.T) {
+func TestSubCmds(t *testing.T) {
 	ran := false
 	type Args struct {
 		MyInt int
 	}
-	Cmd{
+	command{
 		RunFunc: func(cmd *cobra.Command, args []string) {
 			t.Fatalf("expected to not run")
 		},
 		SubCmds: SubCmds(
-			CmdT[NoParams]{Use: "123"},
-			CmdT[NoParams]{Use: "subcmd1"},
-			Cmd{Use: "subcmd2"},
-			CmdT[Args]{Use: "subcmd3", RunFunc: func(params *Args, cmd *cobra.Command, args []string) {
+			Cmd[NoParams]{Use: "123"},
+			Cmd[NoParams]{Use: "subcmd1"},
+			command{Use: "subcmd2"},
+			Cmd[Args]{Use: "subcmd3", RunFunc: func(params *Args, cmd *cobra.Command, args []string) {
 				ran = true
 				if params.MyInt != 42 {
 					t.Fatalf("expected 42 but got %d", params.MyInt)
@@ -309,7 +309,7 @@ func TestSliceFlagAlts(t *testing.T) {
 	type Args struct {
 		Types []string `alts:"file, dir, all" default:"all,dir"`
 	}
-	CmdT[Args]{
+	Cmd[Args]{
 		RunFunc: func(args *Args, cmd *cobra.Command, rawArgs []string) {
 			if len(args.Types) != 2 {
 				t.Fatalf("expected 2 types but got %d", len(args.Types))
@@ -333,11 +333,11 @@ func TestPositionalArgs(t *testing.T) {
 	ran := false
 	type Args struct {
 		MyInt       int    `positional:"true"`
-		MyString    string `pos:"true"`
-		MyStringOpt string `pos:"true" optional:"true"`
+		MyString    string `positional:"true"`
+		MyStringOpt string `positional:"true" optional:"true"`
 	}
 
-	CmdT[Args]{
+	Cmd[Args]{
 		RunFunc: func(params *Args, cmd *cobra.Command, args []string) {
 			ran = true
 			if params.MyInt != 42 {
@@ -363,7 +363,7 @@ func TestSlicePositionalArgs(t *testing.T) {
 		Names []string `positional:"true"`
 	}
 
-	CmdT[Args]{
+	Cmd[Args]{
 		RunFunc: func(params *Args, cmd *cobra.Command, args []string) {
 			ran = true
 			if len(params.Names) != 3 {
@@ -387,7 +387,7 @@ func TestSlicePositionalArgs(t *testing.T) {
 }
 
 func TestCommandAliases(t *testing.T) {
-	cmd := CmdT[NoParams]{
+	cmd := Cmd[NoParams]{
 		Use:     "server",
 		Short:   "Start the server",
 		Aliases: []string{"srv", "s"},
@@ -406,8 +406,8 @@ func TestCommandAliases(t *testing.T) {
 	}
 }
 
-func TestCommandAliasesNonGeneric(t *testing.T) {
-	cmd := Cmd{
+func TestCommandAliasesErasedImplementation(t *testing.T) {
+	cmd := command{
 		Use:     "server",
 		Short:   "Start the server",
 		Aliases: []string{"srv", "s"},
@@ -429,20 +429,20 @@ func TestCommandGroups(t *testing.T) {
 	ran := false
 
 	// Groups are auto-generated from subcommand GroupIDs
-	root := CmdT[NoParams]{
+	root := Cmd[NoParams]{
 		Use: "app",
 		SubCmds: SubCmds(
-			CmdT[NoParams]{
+			Cmd[NoParams]{
 				Use:     "start",
 				GroupID: "core",
 				RunFunc: func(_ *NoParams, cmd *cobra.Command, args []string) { ran = true },
 			},
-			CmdT[NoParams]{
+			Cmd[NoParams]{
 				Use:     "stop",
 				GroupID: "core",
 				RunFunc: func(_ *NoParams, cmd *cobra.Command, args []string) {},
 			},
-			CmdT[NoParams]{
+			Cmd[NoParams]{
 				Use:     "debug",
 				GroupID: "extra",
 				RunFunc: func(_ *NoParams, cmd *cobra.Command, args []string) {},
@@ -478,12 +478,12 @@ func TestCommandGroups(t *testing.T) {
 	}
 }
 
-func TestCommandGroupsNonGeneric(t *testing.T) {
+func TestCommandGroupsErasedImplementation(t *testing.T) {
 	// Groups are auto-generated from subcommand GroupIDs
-	root := Cmd{
+	root := command{
 		Use: "app",
 		SubCmds: SubCmds(
-			Cmd{Use: "start", GroupID: "core"},
+			command{Use: "start", GroupID: "core"},
 		),
 	}
 
@@ -512,10 +512,10 @@ func TestCommandGroupsNonGeneric(t *testing.T) {
 func TestAliasExecution(t *testing.T) {
 	ran := false
 
-	root := CmdT[NoParams]{
+	root := Cmd[NoParams]{
 		Use: "app",
 		SubCmds: SubCmds(
-			CmdT[NoParams]{
+			Cmd[NoParams]{
 				Use:     "server",
 				Aliases: []string{"srv", "s"},
 				RunFunc: func(_ *NoParams, cmd *cobra.Command, args []string) { ran = true },
@@ -539,14 +539,14 @@ func TestAliasExecution(t *testing.T) {
 
 func TestMixedExplicitAndAutoGeneratedGroups(t *testing.T) {
 	// "core" has explicit custom title, "extra" will be auto-generated
-	root := CmdT[NoParams]{
+	root := Cmd[NoParams]{
 		Use: "app",
 		Groups: []*cobra.Group{
 			{ID: "core", Title: "Core Commands:"},
 		},
 		SubCmds: SubCmds(
-			CmdT[NoParams]{Use: "start", GroupID: "core"},
-			CmdT[NoParams]{Use: "debug", GroupID: "extra"},
+			Cmd[NoParams]{Use: "start", GroupID: "core"},
+			Cmd[NoParams]{Use: "debug", GroupID: "extra"},
 		),
 	}
 
@@ -590,7 +590,7 @@ func TestRunFuncE_Success(t *testing.T) {
 	type Args struct {
 		Name string
 	}
-	err := CmdT[Args]{
+	err := Cmd[Args]{
 		Use: "test",
 		RunFuncE: func(params *Args, cmd *cobra.Command, args []string) error {
 			ran = true
@@ -614,7 +614,7 @@ func TestRunFuncE_Error(t *testing.T) {
 		Name string
 	}
 	expectedErr := fmt.Errorf("something went wrong")
-	err := CmdT[Args]{
+	err := Cmd[Args]{
 		Use: "test",
 		RunFuncE: func(params *Args, cmd *cobra.Command, args []string) error {
 			return expectedErr
@@ -634,7 +634,7 @@ func TestRunFuncCtxE_Success(t *testing.T) {
 	type Args struct {
 		Name string
 	}
-	err := CmdT[Args]{
+	err := Cmd[Args]{
 		Use: "test",
 		RunFuncCtxE: func(ctx *HookContext, params *Args, cmd *cobra.Command, args []string) error {
 			ran = true
@@ -662,7 +662,7 @@ func TestRunFuncCtxE_Error(t *testing.T) {
 		Name string
 	}
 	expectedErr := fmt.Errorf("context error occurred")
-	err := CmdT[Args]{
+	err := Cmd[Args]{
 		Use: "test",
 		RunFuncCtxE: func(ctx *HookContext, params *Args, cmd *cobra.Command, args []string) error {
 			return expectedErr
@@ -683,7 +683,7 @@ func TestRunE_WithNonEVariant(t *testing.T) {
 	type Args struct {
 		Name string
 	}
-	err := CmdT[Args]{
+	err := Cmd[Args]{
 		Use: "test",
 		RunFunc: func(params *Args, cmd *cobra.Command, args []string) {
 			ran = true
@@ -707,7 +707,7 @@ func TestMultipleRunFuncs_Panics(t *testing.T) {
 	}()
 
 	type Args struct{}
-	CmdT[Args]{
+	Cmd[Args]{
 		Use: "test",
 		RunFunc: func(params *Args, cmd *cobra.Command, args []string) {
 		},
@@ -726,7 +726,7 @@ func TestMultipleRunFuncs_PanicsWithRunE(t *testing.T) {
 	}()
 
 	type Args struct{}
-	_ = CmdT[Args]{
+	_ = Cmd[Args]{
 		Use: "test",
 		RunFunc: func(params *Args, cmd *cobra.Command, args []string) {
 		},
@@ -740,7 +740,7 @@ func TestToCobraE(t *testing.T) {
 	type Args struct {
 		Name string
 	}
-	cmd := CmdT[Args]{
+	cmd := Cmd[Args]{
 		Use: "test",
 		RunFuncE: func(params *Args, cmd *cobra.Command, args []string) error {
 			return nil
@@ -763,7 +763,7 @@ func TestToCobraE_SetupError(t *testing.T) {
 	type Args struct {
 		Name string
 	}
-	cmd := CmdT[Args]{
+	cmd := Cmd[Args]{
 		Use: "test",
 		InitFunc: func(params *Args, cmd *cobra.Command) error {
 			return fmt.Errorf("init error")
@@ -780,10 +780,10 @@ func TestToCobraE_SetupError(t *testing.T) {
 }
 
 func TestCmdRunE(t *testing.T) {
-	// Test the non-generic Cmd type with RunE
+	// Exercise the erased runner used by Cmd[T].
 	ran := false
 	expectedErr := fmt.Errorf("cmd error")
-	err := Cmd{
+	err := command{
 		Use: "test",
 		RunFuncE: func(cmd *cobra.Command, args []string) error {
 			ran = true
@@ -808,7 +808,7 @@ func TestInitFuncError_WithRunE(t *testing.T) {
 	type Args struct {
 		Name string
 	}
-	err := CmdT[Args]{
+	err := Cmd[Args]{
 		Use: "test",
 		InitFunc: func(params *Args, cmd *cobra.Command) error {
 			return fmt.Errorf("init failed")
@@ -831,7 +831,7 @@ func TestPreValidateFuncError_WithRunE(t *testing.T) {
 	type Args struct {
 		Name string
 	}
-	err := CmdT[Args]{
+	err := Cmd[Args]{
 		Use: "test",
 		PreValidateFunc: func(params *Args, cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("prevalidate failed")
@@ -854,7 +854,7 @@ func TestPreExecuteFuncError_WithRunE(t *testing.T) {
 	type Args struct {
 		Name string
 	}
-	err := CmdT[Args]{
+	err := Cmd[Args]{
 		Use: "test",
 		PreExecuteFunc: func(params *Args, cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("preexecute failed")
@@ -877,7 +877,7 @@ func TestInitFuncCtxError_WithRunE(t *testing.T) {
 	type Args struct {
 		Name string
 	}
-	err := CmdT[Args]{
+	err := Cmd[Args]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, params *Args, cmd *cobra.Command) error {
 			return fmt.Errorf("init ctx failed")
@@ -900,7 +900,7 @@ func TestPreValidateFuncCtxError_WithRunE(t *testing.T) {
 	type Args struct {
 		Name string
 	}
-	err := CmdT[Args]{
+	err := Cmd[Args]{
 		Use: "test",
 		PreValidateFuncCtx: func(ctx *HookContext, params *Args, cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("prevalidate ctx failed")
@@ -923,7 +923,7 @@ func TestPreExecuteFuncCtxError_WithRunE(t *testing.T) {
 	type Args struct {
 		Name string
 	}
-	err := CmdT[Args]{
+	err := Cmd[Args]{
 		Use: "test",
 		PreExecuteFuncCtx: func(ctx *HookContext, params *Args, cmd *cobra.Command, args []string) error {
 			return fmt.Errorf("preexecute ctx failed")
@@ -951,7 +951,7 @@ func TestHooksSucceed_RunFuncECalled(t *testing.T) {
 	preExecuteCalled := false
 	runCalled := false
 
-	err := CmdT[Args]{
+	err := Cmd[Args]{
 		Use: "test",
 		InitFunc: func(params *Args, cmd *cobra.Command) error {
 			initCalled = true
@@ -1009,7 +1009,7 @@ func TestCustomArgsValidatorReturnsUserInputError(t *testing.T) {
 
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			err := CmdT[Params]{
+			err := Cmd[Params]{
 				Use:  "test",
 				Args: tc.args,
 				RunFunc: func(params *Params, cmd *cobra.Command, args []string) {

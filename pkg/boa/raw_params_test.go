@@ -12,14 +12,14 @@ import (
 )
 
 type RawConfig struct {
-	Host   string `long:"host" env:"HOST"`
-	Port   int    `long:"port" env:"PORT" default:"8080"`
-	Extra1 string `long:"extra1" env:"EXTRA1" required:"false"`
-	Extra2 string `long:"extra2" env:"EXTRA2" optional:"true"`
-	Extra3 string `long:"extra3" env:"EXTRA3" required:"true" default:"blah"`
-	Extra4 string `long:"extra4" env:"EXTRA4" required:"true"`
-	Extra5 string `long:"extra5" env:"EXTRA5" required:"true"`
-	Extra6 string `long:"extra6" env:"EXTRA6" required:"true" default:"error"`
+	Host   string `name:"host" env:"HOST"`
+	Port   int    `name:"port" env:"PORT" default:"8080"`
+	Extra1 string `name:"extra1" env:"EXTRA1" required:"false"`
+	Extra2 string `name:"extra2" env:"EXTRA2" optional:"true"`
+	Extra3 string `name:"extra3" env:"EXTRA3" required:"true" default:"blah"`
+	Extra4 string `name:"extra4" env:"EXTRA4" required:"true"`
+	Extra5 string `name:"extra5" env:"EXTRA5" required:"true"`
+	Extra6 string `name:"extra6" env:"EXTRA6" required:"true" default:"error"`
 }
 
 func TestRawConfig(t *testing.T) {
@@ -43,7 +43,7 @@ func TestRawConfig(t *testing.T) {
 	}
 	defer func() { _ = os.Unsetenv("EXTRA6") }()
 
-	err = CmdT[RawConfig]{
+	err = Cmd[RawConfig]{
 		Use:    "root",
 		Params: &config,
 		PreValidateFunc: func(params *RawConfig, cmd *cobra.Command, args []string) error {
@@ -97,7 +97,7 @@ func TestRawConfig(t *testing.T) {
 	}
 }
 
-// Tests for context-aware hooks and GetParam
+// Tests for context-aware hooks and Param
 
 type RawParamsWithCtx struct {
 	Name    string `optional:"true"` // raw field
@@ -109,19 +109,19 @@ func TestInitFuncCtx_SetDefault(t *testing.T) {
 	ran := false
 	config := RawParamsWithCtx{}
 
-	CmdT[RawParamsWithCtx]{
+	Cmd[RawParamsWithCtx]{
 		Use:    "test",
 		Params: &config,
 		InitFuncCtx: func(ctx *HookContext, params *RawParamsWithCtx, cmd *cobra.Command) error {
-			// Use GetParam to set default on raw field
-			nameParam := ctx.GetParam(&params.Name)
+			// Use Param to set default on raw field
+			nameParam := Param(ctx, &params.Name)
 			if nameParam == nil {
 				t.Fatal("expected to get param for Name")
 			}
-			nameParam.SetDefault(Default("default-name"))
+			nameParam.SetDefault("default-name")
 
-			countParam := ctx.GetParam(&params.Count)
-			countParam.SetDefault(Default(42))
+			countParam := Param(ctx, &params.Count)
+			countParam.SetDefault(42)
 
 			return nil
 		},
@@ -146,11 +146,11 @@ func TestInitFuncCtx_SetAlternatives(t *testing.T) {
 	ran := false
 	config := RawParamsWithCtx{}
 
-	CmdT[RawParamsWithCtx]{
+	Cmd[RawParamsWithCtx]{
 		Use:    "test",
 		Params: &config,
 		InitFuncCtx: func(ctx *HookContext, params *RawParamsWithCtx, cmd *cobra.Command) error {
-			nameParam := ctx.GetParam(&params.Name)
+			nameParam := Param(ctx, &params.Name)
 			nameParam.SetAlternatives([]string{"alice", "bob", "carol"})
 			nameParam.SetStrictAlts(true)
 			return nil
@@ -171,11 +171,11 @@ func TestInitFuncCtx_SetAlternatives(t *testing.T) {
 func TestInitFuncCtx_SetAlternatives_Invalid(t *testing.T) {
 	config := RawParamsWithCtx{}
 
-	err := CmdT[RawParamsWithCtx]{
+	err := Cmd[RawParamsWithCtx]{
 		Use:    "test",
 		Params: &config,
 		InitFuncCtx: func(ctx *HookContext, params *RawParamsWithCtx, cmd *cobra.Command) error {
-			nameParam := ctx.GetParam(&params.Name)
+			nameParam := Param(ctx, &params.Name)
 			nameParam.SetAlternatives([]string{"alice", "bob", "carol"})
 			nameParam.SetStrictAlts(true)
 			return nil
@@ -201,11 +201,11 @@ func TestInitFuncCtx_SetEnv(t *testing.T) {
 	}
 	defer func() { _ = os.Unsetenv("TEST_CUSTOM_NAME") }()
 
-	CmdT[RawParamsWithCtx]{
+	Cmd[RawParamsWithCtx]{
 		Use:    "test",
 		Params: &config,
 		InitFuncCtx: func(ctx *HookContext, params *RawParamsWithCtx, cmd *cobra.Command) error {
-			nameParam := ctx.GetParam(&params.Name)
+			nameParam := Param(ctx, &params.Name)
 			nameParam.SetEnv("TEST_CUSTOM_NAME")
 			return nil
 		},
@@ -222,40 +222,40 @@ func TestInitFuncCtx_SetEnv(t *testing.T) {
 	}
 }
 
-func TestGetParam_WorksForBothRawAndWrapped(t *testing.T) {
+func TestParam_WorksForBothRawAndWrapped(t *testing.T) {
 	type MixedParams struct {
-		RawName string         // raw field
-		Age     int            `optional:"true"` // raw field
-		Flag    bool           `optional:"true"` // raw field
+		RawName string // raw field
+		Age     int    `optional:"true"` // raw field
+		Flag    bool   `optional:"true"` // raw field
 	}
 
 	ran := false
 	config := MixedParams{}
 
-	CmdT[MixedParams]{
+	Cmd[MixedParams]{
 		Use:    "test",
 		Params: &config,
 		InitFuncCtx: func(ctx *HookContext, params *MixedParams, cmd *cobra.Command) error {
-			// GetParam should work for raw fields
-			rawParam := ctx.GetParam(&params.RawName)
+			// Param should work for raw fields
+			rawParam := Param(ctx, &params.RawName)
 			if rawParam == nil {
 				t.Fatal("expected to get param for RawName")
 			}
-			rawParam.SetDefault(Default("raw-default"))
+			rawParam.SetDefault("raw-default")
 
-			// GetParam should work for other raw fields too
-			ageParam := ctx.GetParam(&params.Age)
+			// Param should work for other raw fields too
+			ageParam := Param(ctx, &params.Age)
 			if ageParam == nil {
 				t.Fatal("expected to get param for Age")
 			}
-			ageParam.SetDefault(Default(25))
+			ageParam.SetDefault(25)
 
-			// GetParam should work for bool raw fields
-			flagParam := ctx.GetParam(&params.Flag)
+			// Param should work for bool raw fields
+			flagParam := Param(ctx, &params.Flag)
 			if flagParam == nil {
 				t.Fatal("expected to get param for Flag")
 			}
-			flagParam.SetDefault(Default(true))
+			flagParam.SetDefault(true)
 
 			return nil
 		},
@@ -288,7 +288,7 @@ func TestAllMirrors(t *testing.T) {
 	config := MultiRawParams{}
 	var mirrorCount int
 
-	CmdT[MultiRawParams]{
+	Cmd[MultiRawParams]{
 		Use:    "test",
 		Params: &config,
 		InitFuncCtx: func(ctx *HookContext, params *MultiRawParams, cmd *cobra.Command) error {
@@ -311,8 +311,8 @@ type ParamsWithInitCtx struct {
 }
 
 func (p *ParamsWithInitCtx) InitCtx(ctx *HookContext) error {
-	param := ctx.GetParam(&p.Name)
-	param.SetDefault(Default("interface-default"))
+	param := Param(ctx, &p.Name)
+	param.SetDefault("interface-default")
 	param.SetAlternatives([]string{"interface-default", "other"})
 	return nil
 }
@@ -321,7 +321,7 @@ func TestCfgStructInitCtx(t *testing.T) {
 	ran := false
 	config := ParamsWithInitCtx{}
 
-	CmdT[ParamsWithInitCtx]{
+	Cmd[ParamsWithInitCtx]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
@@ -355,7 +355,7 @@ func TestCfgStructPreValidateCtx(t *testing.T) {
 	ran := false
 	config := ParamsWithPreValidateCtx{}
 
-	CmdT[ParamsWithPreValidateCtx]{
+	Cmd[ParamsWithPreValidateCtx]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
@@ -392,7 +392,7 @@ func TestCfgStructPreExecuteCtx(t *testing.T) {
 	ran := false
 	config := ParamsWithPreExecuteCtx{}
 
-	CmdT[ParamsWithPreExecuteCtx]{
+	Cmd[ParamsWithPreExecuteCtx]{
 		Use:    "test",
 		Params: &config,
 		RunFunc: func(params *ParamsWithPreExecuteCtx, cmd *cobra.Command, args []string) {
@@ -426,7 +426,7 @@ func TestCfgStructPostCreate(t *testing.T) {
 	ran := false
 	config := ParamsWithPostCreate{}
 
-	CmdT[ParamsWithPostCreate]{
+	Cmd[ParamsWithPostCreate]{
 		Use:    "test",
 		Params: &config,
 		RunFunc: func(params *ParamsWithPostCreate, cmd *cobra.Command, args []string) {
@@ -449,7 +449,7 @@ type ParamsWithPostCreateCtx struct {
 
 func (p *ParamsWithPostCreateCtx) PostCreateCtx(ctx *HookContext) error {
 	// Verify we can access param mirrors after flags are created
-	param := ctx.GetParam(&p.Name)
+	param := Param(ctx, &p.Name)
 	p.FlagExists = param != nil && param.GetName() == "name"
 	return nil
 }
@@ -458,7 +458,7 @@ func TestCfgStructPostCreateCtx(t *testing.T) {
 	ran := false
 	config := ParamsWithPostCreateCtx{}
 
-	CmdT[ParamsWithPostCreateCtx]{
+	Cmd[ParamsWithPostCreateCtx]{
 		Use:    "test",
 		Params: &config,
 		RunFunc: func(params *ParamsWithPostCreateCtx, cmd *cobra.Command, args []string) {
@@ -478,12 +478,12 @@ func TestPreValidateFuncCtx(t *testing.T) {
 	ran := false
 	config := RawParamsWithCtx{}
 
-	CmdT[RawParamsWithCtx]{
+	Cmd[RawParamsWithCtx]{
 		Use:    "test",
 		Params: &config,
 		PreValidateFuncCtx: func(ctx *HookContext, params *RawParamsWithCtx, cmd *cobra.Command, args []string) error {
 			// Inspect mirrors after parsing
-			nameParam := ctx.GetParam(&params.Name)
+			nameParam := Param(ctx, &params.Name)
 			if nameParam == nil {
 				t.Fatal("expected to get param for Name in PreValidateFuncCtx")
 			}
@@ -511,16 +511,16 @@ func TestPreExecuteFuncCtx(t *testing.T) {
 	ran := false
 	config := RawParamsWithCtx{}
 
-	CmdT[RawParamsWithCtx]{
+	Cmd[RawParamsWithCtx]{
 		Use:    "test",
 		Params: &config,
 		InitFuncCtx: func(ctx *HookContext, params *RawParamsWithCtx, cmd *cobra.Command) error {
-			ctx.GetParam(&params.Name).SetDefault(Default("initial"))
+			Param(ctx, &params.Name).SetDefault("initial")
 			return nil
 		},
 		PreExecuteFuncCtx: func(ctx *HookContext, params *RawParamsWithCtx, cmd *cobra.Command, args []string) error {
 			// Can access mirrors after validation
-			nameParam := ctx.GetParam(&params.Name)
+			nameParam := Param(ctx, &params.Name)
 			alts := nameParam.GetAlternatives()
 			// Verify we can read param state
 			if nameParam.GetName() != "name" {
@@ -547,7 +547,7 @@ func TestPostCreateFuncCtx(t *testing.T) {
 	config := RawParamsWithCtx{}
 	var flagExists bool
 
-	CmdT[RawParamsWithCtx]{
+	Cmd[RawParamsWithCtx]{
 		Use:    "test",
 		Params: &config,
 		PostCreateFuncCtx: func(ctx *HookContext, params *RawParamsWithCtx, cmd *cobra.Command) error {
@@ -569,32 +569,32 @@ func TestPostCreateFuncCtx(t *testing.T) {
 	}
 }
 
-func TestGetParam_ReturnsNilForUnknownField(t *testing.T) {
+func TestParam_ReturnsNilForUnknownField(t *testing.T) {
 	type Params struct {
 		Name string `optional:"true"`
 	}
 
 	config := Params{}
-	var unknownResult Param
+	var unknownResult *Field[string]
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use:    "test",
 		Params: &config,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
 			// Try to get param for a local variable (not a field)
 			localVar := "test"
-			unknownResult = ctx.GetParam(&localVar)
+			unknownResult = Param(ctx, &localVar)
 			return nil
 		},
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {},
 	}.RunArgs([]string{})
 
 	if unknownResult != nil {
-		t.Fatal("expected GetParam to return nil for unknown field")
+		t.Fatal("expected Param to return nil for unknown field")
 	}
 }
 
-func TestGetParam_ParamMethods(t *testing.T) {
+func TestParam_ParamMethods(t *testing.T) {
 	type Params struct {
 		Name string `short:"n" env:"TEST_NAME" descr:"The name" optional:"true"`
 	}
@@ -602,11 +602,11 @@ func TestGetParam_ParamMethods(t *testing.T) {
 	config := Params{}
 
 	// Use PostCreateFuncCtx where names have been enriched
-	CmdT[Params]{
+	Cmd[Params]{
 		Use:    "test",
 		Params: &config,
 		PostCreateFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			param := ctx.GetParam(&params.Name)
+			param := Param(ctx, &params.Name)
 
 			// Test various getter methods (available after enrichment)
 			if param.GetName() != "name" {
@@ -647,7 +647,7 @@ func TestRunFuncCtx_Basic(t *testing.T) {
 	ran := false
 	config := Params{}
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use:    "test",
 		Params: &config,
 		RunFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command, args []string) {
@@ -674,7 +674,7 @@ func TestRunFuncCtx4_FullSignature(t *testing.T) {
 	ran := false
 	config := Params{}
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use:    "test",
 		Params: &config,
 		RunFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command, args []string) {
@@ -702,7 +702,7 @@ func TestRunFuncCtx_HasValue_SetByCli(t *testing.T) {
 	ran := false
 	config := Params{}
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use:    "test",
 		Params: &config,
 		RunFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command, args []string) {
@@ -739,7 +739,7 @@ func TestRunFuncCtx_HasValue_SetByEnv(t *testing.T) {
 	}
 	defer func() { _ = os.Unsetenv("TEST_RUN_NAME") }()
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use:    "test",
 		Params: &config,
 		RunFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command, args []string) {
@@ -767,7 +767,7 @@ func TestRunFuncCtx_HasValue_NoValueSet(t *testing.T) {
 	ran := false
 	config := Params{}
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
@@ -795,7 +795,7 @@ func TestRunFuncCtx_HasValue_WithRawParams(t *testing.T) {
 	ran := false
 	config := Params{}
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use:    "test",
 		Params: &config,
 		RunFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command, args []string) {
@@ -832,10 +832,10 @@ func TestRunFuncCtx_PanicsWhenBothRunFuncsSet(t *testing.T) {
 	}()
 
 	// This should panic because we're setting both RunFunc and RunFuncCtx
-	CmdT[Params]{
-		Use:    "test",
-		Params: &config,
-		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {},
+	Cmd[Params]{
+		Use:        "test",
+		Params:     &config,
+		RunFunc:    func(params *Params, cmd *cobra.Command, args []string) {},
 		RunFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command, args []string) {},
 	}.RunArgs([]string{})
 }
@@ -846,12 +846,12 @@ func TestRunFuncCtx_PanicsWhenBothRunFuncsSet(t *testing.T) {
 func TestValidArgsFunc_SeesRawFields(t *testing.T) {
 	type Params struct {
 		Namespace string   `optional:"true"`
-		Args      []string `pos:"true" optional:"true"`
+		Args      []string `positional:"true" optional:"true"`
 	}
 
 	config := Params{}
 
-	cobraCmd := CmdT[Params]{
+	cobraCmd := Cmd[Params]{
 		Use:    "test",
 		Params: &config,
 		ValidArgsFunc: func(params *Params, cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -892,11 +892,11 @@ func TestInitFuncCtx_AlternativesFunc_SeesOtherRawFields(t *testing.T) {
 
 	config := Params{}
 
-	cobraCmd := CmdT[Params]{
+	cobraCmd := Cmd[Params]{
 		Use:    "test",
 		Params: &config,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			ctx.GetParam(&params.FromDeploy).SetAlternativesFunc(func(cmd *cobra.Command, args []string, toComplete string) []string {
+			Param(ctx, &params.FromDeploy).SetAlternativesFunc(func(cmd *cobra.Command, args []string, toComplete string) []string {
 				// The completion function should see the already-typed --namespace value.
 				// Return it as a completion so the test can verify it.
 				return []string{params.Namespace}
@@ -924,13 +924,13 @@ func TestInitFuncCtx_AlternativesFunc_SeesOtherRawFields(t *testing.T) {
 // positional argument are returned by shell completion.
 func TestPositionalArg_Alternatives(t *testing.T) {
 	type Params struct {
-		Action string `pos:"true" alts:"start,stop,restart"`
+		Action string `positional:"true" alts:"start,stop,restart"`
 	}
 
 	config := Params{}
-	cobraCmd := CmdT[Params]{
-		Use:    "test",
-		Params: &config,
+	cobraCmd := Cmd[Params]{
+		Use:     "test",
+		Params:  &config,
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {},
 	}.ToCobra()
 
@@ -954,15 +954,15 @@ func TestPositionalArg_Alternatives(t *testing.T) {
 // set on a positional argument is called during shell completion.
 func TestPositionalArg_AlternativesFunc(t *testing.T) {
 	type Params struct {
-		Env string `pos:"true"`
+		Env string `positional:"true"`
 	}
 
 	config := Params{}
-	cobraCmd := CmdT[Params]{
+	cobraCmd := Cmd[Params]{
 		Use:    "test",
 		Params: &config,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			ctx.GetParam(&params.Env).SetAlternativesFunc(func(cmd *cobra.Command, args []string, toComplete string) []string {
+			Param(ctx, &params.Env).SetAlternativesFunc(func(cmd *cobra.Command, args []string, toComplete string) []string {
 				return []string{"dev", "staging", "prod"}
 			})
 			return nil
@@ -989,14 +989,14 @@ func TestPositionalArg_AlternativesFunc(t *testing.T) {
 // completion dispatches to the correct positional arg based on position.
 func TestPositionalArg_AlternativesFunc_MultiplePositionals(t *testing.T) {
 	type Params struct {
-		Env    string `pos:"true" alts:"dev,staging,prod"`
-		Action string `pos:"true" alts:"deploy,rollback"`
+		Env    string `positional:"true" alts:"dev,staging,prod"`
+		Action string `positional:"true" alts:"deploy,rollback"`
 	}
 
 	config := Params{}
-	cobraCmd := CmdT[Params]{
-		Use:    "test",
-		Params: &config,
+	cobraCmd := Cmd[Params]{
+		Use:     "test",
+		Params:  &config,
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {},
 	}.ToCobra()
 
@@ -1036,15 +1036,15 @@ func TestPositionalArg_AlternativesFunc_MultiplePositionals(t *testing.T) {
 func TestPositionalArg_AlternativesFunc_SeesRawFields(t *testing.T) {
 	type Params struct {
 		Namespace string `optional:"true"`
-		Action    string `pos:"true"`
+		Action    string `positional:"true"`
 	}
 
 	config := Params{}
-	cobraCmd := CmdT[Params]{
+	cobraCmd := Cmd[Params]{
 		Use:    "test",
 		Params: &config,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			ctx.GetParam(&params.Action).SetAlternativesFunc(func(cmd *cobra.Command, args []string, toComplete string) []string {
+			Param(ctx, &params.Action).SetAlternativesFunc(func(cmd *cobra.Command, args []string, toComplete string) []string {
 				return []string{"ns:" + params.Namespace}
 			})
 			return nil
@@ -1070,12 +1070,12 @@ func TestPositionalArg_AlternativesFunc_SeesRawFields(t *testing.T) {
 // when a positional arg has no completion, the user-provided ValidArgsFunc is used.
 func TestPositionalArg_AlternativesFunc_FallbackToValidArgsFunc(t *testing.T) {
 	type Params struct {
-		First  string `pos:"true" alts:"aaa,bbb"`
-		Second string `pos:"true"`
+		First  string `positional:"true" alts:"aaa,bbb"`
+		Second string `positional:"true"`
 	}
 
 	config := Params{}
-	cobraCmd := CmdT[Params]{
+	cobraCmd := Cmd[Params]{
 		Use:    "test",
 		Params: &config,
 		ValidArgsFunc: func(params *Params, cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {

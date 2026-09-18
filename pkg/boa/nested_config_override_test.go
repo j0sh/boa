@@ -18,7 +18,7 @@ func TestNestedConfigFile_WithCLIOverride(t *testing.T) {
 		Port int    `descr:"port" default:"5432"`
 	}
 	type Params struct {
-		ConfigFile string   `configfile:"true" default:"" optional:"true"`
+		ConfigFile string `configfile:"true" default:"" optional:"true"`
 		DB         DBConfig
 	}
 
@@ -31,7 +31,7 @@ func TestNestedConfigFile_WithCLIOverride(t *testing.T) {
 
 	var gotHost string
 	var gotPort int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -59,7 +59,7 @@ func TestNestedConfigFile_NoCliOverride(t *testing.T) {
 		Port int    `descr:"port" default:"5432"`
 	}
 	type Params struct {
-		ConfigFile string   `configfile:"true" default:"" optional:"true"`
+		ConfigFile string `configfile:"true" default:"" optional:"true"`
 		DB         DBConfig
 	}
 
@@ -72,7 +72,7 @@ func TestNestedConfigFile_NoCliOverride(t *testing.T) {
 
 	var gotHost string
 	var gotPort int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -99,7 +99,7 @@ func TestNestedConfigFile_EnvOverridesConfig(t *testing.T) {
 		Port int    `descr:"port" default:"5432"`
 	}
 	type Params struct {
-		ConfigFile string   `configfile:"true" default:"" optional:"true"`
+		ConfigFile string `configfile:"true" default:"" optional:"true"`
 		DB         DBConfig
 	}
 
@@ -115,7 +115,7 @@ func TestNestedConfigFile_EnvOverridesConfig(t *testing.T) {
 
 	var gotHost string
 	var gotPort int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherCombine(ParamEnricherDefault, ParamEnricherEnv),
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -144,7 +144,7 @@ func TestNestedConfigFile_DeepNesting(t *testing.T) {
 		Primary ConnConfig
 	}
 	type Params struct {
-		ConfigFile string        `configfile:"true" default:"" optional:"true"`
+		ConfigFile string `configfile:"true" default:"" optional:"true"`
 		Infra      ClusterConfig
 	}
 
@@ -158,7 +158,7 @@ func TestNestedConfigFile_DeepNesting(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var gotHost string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {

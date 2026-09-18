@@ -2,29 +2,30 @@
 
 This page covers advanced BOA features for power users.
 
-## The Param Interface
+## Programmatic Field Configuration
 
-Every parameter (whether using struct tags or programmatic configuration) implements the `Param` interface. Access it via `HookContext.GetParam()`:
+Use `boa.Param(ctx, &params.Field)` in an init hook when a field needs configuration that is awkward or impossible to express with tags. The function returns `*boa.Field[T]`, so defaults, validators, and numeric bounds are checked against the field's Go type.
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "cmd",
     InitFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command) error {
-        param := ctx.GetParam(&p.SomeField)
-        // Now use param methods...
+        field := boa.Param(ctx, &p.SomeField)
+        field.SetDescription("shown in --help")
         return nil
     },
 }
 ```
 
-### Param Methods
+`Field[T]` embeds `Parameter`, which supplies the settings shared by all field types. `HookContext.AllMirrors()` returns `[]boa.Parameter` for code that needs to inspect every field.
+
+### General Methods
 
 | Method | Description |
 |--------|-------------|
 | `SetName(string)` | Override flag name |
 | `SetShort(string)` | Set short flag |
 | `SetEnv(string)` | Set environment variable |
-| `SetDefault(any)` | Set default value |
 | `SetAlternatives([]string)` | Set allowed values |
 | `SetAlternativesFunc(func(...) []string)` | Set dynamic completion function |
 | `SetStrictAlts(bool)` | Enable/disable strict validation |
@@ -39,9 +40,7 @@ boa.CmdT[Params]{
 | `IsRequired() bool` | Check if required |
 | `IsEnabled() bool` | Check if visible |
 
-## Typed Parameter API (ParamT)
-
-For type-safe parameter configuration, use `boa.GetParamT[T]()` instead of `GetParam()`. This returns a `ParamT[T]` interface with typed methods:
+### Typed Methods
 
 ```go
 type Params struct {
@@ -49,50 +48,40 @@ type Params struct {
     Host string `descr:"Server host"`
 }
 
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "server",
     InitFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command) error {
         // Type-safe: compiler ensures correct types
-        portParam := boa.GetParamT(ctx, &p.Port)
-        portParam.SetDefaultT(8080)  // Takes int, not any
-        portParam.SetCustomValidatorT(func(port int) error {
+        port := boa.Param(ctx, &p.Port)
+        port.SetDefault(8080)
+        port.SetMin(1)
+        port.SetMax(65535)
+        port.SetCustomValidator(func(port int) error {
             if port < 1 || port > 65535 {
                 return fmt.Errorf("port must be between 1 and 65535")
             }
             return nil
         })
 
-        hostParam := boa.GetParamT(ctx, &p.Host)
-        hostParam.SetDefaultT("localhost")  // Takes string
-        hostParam.SetAlternatives([]string{"localhost", "0.0.0.0"})
+        host := boa.Param(ctx, &p.Host)
+        host.SetDefault("localhost")
+        host.SetAlternatives([]string{"localhost", "0.0.0.0"})
 
         return nil
     },
 }
 ```
 
-### ParamT Methods
-
-The `ParamT[T]` interface provides typed methods plus all pass-through methods from `Param`:
+`*Field[T]` adds these type-specific methods:
 
 | Typed Methods | Description |
 |---------------|-------------|
-| `SetDefaultT(T)` | Set default value with compile-time type checking |
-| `SetCustomValidatorT(func(T) error)` | Set validation function that receives the typed value |
+| `SetDefault(T)` | Set default value with compile-time type checking |
+| `SetCustomValidator(func(T) error)` | Set validation function that receives the typed value |
+| `SetMin(T)`, `SetMax(T)` | Set bounds on numeric fields |
+| `SetMinLen(int)`, `SetMaxLen(int)` | Set length bounds on strings, slices, and maps |
 
-| Pass-through Methods | Description |
-|---------------------|-------------|
-| `Param()` | Access the underlying untyped `Param` interface |
-| `SetAlternatives([]string)` | Set allowed values |
-| `SetStrictAlts(bool)` | Enable/disable strict validation |
-| `SetAlternativesFunc(...)` | Set dynamic completion function |
-| `SetEnv(string)` | Set environment variable |
-| `SetShort(string)` | Set short flag |
-| `SetName(string)` | Set flag name |
-| `SetIsEnabledFn(func() bool)` | Dynamic visibility |
-| `SetRequiredFn(func() bool)` | Dynamic required condition |
-
-### Conditional Requirements with ParamT
+### Conditional Requirements
 
 ```go
 type DeployParams struct {
@@ -100,11 +89,11 @@ type DeployParams struct {
     ProdKey     string `descr:"Production API key" optional:"true"`
 }
 
-boa.CmdT[DeployParams]{
+boa.Cmd[DeployParams]{
     Use: "deploy",
     InitFuncCtx: func(ctx *boa.HookContext, p *DeployParams, cmd *cobra.Command) error {
         // ProdKey is only required when deploying to production
-        prodKeyParam := boa.GetParamT(ctx, &p.ProdKey)
+        prodKeyParam := boa.Param(ctx, &p.ProdKey)
         prodKeyParam.SetRequiredFn(func() bool {
             return p.Environment == "prod"
         })
@@ -125,10 +114,10 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use: "app",
         InitFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command) error {
-            ctx.GetParam(&p.Region).SetAlternativesFunc(
+            boa.Param(ctx, &p.Region).SetAlternativesFunc(
                 func(cmd *cobra.Command, args []string, toComplete string) []string {
                     // Could fetch from API, read from file, etc.
                     return []string{"us-east-1", "us-west-2", "eu-west-1"}
@@ -148,7 +137,7 @@ func main() {
 For positional argument completion:
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "app",
     ValidArgsFunc: func(p *Params, cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
         // Return suggestions for positional args
@@ -170,7 +159,7 @@ type Params struct {
     Port       int
 }
 
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "app",
     RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
         fmt.Printf("Host: %s, Port: %d\n", p.Host, p.Port)
@@ -193,7 +182,7 @@ boa.RegisterConfigFormat(".yaml", yaml.Unmarshal)
 boa.RegisterConfigFormat(".toml", toml.Unmarshal)
 ```
 
-That's the whole story for every mainstream Go config parser. The one-liner gets you both parsing **and** full key-presence detection — including zero-valued and same-as-default writes to optional struct-pointer parameter groups (`DB *DBConfig`). Under the hood `RegisterConfigFormat` wraps the unmarshaler in a `UniversalConfigFormat`, which asks the same parser to also decode the file into a `map[string]any` so BOA can read the literal key structure. Every mainstream Go parser supports that.
+The helper also probes key presence by decoding into `map[string]any`. Use `ConfigFormat.KeyTree` when a parser cannot represent its keys that way. The decoder owns values, custom methods, and errors; Boa never retries a failed decode. See [config decoding](config-decoding.md) for string conversion and portable custom types.
 
 Without a `KeyTree`, BOA would fall back to snapshot comparison for those struct-pointer groups, which can't tell "user wrote the default" apart from "user wrote nothing". With the auto-synthesized one you avoid that gap entirely.
 
@@ -204,7 +193,7 @@ Without a `KeyTree`, BOA would fall back to snapshot comparison for those struct
 Use it when you want to attach a format inline to `Cmd.ConfigFormat` without touching the global registry:
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use:          "app",
     ConfigFormat: boa.UniversalConfigFormat(yaml.Unmarshal),
     RunFunc:      func(p *Params, cmd *cobra.Command, args []string) { ... },
@@ -227,32 +216,21 @@ boa.RegisterConfigFormatFull(".mycustom", boa.ConfigFormat{
 Resolution order for each config file load:
 
 1. `Cmd.ConfigFormat` — per-command escape hatch; locks that one command to a single format (rarely what you want)
-2. `Cmd.ConfigUnmarshal` — legacy, unmarshal-only, also command-locked
-3. **Registered format matched by file extension — the default path; any number of formats can coexist in one binary**
-4. Built-in JSON fallback
+2. **Registered format matched by file extension — the default path; any number of formats can coexist in one binary**
+3. Built-in JSON fallback
 
 #### Per-command escape hatch
 
-Setting a format directly on a command **bypasses** the extension registry and locks that command to one format. This is almost never what you want — prefer the global registry so your binary stays format-agnostic — but the escape hatch exists for custom-extension blobs from legacy systems and for injecting fake parsers in tests.
+Setting a format directly on a command **bypasses** the extension registry and locks that command to one format. Prefer the global registry when a binary accepts multiple formats. A per-command format is useful for application-specific inputs and test parsers.
 
 ```go
-boa.CmdT[Params]{
-    Use: "ingest-legacy-blob",
+boa.Cmd[Params]{
+    Use: "ingest-custom-blob",
     ConfigFormat: boa.ConfigFormat{
-        Unmarshal: myLegacyUnmarshal,
+        Unmarshal: myCustomUnmarshal,
         // KeyTree optional
     },
     RunFunc: func(p *Params, cmd *cobra.Command, args []string) { ... },
-}.Run()
-```
-
-The legacy unmarshal-only field still works:
-
-```go
-boa.CmdT[Params]{
-    Use:             "app",
-    ConfigUnmarshal: yaml.Unmarshal,
-    RunFunc:         func(p *Params, cmd *cobra.Command, args []string) { ... },
 }.Run()
 ```
 
@@ -305,17 +283,17 @@ type Params struct {
 // Or:   app --config-files base.json --config-files local.json
 ```
 
-The overlay semantics are just repeated `json.Unmarshal` into the same struct:
+Overlay semantics follow the selected decoder. With the built-in JSON decoder:
 
 - Keys mentioned in the later file replace what earlier files loaded
 - Keys absent from the later file leave earlier values alone
-- Slices and maps are *fully replaced* by the later file (not merged) — if base has `Tags: [a, b]` and local has `Tags: [c]`, the final value is `[c]`
+- Slices are replaced. Maps merge by key, following `encoding/json` semantics.
 - Empty strings in the list are skipped silently
 - Missing files produce a clean error naming which file failed
 
 Substruct `[]string` configfile fields get their own independent chains, and the usual root-vs-substruct priority still applies: every substruct chain loads first, then the root chain loads last.
 
-See [examples-config.md](examples-config.md#multi-file-overlay-base--local-cascade) for full examples.
+See [examples-config.md](examples-config.md#multi-file-overlay-base-local-cascade) for full examples.
 
 ### Using `LoadConfigFile` / `LoadConfigFiles` Explicitly
 
@@ -332,7 +310,7 @@ type Params struct {
     AppConfig
 }
 
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "app",
     PreValidateFunc: func(p *Params, cmd *cobra.Command, args []string) error {
         // Single file:
@@ -360,7 +338,7 @@ When the config lives somewhere other than a local file — an embedded `//go:em
 //go:embed defaults.yaml
 var defaultsYAML []byte
 
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "app",
     PreValidateFunc: func(p *Params, cmd *cobra.Command, args []string) error {
         // Seed defaults from the embedded YAML blob.
@@ -394,16 +372,14 @@ JSON comes with both directions pre-registered (pretty-printed, 2-space indent, 
 
 ## Live Config Reload
 
-For long-running programs that want to re-read config without restarting, BOA ships `boa.Reload[T](ctx) (*T, error)`. Every call allocates a brand-new `*T` and runs the full pipeline against it — the struct you originally received in `RunFunc` is never mutated. On success you get back the fresh snapshot to swap in (typically via `atomic.Pointer[T]`). On any failure — parse error, validation failure, missing file — Reload returns `(nil, err)` and nothing changes at all. Wire it to any trigger: SIGHUP, an admin HTTP endpoint, fsnotify, a timer.
-
-See the dedicated [Live Config Reload](live-reload.md) page for the full guide.
+`boa.Reload[T](ctx)` returns fresh validated parameters. See [Live Config Reload](live-reload.md) for execution order, isolated replay, and publication of snapshots.
 
 ## Checking Value Sources
 
 Use `HookContext` in your run function to check how values were set:
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "app",
     RunFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command, args []string) {
         if ctx.HasValue(&p.Port) {
@@ -420,7 +396,7 @@ boa.CmdT[Params]{
 Access the underlying Cobra command for features BOA doesn't wrap:
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "app",
     InitFunc: func(p *Params, cmd *cobra.Command) error {
         cmd.Deprecated = "use 'new-app' instead"
@@ -434,7 +410,7 @@ boa.CmdT[Params]{
 Or after flags are created:
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "app",
     PostCreateFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command) error {
         flag := cmd.Flags().Lookup("verbose")
@@ -449,16 +425,16 @@ boa.CmdT[Params]{
 Organize subcommands into groups in help output:
 
 ```go
-boa.CmdT[boa.NoParams]{
+boa.Cmd[boa.NoParams]{
     Use: "app",
     Groups: []*cobra.Group{
         {ID: "core", Title: "Core Commands:"},
         {ID: "util", Title: "Utility Commands:"},
     },
     SubCmds: boa.SubCmds(
-        boa.CmdT[Params]{Use: "init", GroupID: "core"},
-        boa.CmdT[Params]{Use: "run", GroupID: "core"},
-        boa.CmdT[Params]{Use: "version", GroupID: "util"},
+        boa.Cmd[Params]{Use: "init", GroupID: "core"},
+        boa.Cmd[Params]{Use: "run", GroupID: "core"},
+        boa.Cmd[Params]{Use: "version", GroupID: "util"},
     ),
 }
 ```
@@ -468,7 +444,7 @@ boa.CmdT[boa.NoParams]{
 ### Inject Arguments
 
 ```go
-cmd := boa.CmdT[Params]{
+cmd := boa.Cmd[Params]{
     Use: "app",
     RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
         // ...
@@ -485,7 +461,7 @@ Use `RunFuncE` and `RunArgsE` for testable commands that return errors:
 
 ```go
 func TestMyCommand(t *testing.T) {
-    err := boa.CmdT[Params]{
+    err := boa.Cmd[Params]{
         Use: "app",
         RunFuncE: func(p *Params, cmd *cobra.Command, args []string) error {
             if p.Port < 1024 {
@@ -505,7 +481,7 @@ Use `ToCobraE()` when you need the underlying cobra command with `RunE` set:
 
 ```go
 func TestMyCommand(t *testing.T) {
-    cmd, err := boa.CmdT[Params]{
+    cmd, err := boa.Cmd[Params]{
         Use: "app",
         RunFuncE: func(p *Params, cmd *cobra.Command, args []string) error {
             return nil
@@ -524,7 +500,7 @@ func TestMyCommand(t *testing.T) {
 ### Validate Without Running
 
 ```go
-cmd := boa.CmdT[Params]{
+cmd := boa.Cmd[Params]{
     Use:     "app",
     RawArgs: []string{"--name", "test"},
 }
@@ -552,7 +528,7 @@ func (c *Config) Init() error {
 
 // Called during initialization with HookContext
 func (c *Config) InitCtx(ctx *boa.HookContext) error {
-    ctx.GetParam(&c.Port).SetDefault(boa.Default(8080))
+    boa.Param(ctx, &c.Port).SetDefault(8080)
     return nil
 }
 
@@ -641,13 +617,11 @@ With `config.json`:
 
 `Host` and `Port` can be overridden via CLI flags; `InternalID` and `Metadata` are only loaded from the config file. `InternalID`'s `min:"8"` length check still runs; `Metadata` is passed through untouched.
 
-Prior to this release, `boa:"configonly"` was an alias for `boa:"ignore"`. If you used `configonly` purely to hide a field from CLI/env and didn't rely on validation being skipped, the new behavior is a strict upgrade. If you need the old behavior (no mirror, no validation), switch to `boa:"ignore"`.
-
 ## Finer-Grained Skipping: `boa:"noflag"` and `boa:"noenv"`
 
 `boa:"configonly"` covers the common "config-file only" case by hiding a field from both CLI and env. When you only want to skip one of those channels, boa provides two orthogonal directives that preserve the mirror (and therefore validation):
 
-- **`boa:"noflag"` (alias `boa:"nocli"`)** — do not register a CLI flag for this field, but keep env vars, config file loading, defaults, and `min`/`max`/`pattern` validation active.
+- **`boa:"noflag"`** — do not register a CLI flag for this field, but keep env vars, config file loading, defaults, and `min`/`max`/`pattern` validation active.
 - **`boa:"noenv"`** — do not read this field from environment variables, but keep the CLI flag and config-file loading.
 
 `boa:"configonly"` is exactly `noflag,noenv` (plus the mirror-preserving behavior described in the previous section).
@@ -666,20 +640,20 @@ Here `--secret` is not a flag, but `API_TOKEN=...` still sets it and the `min:"2
 
 ## Programmatic Configuration (Tag Parity)
 
-All struct-tag features have a matching setter on the `Param` / `ParamT[T]` interface, reachable via `HookContext.GetParam(&field)` or `boa.GetParamT(ctx, &field)`. This matters when your parameter struct comes from a third-party package and you cannot add tags:
+All struct-tag features have a matching setter on `*boa.Field[T]`, obtained with `boa.Param(ctx, &field)`. This matters when your parameter struct comes from a third-party package and you cannot add tags:
 
 ```go
-boa.CmdT[ThirdPartyConfig]{
+boa.Cmd[ThirdPartyConfig]{
     Use: "cmd",
     InitFuncCtx: func(ctx *boa.HookContext, p *ThirdPartyConfig, cmd *cobra.Command) error {
-        token := boa.GetParamT(ctx, &p.Token)
+        token := boa.Param(ctx, &p.Token)
         token.SetNoFlag(true)               // like boa:"noflag"
         token.SetEnv("MYAPP_TOKEN")         // like env:"MYAPP_TOKEN"
         token.SetDescription("API token")   // like descr:"API token"
 
-        port := boa.GetParamT(ctx, &p.Port)
-        port.SetMinT(1)                     // like min:"1"
-        port.SetMaxT(65535)                 // like max:"65535"
+        port := boa.Param(ctx, &p.Port)
+        port.SetMin(1)                     // like min:"1"
+        port.SetMax(65535)                 // like max:"65535"
         port.SetRequired(true)              // like required:"true"
         return nil
     },
@@ -688,25 +662,25 @@ boa.CmdT[ThirdPartyConfig]{
 
 | Tag | Programmatic equivalent |
 |-----|--------------------------|
-| `descr` / `desc` / `help` | `SetDescription(string)` |
-| `name` / `long` | `SetName(string)` |
+| `descr` | `SetDescription(string)` |
+| `name` | `SetName(string)` |
 | `short` | `SetShort(string)` |
 | `env` | `SetEnv(string)` |
-| `default` | `SetDefault(any)` / `SetDefaultT[T](T)` |
-| `positional` / `pos` | `SetPositional(bool)` |
-| `required` / `req` | `SetRequired(bool)` or `SetRequiredFn(func() bool)` |
-| `optional` / `opt` | `SetRequired(false)` |
-| `alts` / `alternatives` | `SetAlternatives([]string)`, `SetAlternativesFunc(...)` |
-| `strict` / `strict-alts` | `SetStrictAlts(bool)` |
-| `min` | `ParamT[T].SetMinT(T)` for numeric, `SetMinLen(int)` for string/slice/map. `ClearMin()` removes. Non-generic `Param.SetMin(any)` accepts any numeric (coerced to `*int64` / `*float64` / `*int` per field kind). |
-| `max` | `ParamT[T].SetMaxT(T)` / `SetMaxLen(int)` / `ClearMax()`. Symmetric with `min`. |
+| `default` | `SetDefault(T)` |
+| `positional` | `SetPositional(bool)` |
+| `required` | `SetRequired(true)` or `SetRequiredFn(func() bool)` |
+| `optional` | `SetRequired(false)` |
+| `alts` | `SetAlternatives([]string)`, `SetAlternativesFunc(...)` |
+| `strict` | `SetStrictAlts(bool)` |
+| `min` | `SetMin(T)` for numeric fields; `SetMinLen(int)` for strings, slices, and maps; `ClearMin()` to remove |
+| `max` | `SetMax(T)` for numeric fields; `SetMaxLen(int)` for strings, slices, and maps; `ClearMax()` to remove |
 | `pattern` | `SetPattern(string)` |
-| `boa:"noflag"` / `"nocli"` | `SetNoFlag(bool)` |
+| `boa:"noflag"` | `SetNoFlag(bool)` |
 | `boa:"noenv"` | `SetNoEnv(bool)` |
 | `boa:"ignore"` | `SetIgnored(bool)` (post-traversal equivalent; the tag form skips traversal entirely) |
 | `boa:"configonly"` | `SetNoFlag(true)` + `SetNoEnv(true)` |
 
-All programmatic setters must run in `InitFunc` / `InitFuncCtx` (or `CfgStructInit` / `CfgStructInitCtx`) so they take effect before cobra flag binding and env-var reading.
+Call these setters from `InitFuncCtx` or `CfgStructInitCtx.InitCtx`, before BOA binds flags or reads environment variables.
 
 ## Named Struct Auto-Prefixing
 
@@ -777,9 +751,9 @@ type Params struct {
 ## Custom Type Registration
 
 Register user-defined types with `RegisterType`. String values from flags,
-environment variables, `default` tags, and config files all pass through the
-same `Parse` function, so validation and canonicalization are consistent no
-matter where a value came from. The type is stored as a string flag in cobra
+environment variables, `default` tags, and built-in JSON decoding pass through
+the same `Parse` function. Other formats use their decoder's native methods;
+`boa.Text[T]` adapts registered types to `encoding.TextUnmarshaler`. The type is stored as a string flag in cobra
 and converted via your provided `Parse`/`Format` functions:
 
 ```go
@@ -812,24 +786,7 @@ type Params struct {
 | `Parse` | `func(string) (T, error)` | Converts a string from CLI, env, defaults, or config into the typed value (required) |
 | `Format` | `func(T) string` | Converts the typed value back to a string for default display. If nil, `fmt.Sprintf("%v", val)` is used |
 
-Config-file parsing uses exact registered type matches. Registered values are
-supported as scalar fields, pointers, nested fields, slices, and values in
-Boa's supported `map[string]T` maps. A string-backed type is still passed
-through `Parse` even when the config library could assign the underlying
-string directly; this ensures the parser's validation and canonicalization
-cannot be bypassed by using a config file.
-
-Built-in exact-type handlers follow the same rule. For example, a
-`time.Duration` field accepts a human-readable config string such as
-`"1h30m"`, using the same parser as `--timeout 1h30m` or
-`TIMEOUT=1h30m`. Existing numeric config values remain nanoseconds, and config
-dumps continue to emit numeric nanoseconds.
-
-If normal decoding fails, Boa converts registered strings and retries the
-whole document through the format's decoder, preserving validation of other
-values. JSON works automatically; other formats should supply a matching
-`ConfigFormat.Marshal` for this retry. Concrete-destination-only parsers remain
-responsible for decoding registered strings themselves.
+For types you own, implementing `encoding.TextUnmarshaler` is usually sufficient: Boa discovers it for flags and env vars, and supporting config decoders invoke it directly. See [config decoding](config-decoding.md) for complete rules and examples.
 
 ## ConfigFormatExtensions
 

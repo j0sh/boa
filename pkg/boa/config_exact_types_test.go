@@ -2,6 +2,7 @@ package boa
 
 import (
 	"encoding/json"
+	jsonv2 "encoding/json/v2"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -80,7 +81,7 @@ func TestConfigExactType_StringBackedRegistrationAlwaysParses(t *testing.T) {
 		t.Fatalf("params=%+v Parse calls=%d, want %+v and 6 calls", params, parseCalls, want)
 	}
 	err = LoadConfigBytes([]byte(`{"scalar":"invalid"}`), ".json", &params, nil)
-	if err == nil || !strings.Contains(err.Error(), "must start with cfg-") || !strings.Contains(err.Error(), "Scalar") {
+	if err == nil || !strings.Contains(err.Error(), "must start with cfg-") || !strings.Contains(err.Error(), "/scalar") {
 		t.Fatalf("error = %v, want registered parser failure with field path", err)
 	}
 }
@@ -180,9 +181,7 @@ func TestConfigExactType_DurationInEmbeddedStruct(t *testing.T) {
 
 func TestConfigExactType_DurationRejectsInvalidValues(t *testing.T) {
 	strict := func(data []byte, target any) error {
-		decoder := json.NewDecoder(strings.NewReader(string(data)))
-		decoder.DisallowUnknownFields()
-		return decoder.Decode(target)
+		return jsonv2.Unmarshal(data, target, json.DefaultOptionsV1(), jsonv2.RejectUnknownMembers(true), jsonv2.WithUnmarshalers(JSONUnmarshalers()))
 	}
 	for _, value := range []string{`"tomorrow"`, "true", "{}", "[]", "1.5", "1.0", "1e3", "1.0000000000000000001", "9223372036854775808", "-9223372036854775809"} {
 		for _, shape := range []string{
@@ -281,7 +280,7 @@ func TestConfigExactType_AutomaticConfigAndCLIPrecedence(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			var got time.Duration
 			var hasValue bool
-			err := (CmdT[Params]{
+			err := (Cmd[Params]{
 				Use: "test",
 				RunFuncCtx: func(ctx *HookContext, params *Params, _ *cobra.Command, _ []string) {
 					got, hasValue = params.Timeout, ctx.HasValue(&params.Timeout)
@@ -301,9 +300,7 @@ func TestConfigExactType_CustomFormatNeedsNoMarshaler(t *testing.T) {
 		if !ok {
 			return fmt.Errorf("missing typed format prefix")
 		}
-		decoder := json.NewDecoder(strings.NewReader(payload))
-		decoder.UseNumber()
-		return decoder.Decode(target)
+		return UnmarshalJSON([]byte(payload), target)
 	}))
 	registerTypeCleanup(t, TypeDef[canonicalConfigString]{
 		Parse: func(value string) (canonicalConfigString, error) {
@@ -327,7 +324,7 @@ func TestConfigExactType_CustomFormatNeedsNoMarshaler(t *testing.T) {
 
 func TestConfigExactType_KeyTreePlaceholdersAreNotValues(t *testing.T) {
 	registerFormatCleanup(t, ".placeholder", ConfigFormat{
-		Unmarshal: json.Unmarshal,
+		Unmarshal: UnmarshalJSON,
 		KeyTree: func([]byte) (map[string]any, error) {
 			return map[string]any{
 				"value":  "placeholder",

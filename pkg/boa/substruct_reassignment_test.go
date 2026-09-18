@@ -21,7 +21,7 @@ import (
 //     second, non-conflicting piece of configuration (a custom validator).
 //
 // The test verifies:
-//   - GetParam returns the SAME mirror instance after reassignment.
+//   - Param returns the SAME mirror instance after reassignment.
 //   - Both configurations (alternatives func + custom validator) are preserved on
 //     the final mirror.
 //   - CLI parsing still routes values into the (reassigned) substruct correctly.
@@ -38,8 +38,8 @@ func TestSubstructReassignmentPreservesMirror(t *testing.T) {
 	}
 
 	var (
-		mirrorBeforeReassign Param
-		mirrorAfterReassign  Param
+		mirrorBeforeReassign Parameter
+		mirrorAfterReassign  Parameter
 		finalAltsFunc        func(cmd *cobra.Command, args []string, toComplete string) []string
 		finalValidator       func(any) error
 		finalHost            string
@@ -47,32 +47,32 @@ func TestSubstructReassignmentPreservesMirror(t *testing.T) {
 		validatorCalls       int
 	)
 
-	cmd := (CmdT[Params]{
+	cmd := (Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
 			// Step 1: mirror via the preallocated pointee — set a dynamic alternatives func.
-			m1 := ctx.GetParam(&params.DB.Host)
+			m1 := Param(ctx, &params.DB.Host)
 			if m1 == nil {
 				t.Fatal("mirror for DB.Host not found before reassignment")
 			}
 			m1.SetAlternativesFunc(func(cmd *cobra.Command, args []string, toComplete string) []string {
 				return []string{"gamma", "delta"}
 			})
-			mirrorBeforeReassign = m1
+			mirrorBeforeReassign = m1.Parameter
 
 			// Step 2: reassign the substruct pointer. The new pointee is at a different
 			// heap address, so &params.DB.Host now points into different memory.
 			params.DB = &DB{Host: "inline-default", Port: 9999}
 
 			// Step 3: mirror via the NEW field address — must resolve to the same instance.
-			m2 := ctx.GetParam(&params.DB.Host)
+			m2 := Param(ctx, &params.DB.Host)
 			if m2 == nil {
 				t.Fatal("mirror for DB.Host not found after reassignment")
 			}
-			mirrorAfterReassign = m2
+			mirrorAfterReassign = m2.Parameter
 
 			// Non-conflicting configuration: a custom validator.
-			m2.SetCustomValidator(func(v any) error {
+			m2.SetCustomValidator(func(v string) error {
 				validatorCalls++
 				return nil
 			})
@@ -83,9 +83,9 @@ func TestSubstructReassignmentPreservesMirror(t *testing.T) {
 				finalHost = p.DB.Host
 				finalPort = p.DB.Port
 			}
-			if m := ctx.GetParam(&p.DB.Host); m != nil {
+			if m := Param(ctx, &p.DB.Host); m != nil {
 				finalAltsFunc = m.GetAlternativesFunc()
-				if pm, ok := m.(*paramMeta); ok {
+				if pm, ok := m.Parameter.(*paramMeta); ok {
 					finalValidator = pm.customValidator
 				}
 			}
@@ -137,7 +137,7 @@ func TestSubstructReassignmentPreservesMirror(t *testing.T) {
 // TestDeepNestedReassignment_FullTree exercises the full-tree-reassignment case
 // for deeply nested pointer substructs: the user replaces the outermost pointer,
 // which transitively replaces every inner pointer and leaf. Every intermediate
-// heap address changes. GetParam must still resolve mirror identity through the
+// heap address changes. Param must still resolve mirror identity through the
 // new tree.
 func TestDeepNestedReassignment_FullTree(t *testing.T) {
 	type Leaf struct {
@@ -154,24 +154,24 @@ func TestDeepNestedReassignment_FullTree(t *testing.T) {
 	}
 
 	var (
-		mBefore    Param
-		mAfter     Param
+		mBefore    Parameter
+		mAfter     Parameter
 		finalValue string
 	)
 
-	cmd := (CmdT[Params]{
+	cmd := (Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			mBefore = ctx.GetParam(&params.Outer.Middle.Leaf.Value)
+			mBefore = Param(ctx, &params.Outer.Middle.Leaf.Value).Parameter
 			if mBefore == nil {
 				t.Fatal("mirror for Outer.Middle.Leaf.Value not found before reassignment")
 			}
-			mBefore.SetDefault(Default("initial-default"))
+			mBefore.SetDefault("initial-default")
 
 			// Replace the entire tree — every heap address below params.Outer changes.
 			params.Outer = &Outer{Middle: &Middle{Leaf: &Leaf{Value: ""}}}
 
-			mAfter = ctx.GetParam(&params.Outer.Middle.Leaf.Value)
+			mAfter = Param(ctx, &params.Outer.Middle.Leaf.Value).Parameter
 			if mAfter == nil {
 				t.Fatal("mirror for Outer.Middle.Leaf.Value not found after reassignment")
 			}
@@ -215,15 +215,15 @@ func TestDeepNestedReassignment_MiddleOnly(t *testing.T) {
 	}
 
 	var (
-		mBefore    Param
-		mAfter     Param
+		mBefore    Parameter
+		mAfter     Parameter
 		finalValue string
 	)
 
-	cmd := (CmdT[Params]{
+	cmd := (Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			mBefore = ctx.GetParam(&params.Outer.Middle.Leaf.Value)
+			mBefore = Param(ctx, &params.Outer.Middle.Leaf.Value).Parameter
 			if mBefore == nil {
 				t.Fatal("mirror not found before middle reassignment")
 			}
@@ -231,7 +231,7 @@ func TestDeepNestedReassignment_MiddleOnly(t *testing.T) {
 			// Replace only Middle (Outer stays the same preallocated instance).
 			params.Outer.Middle = &Middle{Leaf: &Leaf{Value: ""}}
 
-			mAfter = ctx.GetParam(&params.Outer.Middle.Leaf.Value)
+			mAfter = Param(ctx, &params.Outer.Middle.Leaf.Value).Parameter
 			if mAfter == nil {
 				t.Fatal("mirror not found after middle reassignment")
 			}
@@ -259,7 +259,7 @@ func TestDeepNestedReassignment_MiddleOnly(t *testing.T) {
 
 // TestReassignToNilAndBack exercises the case where a user clears a substruct
 // pointer (sets it to nil) and then sets it back to a fresh non-nil pointee.
-// GetParam must return nil while the pointer is nil, then resolve the mirror
+// Param must return nil while the pointer is nil, then resolve the mirror
 // again once the pointer is restored.
 func TestReassignToNilAndBack(t *testing.T) {
 	type DB struct {
@@ -270,16 +270,16 @@ func TestReassignToNilAndBack(t *testing.T) {
 	}
 
 	var (
-		mBefore   Param
-		mDuringNil Param
-		mAfter    Param
-		finalHost string
+		mBefore    Parameter
+		mDuringNil Parameter
+		mAfter     Parameter
+		finalHost  string
 	)
 
-	cmd := (CmdT[Params]{
+	cmd := (Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			mBefore = ctx.GetParam(&params.DB.Host)
+			mBefore = Param(ctx, &params.DB.Host).Parameter
 			if mBefore == nil {
 				t.Fatal("mirror not found initially")
 			}
@@ -301,7 +301,7 @@ func TestReassignToNilAndBack(t *testing.T) {
 
 			// Restore to a fresh pointee at a new heap address.
 			params.DB = &DB{Host: ""}
-			mAfter = ctx.GetParam(&params.DB.Host)
+			mAfter = Param(ctx, &params.DB.Host).Parameter
 			if mAfter == nil {
 				t.Fatal("mirror not found after restoration")
 			}
@@ -330,9 +330,9 @@ func TestReassignToNilAndBack(t *testing.T) {
 	}
 }
 
-// TestGetParam_AutoRepairsCacheAfterReassignment verifies that when the
+// TestParam_AutoRepairsCacheAfterReassignment verifies that when the
 // addrToPath cache is stale (because a substruct was reassigned after init),
-// the fallback walk in GetParam not only finds the mirror but also *repairs
+// the fallback walk in Param not only finds the mirror but also *repairs
 // the cache* so subsequent lookups for the same field address are O(1) again.
 //
 // The test makes four independent observations:
@@ -345,7 +345,7 @@ func TestReassignToNilAndBack(t *testing.T) {
 //
 // This is a white-box test: it reaches into processingContext internals
 // because the optimization is invisible through the public API.
-func TestGetParam_AutoRepairsCacheAfterReassignment(t *testing.T) {
+func TestParam_AutoRepairsCacheAfterReassignment(t *testing.T) {
 	type DB struct {
 		Host string `descr:"host" default:"localhost"`
 	}
@@ -354,20 +354,20 @@ func TestGetParam_AutoRepairsCacheAfterReassignment(t *testing.T) {
 	}
 
 	var (
-		newHostAddr           unsafe.Pointer
-		cacheHadNewAddrBefore bool
-		cacheHadNewAddrAfter  bool
-		walksAfterFirstLookup int
+		newHostAddr            unsafe.Pointer
+		cacheHadNewAddrBefore  bool
+		cacheHadNewAddrAfter   bool
+		walksAfterFirstLookup  int
 		walksAfterSecondLookup int
-		rebuildsAfterFirst    int
-		rebuildsAfterSecond   int
+		rebuildsAfterFirst     int
+		rebuildsAfterSecond    int
 	)
 
-	cmd := (CmdT[Params]{
+	cmd := (Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
 			// Step 1: prime the cache with the preallocated pointee's addresses.
-			if m := ctx.GetParam(&params.DB.Host); m == nil {
+			if m := Param(ctx, &params.DB.Host); m == nil {
 				t.Fatal("initial lookup returned nil")
 			}
 
@@ -386,7 +386,7 @@ func TestGetParam_AutoRepairsCacheAfterReassignment(t *testing.T) {
 
 			// Step 3: first lookup through the new address. Expect the fallback
 			// walk to fire exactly once and repair the cache.
-			if m := ctx.GetParam(&params.DB.Host); m == nil {
+			if m := Param(ctx, &params.DB.Host); m == nil {
 				t.Fatal("post-reassignment lookup returned nil")
 			}
 			walksAfterFirstLookup = ctx.ctx.walkFallbackCount - walksBefore
@@ -402,7 +402,7 @@ func TestGetParam_AutoRepairsCacheAfterReassignment(t *testing.T) {
 			// no rebuild, no further state change.
 			walksMid := ctx.ctx.walkFallbackCount
 			rebuildsMid := ctx.ctx.cacheRebuildCount
-			if m := ctx.GetParam(&params.DB.Host); m == nil {
+			if m := Param(ctx, &params.DB.Host); m == nil {
 				t.Fatal("second post-reassignment lookup returned nil")
 			}
 			walksAfterSecondLookup = ctx.ctx.walkFallbackCount - walksMid
@@ -446,15 +446,15 @@ func TestGetParam_AutoRepairsCacheAfterReassignment(t *testing.T) {
 	}
 }
 
-// TestGetParam_HappyPathNoWalkNoRebuild verifies that in ordinary usage (no
-// substruct reassignment, no subtree removal), GetParam never triggers the
+// TestParam_HappyPathNoWalkNoRebuild verifies that in ordinary usage (no
+// substruct reassignment, no subtree removal), Param never triggers the
 // fallback walk or a cache rebuild — it always hits the cache that was
 // populated incrementally during traverse.
 //
-// This pins the performance expectation: users calling ctx.GetParam(&p.X)
+// This pins the performance expectation: users calling Param(ctx, &p.X)
 // from InitFuncCtx, PostCreateFuncCtx, PreValidateFuncCtx, or RunFuncCtx on
 // a stable parameters tree pay zero walk / zero rebuild cost per call.
-func TestGetParam_HappyPathNoWalkNoRebuild(t *testing.T) {
+func TestParam_HappyPathNoWalkNoRebuild(t *testing.T) {
 	type DB struct {
 		Host string `descr:"host" default:"localhost"`
 		Port int    `descr:"port" default:"5432"`
@@ -469,11 +469,11 @@ func TestGetParam_HappyPathNoWalkNoRebuild(t *testing.T) {
 		rebuildsAtEnd int
 	)
 
-	cmd := (CmdT[Params]{
+	cmd := (Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command) error {
 			// Record baseline AFTER traverse has populated the cache, so we're
-			// only measuring GetParam call costs, not traverse overhead.
+			// only measuring Param call costs, not traverse overhead.
 			walksBefore := ctx.ctx.walkFallbackCount
 			rebuildsBefore := ctx.ctx.cacheRebuildCount
 
@@ -481,13 +481,13 @@ func TestGetParam_HappyPathNoWalkNoRebuild(t *testing.T) {
 			// nested substruct fields. Every one should be a cache hit because
 			// nothing has invalidated addrToPath.
 			for i := 0; i < 5; i++ {
-				if m := ctx.GetParam(&p.Name); m == nil {
+				if m := Param(ctx, &p.Name); m == nil {
 					t.Fatalf("lookup %d: p.Name returned nil", i)
 				}
-				if m := ctx.GetParam(&p.DB.Host); m == nil {
+				if m := Param(ctx, &p.DB.Host); m == nil {
 					t.Fatalf("lookup %d: p.DB.Host returned nil", i)
 				}
-				if m := ctx.GetParam(&p.DB.Port); m == nil {
+				if m := Param(ctx, &p.DB.Port); m == nil {
 					t.Fatalf("lookup %d: p.DB.Port returned nil", i)
 				}
 			}
@@ -525,22 +525,22 @@ func TestEmbeddedPointerStructReassignment(t *testing.T) {
 	}
 
 	var (
-		mBefore    Param
-		mAfter     Param
+		mBefore    Parameter
+		mAfter     Parameter
 		finalThing string
 	)
 
-	cmd := (CmdT[Params]{
+	cmd := (Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			mBefore = ctx.GetParam(&params.Thing)
+			mBefore = Param(ctx, &params.Thing).Parameter
 			if mBefore == nil {
 				t.Fatal("mirror for embedded field not found before reassignment")
 			}
 
 			params.Inner = &Inner{Thing: ""}
 
-			mAfter = ctx.GetParam(&params.Thing)
+			mAfter = Param(ctx, &params.Thing).Parameter
 			if mAfter == nil {
 				t.Fatal("mirror for embedded field not found after reassignment")
 			}

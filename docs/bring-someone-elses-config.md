@@ -1,6 +1,6 @@
 # Bring Someone Else's Config
 
-Sometimes the struct you want to expose as a CLI isn't yours. It comes from a third-party library, a generated protobuf type, a shared internal package you don't want to fork — anything where adding `boa:` struct tags isn't an option. BOA supports this: **anything configurable via a struct tag is also configurable programmatically** via `HookContext.GetParam` / `GetParamT`, so you can take a tag-less struct and wire it up from an `InitFuncCtx` hook.
+Sometimes the struct you want to expose as a CLI isn't yours. It may come from a third-party library, generated code, or a shared internal package where adding BOA tags is not an option. Use `boa.Param(ctx, &params.Field)` in an `InitFuncCtx` hook to configure those fields programmatically.
 
 This page covers the two common shapes:
 
@@ -9,7 +9,7 @@ This page covers the two common shapes:
 
 ## Pure embed: the external struct is your CLI
 
-If the third-party config already has the shape you want to expose, pass it straight to `CmdT[T]` and configure every field in `InitFuncCtx`:
+If the third-party config already has the shape you want to expose, pass it straight to `Cmd[T]` and configure every field in `InitFuncCtx`:
 
 ```go
 package main
@@ -32,7 +32,7 @@ import (
 // }
 
 func main() {
-    boa.CmdT[httpserver.Config]{
+    boa.Cmd[httpserver.Config]{
         Use:   "serve",
         Short: "Run the HTTP server",
 
@@ -45,17 +45,17 @@ func main() {
 
         InitFuncCtx: func(ctx *boa.HookContext, p *httpserver.Config, cmd *cobra.Command) error {
             // Descriptions / defaults / required-ness
-            boa.GetParamT(ctx, &p.Host).SetDescription("listen address")
-            boa.GetParamT(ctx, &p.Host).SetDefaultT("0.0.0.0")
+            boa.Param(ctx, &p.Host).SetDescription("listen address")
+            boa.Param(ctx, &p.Host).SetDefault("0.0.0.0")
 
-            port := boa.GetParamT(ctx, &p.Port)
+            port := boa.Param(ctx, &p.Port)
             port.SetDescription("TCP port")
-            port.SetDefaultT(8080)
-            port.SetMinT(1)
-            port.SetMaxT(65535)
+            port.SetDefault(8080)
+            port.SetMin(1)
+            port.SetMax(65535)
 
             // Hide the admin token from --help, still read from env/config
-            token := boa.GetParamT(ctx, &p.AdminToken)
+            token := boa.Param(ctx, &p.AdminToken)
             token.SetDescription("admin API token")
             token.SetNoFlag(true)
             token.SetEnv("ADMIN_TOKEN")
@@ -133,7 +133,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "app",
         Short: "Run the app with a mixed-source config",
 
@@ -147,29 +147,29 @@ func main() {
             // ─── CLI + env + config (the default) ──────────────────────────
             // Host is a classic: operators set it with --db-host, ops sets
             // $DB_HOST in systemd, CI sets it in config.yaml. All three work.
-            host := boa.GetParamT(ctx, &p.DB.Host)
+            host := boa.Param(ctx, &p.DB.Host)
             host.SetDescription("database host")
-            host.SetDefaultT("localhost")
+            host.SetDefault("localhost")
 
             // ─── CLI + env + config, with per-field validation ─────────────
-            port := boa.GetParamT(ctx, &p.DB.Port)
+            port := boa.Param(ctx, &p.DB.Port)
             port.SetDescription("database port")
-            port.SetDefaultT(5432)
-            port.SetMinT(1)
-            port.SetMaxT(65535)
+            port.SetDefault(5432)
+            port.SetMin(1)
+            port.SetMax(65535)
 
             // ─── CLI-only (env suppressed) ─────────────────────────────────
             // DebugMode is an interactive knob — we don't want a long-lived
             // $DB_DEBUG_MODE sneaking in from systemd. Flag only.
-            dbg := boa.GetParamT(ctx, &p.DB.DebugMode)
+            dbg := boa.Param(ctx, &p.DB.DebugMode)
             dbg.SetDescription("enable verbose DB driver logging")
             dbg.SetNoEnv(true)
-            dbg.SetDefaultT(false)
+            dbg.SetDefault(false)
 
             // ─── Env-only (no CLI flag) ────────────────────────────────────
             // Password must not land in shell history or process listings.
             // Env or config-file-with-mode-600, never argv.
-            pwd := boa.GetParamT(ctx, &p.DB.Password)
+            pwd := boa.Param(ctx, &p.DB.Password)
             pwd.SetDescription("database password")
             pwd.SetNoFlag(true)
             pwd.SetEnv("DB_PASSWORD")
@@ -180,7 +180,7 @@ func main() {
             // not something a human types. It's only meaningful when loaded
             // from the config file we ship with the deployment, but we still
             // want boa to enforce a length bound on it.
-            tag := boa.GetParamT(ctx, &p.DB.AuditTag)
+            tag := boa.Param(ctx, &p.DB.AuditTag)
             tag.SetDescription("audit label written to every row")
             tag.SetNoFlag(true)
             tag.SetNoEnv(true)
@@ -191,20 +191,20 @@ func main() {
             // PoolSize comes from the driver's own config merging inside
             // dbconfig package — we don't want boa to touch it at all.
             // Config files can still populate it via raw unmarshal.
-            boa.GetParamT(ctx, &p.DB.PoolSize).SetIgnored(true)
+            boa.Param(ctx, &p.DB.PoolSize).SetIgnored(true)
 
             // ─── Enum with static alternatives ─────────────────────────────
-            ssl := boa.GetParamT(ctx, &p.DB.SSLMode)
+            ssl := boa.Param(ctx, &p.DB.SSLMode)
             ssl.SetDescription("TLS policy")
             ssl.SetAlternatives([]string{"disable", "require", "verify-ca", "verify-full"})
             ssl.SetStrictAlts(true)
-            ssl.SetDefaultT("require")
+            ssl.SetDefault("require")
 
             // ─── Dynamic shell completion for a path ───────────────────────
             // CA bundle path — dynamically suggest PEM/CRT files under the
             // current prefix at completion time. This runs inside the
             // user's shell when they hit <TAB>.
-            ca := boa.GetParamT(ctx, &p.DB.CACert)
+            ca := boa.Param(ctx, &p.DB.CACert)
             ca.SetDescription("path to a CA certificate bundle")
             ca.SetAlternativesFunc(func(cmd *cobra.Command, args []string, toComplete string) []string {
                 pems, _ := filepath.Glob(toComplete + "*.pem")
@@ -214,9 +214,9 @@ func main() {
 
             // ─── Per-field custom validator ────────────────────────────────
             // User must be lowercase (many postgres deployments enforce this).
-            user := boa.GetParamT(ctx, &p.DB.User)
+            user := boa.Param(ctx, &p.DB.User)
             user.SetDescription("database username")
-            user.SetCustomValidatorT(func(v string) error {
+            user.SetCustomValidator(func(v string) error {
                 if v != strings.ToLower(v) {
                     return fmt.Errorf("user must be lowercase, got %q", v)
                 }
@@ -257,7 +257,7 @@ func main() {
 |---|---|---|---|---|
 | `LogLevel` | `--log-level` | `$LOG_LEVEL` | yes | plain boa tag, own struct |
 | `DB.Host` | `--db-host` | `$DB_HOST` | yes | default + description via `InitFuncCtx` |
-| `DB.Port` | `--db-port` | `$DB_PORT` | yes | programmatic `SetMinT` / `SetMaxT` |
+| `DB.Port` | `--db-port` | `$DB_PORT` | yes | programmatic `SetMin` / `SetMax` |
 | `DB.User` | `--db-user` | `$DB_USER` | yes | custom validator (lowercase) |
 | `DB.Password` | — | `$DB_PASSWORD` | yes | `SetNoFlag(true)`, required |
 | `DB.SSLMode` | `--db-ssl-mode` | `$DB_SSL_MODE` | yes | enum via `SetAlternatives` + `SetStrictAlts` |
@@ -294,26 +294,26 @@ Every struct-tag feature has a matching method. The table below is the complete 
 
 | Tag | Programmatic equivalent |
 |-----|--------------------------|
-| `descr` / `desc` / `help` | `SetDescription(string)` |
-| `name` / `long` | `SetName(string)` |
+| `descr` | `SetDescription(string)` |
+| `name` | `SetName(string)` |
 | `short` | `SetShort(string)` |
 | `env` | `SetEnv(string)` |
-| `default` | `SetDefault(any)` / `ParamT[T].SetDefaultT(T)` |
-| `positional` / `pos` | `SetPositional(bool)` |
-| `required` / `req` | `SetRequired(bool)` or `SetRequiredFn(func() bool)` |
-| `optional` / `opt` | `SetRequired(false)` |
-| `alts` / `alternatives` | `SetAlternatives([]string)`, `SetAlternativesFunc(...)` |
-| `strict` / `strict-alts` | `SetStrictAlts(bool)` |
-| `min` | `ParamT[T].SetMinT(T)` for numeric; `SetMinLen(int)` for string/slice/map. `ClearMin()` removes. Non-generic `Param.SetMin(any)` accepts any numeric. |
-| `max` | `ParamT[T].SetMaxT(T)` / `SetMaxLen(int)` / `ClearMax()`. Symmetric with `min`. |
+| `default` | `SetDefault(T)` |
+| `positional` | `SetPositional(bool)` |
+| `required` | `SetRequired(true)` or `SetRequiredFn(func() bool)` |
+| `optional` | `SetRequired(false)` |
+| `alts` | `SetAlternatives([]string)`, `SetAlternativesFunc(...)` |
+| `strict` | `SetStrictAlts(bool)` |
+| `min` | `SetMin(T)` for numeric fields; `SetMinLen(int)` for strings, slices, and maps; `ClearMin()` to remove |
+| `max` | `SetMax(T)` for numeric fields; `SetMaxLen(int)` for strings, slices, and maps; `ClearMax()` to remove |
 | `pattern` | `SetPattern(string)` |
-| `boa:"noflag"` / `"nocli"` | `SetNoFlag(bool)` |
+| `boa:"noflag"` | `SetNoFlag(bool)` |
 | `boa:"noenv"` | `SetNoEnv(bool)` |
 | `boa:"configonly"` | `SetNoFlag(true)` + `SetNoEnv(true)` |
 | `boa:"ignore"` | `SetIgnored(bool)` (post-traversal equivalent) |
-| `configfile:"true"` | `SetConfigFile(bool)` — field must be a string |
+| `configfile:"true"` | `SetConfigFile(bool)` — field must be `string` or `[]string` |
 
-All of these must be called from a hook that runs **before cobra flag binding** — that is, `InitFunc`, `InitFuncCtx`, or the `CfgStructInit` / `CfgStructInitCtx` interfaces. Calling them later (in `PostCreate*` or `RunFunc`) is too late: the flags are already wired up.
+Call these methods from `InitFuncCtx` or `CfgStructInitCtx.InitCtx`, before BOA binds flags. Calling them from `PostCreate*` or a run function is too late.
 
 ## Wrapping the configuration in a helper
 
@@ -324,14 +324,14 @@ If you embed the same external type in multiple commands, extract the wiring int
 // hide-password-from-CLI policy to a dbconfig.Settings sub-field. Works
 // with named DB fields and optional *DB pointer fields alike.
 func wireDBConfig(ctx *boa.HookContext, db *dbconfig.Settings) {
-    boa.GetParamT(ctx, &db.Host).SetDefaultT("localhost")
-    boa.GetParamT(ctx, &db.Port).SetDefaultT(5432)
+    boa.Param(ctx, &db.Host).SetDefault("localhost")
+    boa.Param(ctx, &db.Port).SetDefault(5432)
 
-    port := boa.GetParamT(ctx, &db.Port)
-    port.SetMinT(1)
-    port.SetMaxT(65535)
+    port := boa.Param(ctx, &db.Port)
+    port.SetMin(1)
+    port.SetMax(65535)
 
-    pwd := boa.GetParamT(ctx, &db.Password)
+    pwd := boa.Param(ctx, &db.Password)
     pwd.SetNoFlag(true)
     pwd.SetRequired(true)
 }
@@ -370,7 +370,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use: "app",
         ParamEnrich: boa.ParamEnricherCombine(
             boa.ParamEnricherName,
@@ -380,11 +380,11 @@ func main() {
         InitFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command) error {
             // Descriptions / defaults / validation for the embedded fields come
             // from the programmatic API since you can't tag them.
-            boa.GetParamT(ctx, &p.Host).SetDefaultT("localhost")
-            port := boa.GetParamT(ctx, &p.Port)
-            port.SetDefaultT(5432)
-            port.SetMinT(1)
-            port.SetMaxT(65535)
+            boa.Param(ctx, &p.Host).SetDefault("localhost")
+            port := boa.Param(ctx, &p.Port)
+            port.SetDefault(5432)
+            port.SetMin(1)
+            port.SetMax(65535)
             return nil
         },
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -398,10 +398,10 @@ Now `app --config-file app.json` works, `--host` / `--port` / `$HOST` / `$PORT` 
 
 ### Variant B — inline anonymous struct
 
-If the wrapper is only used in a single `CmdT` call, you don't even need to name it. Declare it inline at the call site:
+If the wrapper is only used in a single `Cmd` call, you don't even need to name it. Declare it inline at the call site:
 
 ```go
-boa.CmdT[struct {
+boa.Cmd[struct {
     externalpkg.Settings
     ConfigFile string `configfile:"true" optional:"true"`
 }]{
@@ -427,19 +427,19 @@ type Params struct {
     externalpkg.Settings
 }
 
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     InitFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command) error {
         // Equivalent to `configfile:"true"` on Params.ConfigFile, but set
         // at runtime — useful when the surrounding struct comes from a
         // package you don't want to add boa-specific tags to.
-        boa.GetParamT(ctx, &p.ConfigFile).SetConfigFile(true)
+        boa.Param(ctx, &p.ConfigFile).SetConfigFile(true)
         return nil
     },
     // ...
 }.Run()
 ```
 
-`SetConfigFile(true)` is the programmatic equivalent of `configfile:"true"` — the field must still be a string, and the call must happen in `InitFunc` / `InitFuncCtx` (before boa builds the config-file registry). Calling it on a non-string field produces a clean user-input-style error, not a panic.
+`SetConfigFile(true)` is the programmatic equivalent of `configfile:"true"`. The field must be `string` or `[]string`, and the call must happen in `InitFuncCtx` or `CfgStructInitCtx.InitCtx` before BOA builds the config-file registry. Other field types produce an error during command construction.
 
 ### Caveats
 
@@ -455,7 +455,7 @@ A smaller handful of things are **not** currently available programmatically:
 
 ## See also
 
-- [Advanced → The Param Interface](advanced.md#the-param-interface) — full list of `Param` methods
+- [Advanced → Programmatic Field Configuration](advanced.md#programmatic-field-configuration) — field lookup and typed methods
 - [Advanced → Programmatic Configuration (Tag Parity)](advanced.md#programmatic-configuration-tag-parity) — the same mapping table with more detail
 - [Lifecycle Hooks](hooks.md) — when each hook runs
 - [Struct Tags](struct-tags.md) — the equivalent tag-based reference

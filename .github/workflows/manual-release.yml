@@ -14,7 +14,10 @@ on:
           - major
 
 jobs:
+  checks:
+    uses: ./.github/workflows/checks.yml
   release:
+    needs: checks
     name: Create Release
     runs-on: ubuntu-latest
     steps:
@@ -26,10 +29,7 @@ jobs:
       - name: Set up Go
         uses: actions/setup-go@v6
         with:
-          go-version: '1.26.4'
-
-      - name: Run tests
-        run: go test ./...
+          go-version-file: go.mod
 
       - name: Generate version
         id: version

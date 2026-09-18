@@ -15,7 +15,7 @@ func TestMapField_StringToString_CLI(t *testing.T) {
 	}
 
 	var got map[string]string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -43,7 +43,7 @@ func TestMapField_StringToString_NotProvided(t *testing.T) {
 	}
 
 	var got map[string]string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			got = p.Labels
@@ -64,7 +64,7 @@ func TestMapField_StringToInt_CLI(t *testing.T) {
 	}
 
 	var got map[string]int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -95,7 +95,7 @@ func TestMapField_EnvVar(t *testing.T) {
 	defer func() { _ = os.Unsetenv("TEST_MAP_LABELS") }()
 
 	var got map[string]string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -128,7 +128,7 @@ func TestMapField_ConfigFile(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var got map[string]string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -153,7 +153,7 @@ func TestMapField_DefaultOptional(t *testing.T) {
 		Labels map[string]string `descr:"labels"`
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 		},

@@ -25,7 +25,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "myapp",
         Short: "A simple CLI application",
         RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
@@ -105,7 +105,7 @@ go get github.com/GiGurra/boa@latest
 - [Lifecycle Hooks](hooks.md) - Customize behavior at different stages
 - [Enrichers](enrichers.md) - Auto-derivation of flag names, env vars, and short flags
 - [Error Handling](error-handling.md) - Run() vs RunE() and error propagation
-- [Advanced](advanced.md) - Config files, JSON fallback, ParamT, testing
+- [Advanced](advanced.md) - Config files, JSON fallback, Param, testing
 - [Global Config](global-config.md) - Init() and WithDefaultOptional()
 - [Cobra Interoperability](cobra-interop.md) - Access Cobra primitives and migrate incrementally
 - [Migration](migration.md) - Migrating from old BOA or Cobra

@@ -50,7 +50,7 @@ func TestCustomType_CLI(t *testing.T) {
 	}
 
 	var got SemVer
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -76,7 +76,7 @@ func TestCustomType_InvalidValue(t *testing.T) {
 		Version SemVer `descr:"app version"`
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -98,7 +98,7 @@ func TestCustomType_Default(t *testing.T) {
 	}
 
 	var got SemVer
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -128,7 +128,7 @@ func TestCustomType_EnvVar(t *testing.T) {
 	defer func() { _ = os.Unsetenv("APP_VERSION") }()
 
 	var got SemVer
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -156,7 +156,7 @@ func TestCustomType_Optional(t *testing.T) {
 
 	// Not provided — should be nil
 	var got *SemVer
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {

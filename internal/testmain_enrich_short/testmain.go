@@ -8,17 +8,17 @@ import (
 )
 
 func main() {
-
-	var params = struct {
+	type paramsT struct {
 		Foo  string
 		Bar  int
 		File string
 		Baz  string
 		FB   string    `optional:"true"`
 		Time time.Time `optional:"true"`
-	}{}
+	}
+	var params paramsT
 
-	if err := (boa.Cmd{
+	if err := (boa.Cmd[paramsT]{
 		Use:   "hello-world",
 		Short: "a generic cli tool",
 		Long:  `A generic cli tool that has a longer description. See the README.MD for more information`,
@@ -27,7 +27,7 @@ func main() {
 			boa.ParamEnricherShort,
 		),
 		Params: &params,
-		RunFunc: func(cmd *cobra.Command, args []string) {
+		RunFunc: func(_ *paramsT, cmd *cobra.Command, args []string) {
 			fmt.Printf(
 				"Hello world from subcommand1 with params: %s, %d, %s, %s, %q\n",
 				params.Foo,  // string

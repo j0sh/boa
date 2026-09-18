@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// paramMeta is a non-generic implementation of the Param interface.
+// paramMeta is a non-generic implementation of the Parameter interface.
 // It replaces the old required[T] and optional[T] generic types with a single
 // reflection-based struct that handles all parameter types uniformly.
 type paramMeta struct {
@@ -34,6 +34,7 @@ type paramMeta struct {
 	enabledFn       func() bool // if set, checked for IsEnabled()
 
 	// Type info
+	handler   *typeHandler
 	fieldType reflect.Type // the VALUE type (string for *string fields, *url.URL for *url.URL fields)
 	isPointer bool         // whether the user's struct field is a pointer (except *url.URL)
 
@@ -75,7 +76,7 @@ type paramMeta struct {
 
 	// noFlag indicates the field should not be registered as a CLI flag,
 	// but is still populated from env vars and config files. Set via the
-	// `boa:"noflag"` tag (alias `boa:"nocli"`).
+	// `boa:"noflag"` tag.
 	noFlag bool
 
 	// noEnv indicates the field should not read from environment variables.
@@ -87,11 +88,10 @@ type paramMeta struct {
 	// skip env reading, skip required/min/max/pattern validation. The
 	// only remaining write path is config-file unmarshal, which writes
 	// to the raw struct field directly. The tag-level equivalent
-	// (`boa:"ignore"` / `boa:"-"`) skips traversal entirely so the mirror
-	// never exists; this flag is for programmatic equivalence
-	// post-traversal. Note: `boa:"configonly"` is NOT an alias for this —
-	// it desugars to noFlag+noEnv with the mirror preserved so validation
-	// and required checks still run.
+	// (`boa:"ignore"`) skips traversal entirely so the mirror never exists;
+	// this flag is for programmatic equivalence post-traversal.
+	// `boa:"configonly"` preserves the mirror and is represented as
+	// noFlag+noEnv, so validation and required checks still run.
 	ignored bool
 
 	// isConfigFile marks this string parameter as the config-file path for
@@ -102,7 +102,7 @@ type paramMeta struct {
 	isConfigFile bool
 }
 
-var _ Param = &paramMeta{}
+var _ parameter = &paramMeta{}
 
 // --- IsEnabled / IsRequired ---
 
@@ -247,7 +247,7 @@ func (f *paramMeta) SetDefault(val any) {
 			return
 		}
 
-		// Handle type aliases (e.g., MyString → string)
+		// Handle named primitive types (for example, MyString → string).
 		if elem.Type().ConvertibleTo(f.fieldType) {
 			converted := elem.Convert(f.fieldType)
 			v := reflect.New(f.fieldType).Elem()
@@ -261,6 +261,12 @@ func (f *paramMeta) SetDefault(val any) {
 	if valRef.Type() == f.fieldType {
 		v := reflect.New(f.fieldType).Elem()
 		v.Set(valRef)
+		f.defaultVal = &v
+		return
+	}
+	if valRef.Type().ConvertibleTo(f.fieldType) {
+		v := reflect.New(f.fieldType).Elem()
+		v.Set(valRef.Convert(f.fieldType))
 		f.defaultVal = &v
 		return
 	}
@@ -309,7 +315,8 @@ func (f *paramMeta) valuePtrF() any {
 }
 
 func (f *paramMeta) HasValue() bool {
-	return HasValue(f)
+	return f.wasSetByEnv() || f.wasSetOnCli() || f.hasDefaultValue() ||
+		f.wasSetByInject() || f.setByConfig
 }
 
 // --- CLI/Env state ---
@@ -399,7 +406,7 @@ const (
 )
 
 // boundKindOf returns the boundKind for a reflect.Type. Uses Kind() so type
-// aliases (e.g., `type Port int`) work transparently.
+// named primitive types (for example, `type Port int`) work transparently.
 func boundKindOf(t reflect.Type) boundKind {
 	switch t.Kind() {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
@@ -650,4 +657,12 @@ func (f *paramMeta) UnmarshalJSON(data []byte) error {
 	f.valuePtr = ptr.Interface()
 	f.injected = true
 	return nil
+}
+
+// typeHandler is resolved once after the parameter's type has been established.
+func (f *paramMeta) typeHandler() *typeHandler {
+	if f.handler == nil {
+		f.handler = resolveHandler(f.fieldType)
+	}
+	return f.handler
 }

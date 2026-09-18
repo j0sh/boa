@@ -7,18 +7,18 @@ import (
 )
 
 func main() {
-
-	var params struct {
+	type paramsT struct {
 		WithoutDefaults []float64
 		WithDefaults    []int64 `default:"[1,2,3]"`
 	}
+	var params paramsT
 
-	if err := (boa.Cmd{
+	if err := (boa.Cmd[paramsT]{
 		Use:    "hello-world",
 		Short:  "a generic cli tool",
 		Long:   `A generic cli tool that has a longer description. See the README.MD for more information`,
 		Params: &params,
-		RunFunc: func(cmd *cobra.Command, args []string) {
+		RunFunc: func(_ *paramsT, cmd *cobra.Command, args []string) {
 			fmt.Printf(
 				"params: without=%v, with=%v\n",
 				params.WithoutDefaults,

@@ -38,20 +38,20 @@ func TestMultipleSubstructsOfSameType_NoInterference(t *testing.T) {
 	}
 
 	var (
-		rwHostMirror   Param
-		roHostMirror   Param
-		rwValidations  int
-		roValidations  int
-		finalRWHost    string
-		finalROHost    string
+		rwHostMirror  Parameter
+		roHostMirror  Parameter
+		rwValidations int
+		roValidations int
+		finalRWHost   string
+		finalROHost   string
 	)
 
-	makeTree := func() CmdT[Params] {
-		return CmdT[Params]{
+	makeTree := func() Cmd[Params] {
+		return Cmd[Params]{
 			Use: "test",
 			InitFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command) error {
-				rwHostMirror = ctx.GetParam(&p.RW.Host)
-				roHostMirror = ctx.GetParam(&p.RO.Host)
+				rwHostMirror = Param(ctx, &p.RW.Host).Parameter
+				roHostMirror = Param(ctx, &p.RO.Host).Parameter
 
 				// Different strict alternatives sets.
 				rwHostMirror.SetAlternatives([]string{"rw-a", "rw-b"})
@@ -126,7 +126,7 @@ func TestMultipleSubstructsOfSameType_NoInterference(t *testing.T) {
 		t.Errorf("finalROHost = %q, want 'ro-b'", finalROHost)
 	}
 
-	// --- Cross-substruct rejection: feeding RW's alt to RO should fail strict-alts ---
+	// --- Cross-substruct rejection: feeding RW's alternative to RO should fail strict validation ---
 	reset()
 	err := makeTree().RunArgsE([]string{"--rw-host", "rw-a", "--ro-host", "rw-a"})
 	if err == nil {
@@ -134,7 +134,7 @@ func TestMultipleSubstructsOfSameType_NoInterference(t *testing.T) {
 	}
 
 	// --- Cross-substruct rejection via the custom validator prefix check ---
-	// Pick a value that passes strict-alts for RO but fails its custom validator.
+	// Pick a value that passes strict alternative validation for RO but fails its custom validator.
 	reset()
 	makeTree2 := makeTree
 	// Replace RO's alternatives with a value that's NOT a valid rw-/ro- prefix to
@@ -160,20 +160,20 @@ func TestMultipleSubstructPointersOfSameType_NoInterference(t *testing.T) {
 	}
 
 	var (
-		rwHostMirror Param
-		roHostMirror Param
+		rwHostMirror Parameter
+		roHostMirror Parameter
 		finalRWHost  string
 		finalROHost  string
 	)
 
-	makeTree := func() CmdT[Params] {
-		return CmdT[Params]{
+	makeTree := func() Cmd[Params] {
+		return Cmd[Params]{
 			Use: "test",
 			InitFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command) error {
 				// Both substructs are preallocated by boa before init fires, so
 				// &p.RW.Host and &p.RO.Host are both safe to address here.
-				rwHostMirror = ctx.GetParam(&p.RW.Host)
-				roHostMirror = ctx.GetParam(&p.RO.Host)
+				rwHostMirror = Param(ctx, &p.RW.Host).Parameter
+				roHostMirror = Param(ctx, &p.RO.Host).Parameter
 				rwHostMirror.SetAlternatives([]string{"rw-only"})
 				roHostMirror.SetAlternatives([]string{"ro-only"})
 				return nil

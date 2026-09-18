@@ -37,7 +37,7 @@ func TestConfigFile_ExplicitPattern(t *testing.T) {
 		cfgPath := writeTestConfigFile(t, `{"Host":"from-file","Port":3000}`)
 
 		ran := false
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			PreValidateFunc: func(params *Params, cmd *cobra.Command, args []string) error {
 				return LoadConfigFile(params.ConfigFile, params, nil)
@@ -62,7 +62,7 @@ func TestConfigFile_ExplicitPattern(t *testing.T) {
 		cfgPath := writeTestConfigFile(t, `{"Host":"from-file","Port":3000}`)
 
 		ran := false
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			PreValidateFunc: func(params *Params, cmd *cobra.Command, args []string) error {
 				return LoadConfigFile(params.ConfigFile, params, nil)
@@ -85,7 +85,7 @@ func TestConfigFile_ExplicitPattern(t *testing.T) {
 
 	t.Run("no config file is fine", func(t *testing.T) {
 		ran := false
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			PreValidateFunc: func(params *Params, cmd *cobra.Command, args []string) error {
 				return LoadConfigFile(params.ConfigFile, params, nil)
@@ -110,10 +110,10 @@ func TestConfigFile_ExplicitPattern(t *testing.T) {
 		}
 
 		ran := false
-		CmdT[ParamsWithDefault]{
+		Cmd[ParamsWithDefault]{
 			Use: "test",
 			InitFuncCtx: func(ctx *HookContext, params *ParamsWithDefault, cmd *cobra.Command) error {
-				ctx.GetParam(&params.ConfigFile).SetDefault(Default(cfgPath))
+				Param(ctx, &params.ConfigFile).SetDefault(cfgPath)
 				return nil
 			},
 			PreValidateFunc: func(params *ParamsWithDefault, cmd *cobra.Command, args []string) error {
@@ -146,7 +146,7 @@ func TestConfigFile_TagShorthand(t *testing.T) {
 		}
 
 		ran := false
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
 				ran = true
@@ -174,7 +174,7 @@ func TestConfigFile_TagShorthand(t *testing.T) {
 		}
 
 		ran := false
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
 				ran = true
@@ -199,7 +199,7 @@ func TestConfigFile_TagShorthand(t *testing.T) {
 		}
 
 		ran := false
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
 				ran = true
@@ -221,10 +221,10 @@ func TestConfigFile_TagShorthand(t *testing.T) {
 		}
 
 		ran := false
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-				ctx.GetParam(&params.ConfigFile).SetDefault(Default(cfgPath))
+				Param(ctx, &params.ConfigFile).SetDefault(cfgPath)
 				return nil
 			},
 			RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
@@ -256,9 +256,9 @@ func TestConfigFile_TagShorthand(t *testing.T) {
 		}
 
 		ran := false
-		CmdT[Params]{
-			Use:             "test",
-			ConfigUnmarshal: json.Unmarshal, // explicit, same as default
+		Cmd[Params]{
+			Use:          "test",
+			ConfigFormat: UniversalConfigFormat(json.Unmarshal),
 			RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
 				ran = true
 				if params.Host != "custom-format" {
@@ -285,7 +285,7 @@ func TestConfigFile_TagShorthand(t *testing.T) {
 		defer func() { _ = os.Unsetenv("TEST_CFG_HOST") }()
 
 		ran := false
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
 				ran = true
@@ -309,7 +309,7 @@ func TestConfigFile_TagShorthand(t *testing.T) {
 			Host       string `optional:"true"`
 		}
 
-		err := CmdT[Params]{
+		err := Cmd[Params]{
 			Use: "test",
 			RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
 				t.Fatal("should not run")
@@ -421,7 +421,7 @@ func TestLoadConfigBytes(t *testing.T) {
 		embedded := []byte(`{"Host":"embedded","Port":4242}`)
 
 		ran := false
-		CmdT[CmdParams]{
+		Cmd[CmdParams]{
 			Use: "test",
 			PreValidateFunc: func(params *CmdParams, cmd *cobra.Command, args []string) error {
 				return LoadConfigBytes(embedded, ".json", params, nil)
@@ -450,7 +450,7 @@ func TestLoadConfigBytes(t *testing.T) {
 		embedded := []byte(`{"Host":"from-bytes","Port":3000}`)
 
 		ran := false
-		CmdT[CmdParams]{
+		Cmd[CmdParams]{
 			Use: "test",
 			PreValidateFunc: func(params *CmdParams, cmd *cobra.Command, args []string) error {
 				return LoadConfigBytes(embedded, "", params, nil)
@@ -689,7 +689,7 @@ func TestHookContext_DumpBytes_SourceAware(t *testing.T) {
 
 	t.Run("omits unset fields, keeps defaults and CLI values", func(t *testing.T) {
 		var captured []byte
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 				data, err := ctx.DumpBytes("", nil)
@@ -732,7 +732,7 @@ func TestHookContext_DumpBytes_SourceAware(t *testing.T) {
 		cfgPath := writeTestConfigFile(t, `{"Name":"bob"}`)
 
 		var captured []byte
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 				data, err := ctx.DumpBytes("", nil)
@@ -754,7 +754,7 @@ func TestHookContext_DumpBytes_SourceAware(t *testing.T) {
 
 	t.Run("prunes nested struct when no descendant is set", func(t *testing.T) {
 		var captured []byte
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 				data, err := ctx.DumpBytes("", nil)
@@ -774,7 +774,7 @@ func TestHookContext_DumpBytes_SourceAware(t *testing.T) {
 	t.Run("dump round-trips through LoadConfigBytes", func(t *testing.T) {
 		// First run: set --name and --db-host, capture the dump.
 		var dumped []byte
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 				data, err := ctx.DumpBytes("", nil)
@@ -788,7 +788,7 @@ func TestHookContext_DumpBytes_SourceAware(t *testing.T) {
 		// Second run: no CLI args, load from dumped bytes in PreValidate.
 		// Values should be recovered exactly, including pinned Age default.
 		var seen Params
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			PreValidateFunc: func(p *Params, cmd *cobra.Command, args []string) error {
 				return LoadConfigBytes(dumped, "", p, nil)
@@ -816,7 +816,7 @@ func TestHookContext_DumpBytes_SourceAware(t *testing.T) {
 		dir := t.TempDir()
 		outPath := filepath.Join(dir, "out.json")
 
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 				if err := ctx.DumpFile(outPath, nil); err != nil {
@@ -865,7 +865,7 @@ func TestHookContext_DumpBytes_AdvancedTypes(t *testing.T) {
 
 	// Run once with a rich set of values supplied via CLI.
 	var dumped []byte
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			data, err := ctx.DumpBytes("", nil)
@@ -968,7 +968,7 @@ func TestHookContext_DumpBytes_AdvancedTypes(t *testing.T) {
 	}
 
 	var got LoadParams
-	CmdT[LoadParams]{
+	Cmd[LoadParams]{
 		Use: "test2",
 		RunFunc: func(p *LoadParams, cmd *cobra.Command, args []string) {
 			got = *p
@@ -1008,7 +1008,7 @@ func TestHookContext_DumpBytes_HonorsJSONTags(t *testing.T) {
 	}
 
 	var dumped []byte
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			data, err := ctx.DumpBytes("", nil)
@@ -1017,9 +1017,9 @@ func TestHookContext_DumpBytes_HonorsJSONTags(t *testing.T) {
 			}
 			dumped = data
 		},
-	// CLI flag names come from the Go field name, not the json tag — the
-	// json tag only affects how the dump/load cycle serializes and parses
-	// the value.
+		// CLI flag names come from the Go field name, not the json tag — the
+		// json tag only affects how the dump/load cycle serializes and parses
+		// the value.
 	}.RunArgs([]string{
 		"--host", "h",
 		"--port", "9000",
@@ -1091,7 +1091,7 @@ func TestHookContext_DumpBytes_OptionalPointerStruct(t *testing.T) {
 
 	t.Run("set → emitted, unset → omitted", func(t *testing.T) {
 		var dumpWithDB []byte
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 				data, _ := ctx.DumpBytes("", nil)
@@ -1106,7 +1106,7 @@ func TestHookContext_DumpBytes_OptionalPointerStruct(t *testing.T) {
 		}
 
 		var dumpNoDB []byte
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 				data, _ := ctx.DumpBytes("", nil)

@@ -5,210 +5,36 @@ import (
 	"fmt"
 	"log/slog"
 	"reflect"
-
-	"github.com/spf13/cobra"
 )
 
-// ParamT is a typed view over a parameter's configuration.
-// It wraps the internal Param mirror and provides type-safe methods
-// for configuring the parameter.
-//
-// Usage:
-//
-//	boa.CmdT[Params]{
-//	    Use: "cmd",
-//	    InitFuncCtx: func(ctx *boa.HookContext, params *Params, cmd *cobra.Command) error {
-//	        // Get typed parameter view
-//	        nameParam := boa.GetParamT(ctx, &params.Name)
-//	        nameParam.SetDefaultT("default-value")
-//	        nameParam.SetCustomValidatorT(func(val string) error {
-//	            if len(val) < 3 {
-//	                return fmt.Errorf("name must be at least 3 characters")
-//	            }
-//	            return nil
-//	        })
-//	        return nil
-//	    },
-//	}
-type ParamT[T any] interface {
-	// Param returns the underlying untyped Param interface.
-	Param() Param
+// Field is a type-safe view of one field in a command's parameter struct.
+// Obtain it with Param; the embedded Parameter exposes metadata
+// methods that do not depend on the field's Go type.
+type Field[T any] struct{ Parameter }
 
-	// --- Typed methods ---
-
-	// SetDefaultT sets the default value for this parameter with type safety.
-	SetDefaultT(val T)
-
-	// SetCustomValidatorT sets a typed custom validation function for this parameter.
-	// The function receives the actual typed value instead of `any`.
-	SetCustomValidatorT(fn func(T) error)
-
-	// --- Pass-through methods (convenience wrappers) ---
-
-	// SetAlternatives sets the list of allowed values for this parameter.
-	SetAlternatives(alts []string)
-
-	// SetStrictAlts sets whether alternatives are strictly enforced (validated) or just suggestions.
-	SetStrictAlts(strict bool)
-
-	// SetAlternativesFunc sets a function that provides dynamic value suggestions for bash completion.
-	SetAlternativesFunc(fn func(cmd *cobra.Command, args []string, toComplete string) []string)
-
-	// SetEnv sets the environment variable name for this parameter.
-	SetEnv(env string)
-
-	// SetShort sets the short flag name (single character) for this parameter.
-	SetShort(short string)
-
-	// SetName sets the flag name for this parameter.
-	SetName(name string)
-
-	// SetIsEnabledFn sets a function that determines if this parameter is enabled.
-	SetIsEnabledFn(fn func() bool)
-
-	// SetRequiredFn sets a function that determines if this parameter is required.
-	// This allows making optional parameters conditionally required.
-	SetRequiredFn(fn func() bool)
-
-	// SetRequired is a convenience that pins the parameter as required/optional
-	// regardless of the original struct-tag default. It **replaces** any
-	// previously set SetRequiredFn — it does not compose with it. Call this
-	// last if you set both.
-	SetRequired(required bool)
-
-	// SetNoFlag toggles whether the parameter skips CLI flag registration.
-	// When true, the field is still populated from env vars and config files
-	// but does not appear as a `--flag`. Mirrors `boa:"noflag"` / `boa:"nocli"`.
-	SetNoFlag(noFlag bool)
-
-	// SetNoEnv toggles whether the parameter skips env var reading. Mirrors
-	// `boa:"noenv"`. CLI flags and config files still populate the field.
-	SetNoEnv(noEnv bool)
-
-	// SetIgnored fully excludes the parameter from boa processing (CLI, env,
-	// validation). Config-file unmarshal can still write to the field.
-	SetIgnored(ignored bool)
-
-	// SetConfigFile marks this string parameter as the auto-loaded config-file
-	// path for its enclosing struct. Mirrors `configfile:"true"`. The field
-	// must be a string; calling this on a non-string field is detected after
-	// hooks return and produces a user-input-style error. Must be called from
-	// InitFunc / InitFuncCtx so it takes effect before the config-file
-	// registry is built.
-	SetConfigFile(isConfigFile bool)
-
-	// SetDescription sets the help/description text for this parameter.
-	SetDescription(descr string)
-
-	// SetPositional toggles whether this parameter is a positional argument
-	// rather than a named flag. Cannot be combined with SetNoFlag(true).
-	SetPositional(positional bool)
-
-	// SetCollection controls repeated CLI flag parsing for slice parameters.
-	// CollectionSlice keeps CSV splitting; CollectionArray appends one opaque
-	// scalar value per occurrence. Other input sources keep their existing
-	// parsing behavior.
-	SetCollection(mode CollectionMode)
-
-	// SetPersistent toggles whether this parameter is registered as a Cobra
-	// persistent flag and inherited by descendant commands. It cannot be
-	// combined with SetPositional(true).
-	SetPersistent(persistent bool)
-
-	// SetMinT / SetMaxT set a typed numeric bound. Works on numeric fields
-	// (signed int, unsigned int, float). Panics on non-numeric T — use
-	// SetMinLen / SetMaxLen for string / slice / map fields instead. The
-	// stored bound uses the widest integer type for the field's signedness,
-	// so int64 bounds beyond 2^53 round-trip losslessly (unlike the old
-	// float64-only API).
-	SetMinT(min T)
-	SetMaxT(max T)
-
-	// SetMinLen / SetMaxLen set a length bound on a string / slice / map
-	// field. Panics on numeric T — use SetMinT / SetMaxT there instead.
-	SetMinLen(min int)
-	SetMaxLen(max int)
-
-	// ClearMin / ClearMax remove any previously set bound. Safe to call on
-	// any type.
-	ClearMin()
-	ClearMax()
-
-	// SetPattern sets a regex pattern that string values must match. Pass
-	// an empty string to clear the pattern. Mirrors the `pattern:"..."` tag.
-	// Panics if called on a non-string field.
-	SetPattern(pattern string)
-}
-
-// GetParamT returns a typed ParamT[T] view for the given field pointer.
-// It wraps the parameter's internal mirror to provide type-safe configuration.
-//
-// Usage:
-//
-//	type Params struct {
-//	    Name string `descr:"User name"`
-//	    Port int    `descr:"Port number"`
-//	}
-//	boa.CmdT[Params]{
-//	    Use: "cmd",
-//	    InitFuncCtx: func(ctx *boa.HookContext, params *Params, cmd *cobra.Command) error {
-//	        nameParam := boa.GetParamT(ctx, &params.Name)
-//	        nameParam.SetDefaultT("default-name")
-//	        nameParam.SetCustomValidatorT(func(val string) error {
-//	            if len(val) < 3 {
-//	                return fmt.Errorf("name must be at least 3 characters")
-//	            }
-//	            return nil
-//	        })
-//
-//	        portParam := boa.GetParamT(ctx, &params.Port)
-//	        portParam.SetCustomValidatorT(func(port int) error {
-//	            if port < 1 || port > 65535 {
-//	                return fmt.Errorf("port must be between 1 and 65535")
-//	            }
-//	            return nil
-//	        })
-//	        return nil
-//	    },
-//	}
-func GetParamT[T any](ctx *HookContext, fieldPtr *T) ParamT[T] {
-	param := ctx.GetParam(fieldPtr)
-	if param == nil {
-		slog.Error("GetParamT: could not find param for field pointer", "fieldPtr", fieldPtr)
+// Param returns the type-safe view for fieldPtr. It returns nil, after logging
+// the reason, when fieldPtr is not part of this command's parameter struct.
+func Param[T any](ctx *HookContext, fieldPtr *T) *Field[T] {
+	p := ctx.parameter(fieldPtr)
+	if p == nil {
 		return nil
 	}
-
-	return &ParamTView[T]{
-		param: param,
-	}
+	return &Field[T]{Parameter: p}
 }
 
-// ParamTView is a typed view over a parameter's configuration.
-// It wraps an untyped Param and provides type-safe methods for configuration.
-// Use GetParamT to obtain an instance.
-type ParamTView[T any] struct {
-	param Param
+// SetDefault sets the default value with compile-time type checking.
+func (p *Field[T]) SetDefault(value T) {
+	p.Parameter.SetDefault(value)
 }
 
-// Param returns the underlying untyped Param interface.
-func (w *ParamTView[T]) Param() Param {
-	return w.param
-}
-
-// SetDefaultT sets the default value with type safety.
-func (w *ParamTView[T]) SetDefaultT(val T) {
-	w.param.SetDefault(&val)
-}
-
-// SetCustomValidatorT sets a typed validation function.
-func (w *ParamTView[T]) SetCustomValidatorT(fn func(T) error) {
+// SetCustomValidator sets a type-safe validation function.
+func (p *Field[T]) SetCustomValidator(fn func(T) error) {
 	if fn == nil {
-		w.param.SetCustomValidator(nil)
+		p.Parameter.SetCustomValidator(nil)
 		return
 	}
-	w.param.SetCustomValidator(func(val any) error {
-		// Handle both pointer and non-pointer values
-		switch v := val.(type) {
+	p.Parameter.SetCustomValidator(func(value any) error {
+		switch v := value.(type) {
 		case T:
 			return fn(v)
 		case *T:
@@ -218,174 +44,64 @@ func (w *ParamTView[T]) SetCustomValidatorT(fn func(T) error) {
 			var zero T
 			return fn(zero)
 		default:
-			// Try reflection-based conversion for type aliases
-			valReflect := reflect.ValueOf(val)
-			if valReflect.Kind() == reflect.Pointer && !valReflect.IsNil() {
-				valReflect = valReflect.Elem()
+			// Parameter mirrors use normalized primitive types. Convert those
+			// values back to named field types before invoking the validator.
+			rv := reflect.ValueOf(value)
+			if rv.Kind() == reflect.Pointer && !rv.IsNil() {
+				rv = rv.Elem()
 			}
-			var zero T
-			targetType := reflect.TypeOf(zero)
-			if valReflect.Type().ConvertibleTo(targetType) {
-				converted := valReflect.Convert(targetType).Interface().(T)
-				return fn(converted)
+			target := reflect.TypeFor[T]()
+			if rv.IsValid() && rv.Type().ConvertibleTo(target) {
+				return fn(rv.Convert(target).Interface().(T))
 			}
-			// Fallback - this shouldn't happen in normal usage
-			slog.Warn("SetCustomValidatorT: unexpected value type", "expected", targetType, "got", reflect.TypeOf(val))
-			return fn(val.(T))
+			slog.Warn("boa.Field.SetCustomValidator: unexpected value type", "expected", target, "got", reflect.TypeOf(value))
+			return fn(value.(T))
 		}
 	})
 }
 
-// SetAlternatives sets the list of allowed values for this parameter.
-func (w *ParamTView[T]) SetAlternatives(alts []string) {
-	w.param.SetAlternatives(alts)
+// SetMin sets a typed numeric lower bound. Use SetMinLen for strings, slices,
+// and maps.
+func (p *Field[T]) SetMin(min T) {
+	assertNumericT[T]("SetMin")
+	p.Parameter.SetMin(min)
 }
 
-// SetStrictAlts sets whether alternatives are strictly enforced.
-func (w *ParamTView[T]) SetStrictAlts(strict bool) {
-	w.param.SetStrictAlts(strict)
+// SetMax sets a typed numeric upper bound. Use SetMaxLen for strings, slices,
+// and maps.
+func (p *Field[T]) SetMax(max T) {
+	assertNumericT[T]("SetMax")
+	p.Parameter.SetMax(max)
 }
 
-// SetAlternativesFunc sets a function that provides dynamic value suggestions for bash completion.
-func (w *ParamTView[T]) SetAlternativesFunc(fn func(cmd *cobra.Command, args []string, toComplete string) []string) {
-	w.param.SetAlternativesFunc(fn)
-}
-
-// SetEnv sets the environment variable name for this parameter.
-func (w *ParamTView[T]) SetEnv(env string) {
-	w.param.SetEnv(env)
-}
-
-// SetShort sets the short flag name (single character) for this parameter.
-func (w *ParamTView[T]) SetShort(short string) {
-	w.param.SetShort(short)
-}
-
-// SetName sets the flag name for this parameter.
-func (w *ParamTView[T]) SetName(name string) {
-	w.param.SetName(name)
-}
-
-// SetIsEnabledFn sets a function that determines if this parameter is enabled.
-func (w *ParamTView[T]) SetIsEnabledFn(fn func() bool) {
-	w.param.SetIsEnabledFn(fn)
-}
-
-// SetRequiredFn sets a function that determines if this parameter is required.
-func (w *ParamTView[T]) SetRequiredFn(fn func() bool) {
-	w.param.SetRequiredFn(fn)
-}
-
-// SetRequired pins the parameter as required/optional regardless of the
-// original struct-tag default.
-func (w *ParamTView[T]) SetRequired(required bool) {
-	w.param.SetRequired(required)
-}
-
-// SetNoFlag toggles CLI flag suppression.
-func (w *ParamTView[T]) SetNoFlag(noFlag bool) {
-	w.param.SetNoFlag(noFlag)
-}
-
-// SetCollection controls repeated CLI flag parsing for slice parameters.
-func (w *ParamTView[T]) SetCollection(mode CollectionMode) {
-	w.param.SetCollection(mode)
-}
-
-// SetNoEnv toggles env var suppression.
-func (w *ParamTView[T]) SetNoEnv(noEnv bool) {
-	w.param.SetNoEnv(noEnv)
-}
-
-// SetIgnored fully excludes the parameter from boa processing.
-func (w *ParamTView[T]) SetIgnored(ignored bool) {
-	w.param.SetIgnored(ignored)
-}
-
-// SetConfigFile marks this string parameter as the auto-loaded config-file
-// path for its enclosing struct. Equivalent to the `configfile:"true"` tag.
-func (w *ParamTView[T]) SetConfigFile(isConfigFile bool) {
-	w.param.SetConfigFile(isConfigFile)
-}
-
-// SetDescription sets the help/description text.
-func (w *ParamTView[T]) SetDescription(descr string) {
-	w.param.SetDescription(descr)
-}
-
-// SetPositional toggles positional-argument mode.
-func (w *ParamTView[T]) SetPositional(positional bool) {
-	w.param.SetPositional(positional)
-}
-
-// SetPersistent toggles persistent-flag mode.
-func (w *ParamTView[T]) SetPersistent(persistent bool) {
-	w.param.SetPersistent(persistent)
-}
-
-// SetMinT sets a typed numeric lower bound. Panics if T is not numeric —
-// use SetMinLen for string / slice / map fields.
-func (w *ParamTView[T]) SetMinT(min T) {
-	assertNumericT[T]("SetMinT")
-	w.param.SetMin(min)
-}
-
-// SetMaxT sets a typed numeric upper bound. See SetMinT.
-func (w *ParamTView[T]) SetMaxT(max T) {
-	assertNumericT[T]("SetMaxT")
-	w.param.SetMax(max)
-}
-
-// SetMinLen sets a length lower bound on a string / slice / map field. Panics
-// if T is a numeric type — use SetMinT there instead.
-func (w *ParamTView[T]) SetMinLen(min int) {
+// SetMinLen sets a minimum length for a string, slice, or map.
+func (p *Field[T]) SetMinLen(min int) {
 	assertLengthT[T]("SetMinLen")
-	w.param.SetMin(min)
+	p.Parameter.SetMin(min)
 }
 
-// SetMaxLen sets a length upper bound on a string / slice / map field. See
-// SetMinLen.
-func (w *ParamTView[T]) SetMaxLen(max int) {
+// SetMaxLen sets a maximum length for a string, slice, or map.
+func (p *Field[T]) SetMaxLen(max int) {
 	assertLengthT[T]("SetMaxLen")
-	w.param.SetMax(max)
+	p.Parameter.SetMax(max)
 }
 
-// ClearMin removes a previously set lower bound.
-func (w *ParamTView[T]) ClearMin() {
-	w.param.ClearMin()
-}
-
-// ClearMax removes a previously set upper bound.
-func (w *ParamTView[T]) ClearMax() {
-	w.param.ClearMax()
-}
-
-// assertNumericT panics if T is not a numeric kind. Used to guard SetMinT /
-// SetMaxT at runtime since Go methods can't carry their own type constraints.
 func assertNumericT[T any](method string) {
-	var zero T
-	k := reflect.TypeOf(zero).Kind()
-	switch k {
+	kind := reflect.TypeFor[T]().Kind()
+	switch kind {
 	case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64,
 		reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64,
 		reflect.Float32, reflect.Float64:
 		return
 	}
-	panic(fmt.Errorf("boa: %s requires a numeric T, got %s — use SetMinLen / SetMaxLen for string/slice/map fields", method, k))
+	panic(fmt.Errorf("boa: %s requires a numeric field, got %s; use SetMinLen or SetMaxLen for strings, slices, and maps", method, kind))
 }
 
-// assertLengthT panics if T is not a length-bearing kind (string, slice, map).
 func assertLengthT[T any](method string) {
-	var zero T
-	k := reflect.TypeOf(zero).Kind()
-	switch k {
+	kind := reflect.TypeFor[T]().Kind()
+	switch kind {
 	case reflect.String, reflect.Slice, reflect.Map:
 		return
 	}
-	panic(fmt.Errorf("boa: %s requires a string / slice / map T, got %s — use SetMinT / SetMaxT for numeric fields", method, k))
-}
-
-// SetPattern sets a regex pattern (empty string clears).
-func (w *ParamTView[T]) SetPattern(pattern string) {
-	w.param.SetPattern(pattern)
+	panic(fmt.Errorf("boa: %s requires a string, slice, or map field, got %s; use SetMin or SetMax for numeric fields", method, kind))
 }

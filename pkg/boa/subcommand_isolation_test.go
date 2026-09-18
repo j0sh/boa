@@ -33,11 +33,11 @@ func TestSubcommandIsolation_Alternatives(t *testing.T) {
 
 	// Factory: builds a fresh tree per invocation to avoid cobra flag-state
 	// leakage between Execute() calls.
-	makeTree := func() CmdT[Params] {
-		return CmdT[Params]{
+	makeTree := func() Cmd[Params] {
+		return Cmd[Params]{
 			Use: "root",
 			InitFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command) error {
-				ctx.GetParam(&p.Value).SetAlternatives([]string{"root-a", "root-b"})
+				Param(ctx, &p.Value).SetAlternatives([]string{"root-a", "root-b"})
 				return nil
 			},
 			RunFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command, args []string) {
@@ -45,10 +45,10 @@ func TestSubcommandIsolation_Alternatives(t *testing.T) {
 				rootVal = p.Value
 			},
 			SubCmds: SubCmds(
-				CmdT[Params]{
+				Cmd[Params]{
 					Use: "sub1",
 					InitFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command) error {
-						ctx.GetParam(&p.Value).SetAlternatives([]string{"sub1-x", "sub1-y"})
+						Param(ctx, &p.Value).SetAlternatives([]string{"sub1-x", "sub1-y"})
 						return nil
 					},
 					RunFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command, args []string) {
@@ -56,10 +56,10 @@ func TestSubcommandIsolation_Alternatives(t *testing.T) {
 						sub1Val = p.Value
 					},
 				},
-				CmdT[Params]{
+				Cmd[Params]{
 					Use: "sub2",
 					InitFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command) error {
-						ctx.GetParam(&p.Value).SetAlternatives([]string{"sub2-m", "sub2-n"})
+						Param(ctx, &p.Value).SetAlternatives([]string{"sub2-m", "sub2-n"})
 						return nil
 					},
 					RunFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command, args []string) {
@@ -145,13 +145,13 @@ func TestSubcommandIsolation_CustomValidators(t *testing.T) {
 
 	var rootCalls, sub1Calls, sub2Calls int
 
-	makeTree := func() CmdT[Params] {
-		return CmdT[Params]{
+	makeTree := func() Cmd[Params] {
+		return Cmd[Params]{
 			Use: "root",
 			InitFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command) error {
-				ctx.GetParam(&p.Value).SetCustomValidator(func(v any) error {
+				Param(ctx, &p.Value).SetCustomValidator(func(v string) error {
 					rootCalls++
-					if !strings.HasPrefix(v.(string), "root-") {
+					if !strings.HasPrefix(v, "root-") {
 						return fmt.Errorf("root expects prefix 'root-'")
 					}
 					return nil
@@ -160,12 +160,12 @@ func TestSubcommandIsolation_CustomValidators(t *testing.T) {
 			},
 			RunFunc: func(p *Params, c *cobra.Command, args []string) {},
 			SubCmds: SubCmds(
-				CmdT[Params]{
+				Cmd[Params]{
 					Use: "sub1",
 					InitFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command) error {
-						ctx.GetParam(&p.Value).SetCustomValidator(func(v any) error {
+						Param(ctx, &p.Value).SetCustomValidator(func(v string) error {
 							sub1Calls++
-							if !strings.HasPrefix(v.(string), "sub1-") {
+							if !strings.HasPrefix(v, "sub1-") {
 								return fmt.Errorf("sub1 expects prefix 'sub1-'")
 							}
 							return nil
@@ -174,12 +174,12 @@ func TestSubcommandIsolation_CustomValidators(t *testing.T) {
 					},
 					RunFunc: func(p *Params, c *cobra.Command, args []string) {},
 				},
-				CmdT[Params]{
+				Cmd[Params]{
 					Use: "sub2",
 					InitFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command) error {
-						ctx.GetParam(&p.Value).SetCustomValidator(func(v any) error {
+						Param(ctx, &p.Value).SetCustomValidator(func(v string) error {
 							sub2Calls++
-							if !strings.HasPrefix(v.(string), "sub2-") {
+							if !strings.HasPrefix(v, "sub2-") {
 								return fmt.Errorf("sub2 expects prefix 'sub2-'")
 							}
 							return nil
@@ -255,39 +255,39 @@ func TestSubcommandIsolation_MirrorIdentity(t *testing.T) {
 		Value string `descr:"value"`
 	}
 
-	var rootInit, rootRun Param
-	var sub1Init, sub1Run Param
-	var sub2Init, sub2Run Param
+	var rootInit, rootRun Parameter
+	var sub1Init, sub1Run Parameter
+	var sub2Init, sub2Run Parameter
 
-	makeTree := func() CmdT[Params] {
-		return CmdT[Params]{
+	makeTree := func() Cmd[Params] {
+		return Cmd[Params]{
 			Use: "root",
 			InitFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command) error {
-				rootInit = ctx.GetParam(&p.Value)
+				rootInit = Param(ctx, &p.Value).Parameter
 				return nil
 			},
 			RunFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command, args []string) {
-				rootRun = ctx.GetParam(&p.Value)
+				rootRun = Param(ctx, &p.Value).Parameter
 			},
 			SubCmds: SubCmds(
-				CmdT[Params]{
+				Cmd[Params]{
 					Use: "sub1",
 					InitFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command) error {
-						sub1Init = ctx.GetParam(&p.Value)
+						sub1Init = Param(ctx, &p.Value).Parameter
 						return nil
 					},
 					RunFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command, args []string) {
-						sub1Run = ctx.GetParam(&p.Value)
+						sub1Run = Param(ctx, &p.Value).Parameter
 					},
 				},
-				CmdT[Params]{
+				Cmd[Params]{
 					Use: "sub2",
 					InitFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command) error {
-						sub2Init = ctx.GetParam(&p.Value)
+						sub2Init = Param(ctx, &p.Value).Parameter
 						return nil
 					},
 					RunFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command, args []string) {
-						sub2Run = ctx.GetParam(&p.Value)
+						sub2Run = Param(ctx, &p.Value).Parameter
 					},
 				},
 			),
@@ -320,8 +320,8 @@ func TestSubcommandIsolation_MirrorIdentity(t *testing.T) {
 	// The mirrors from different commands must be distinct instances. Even
 	// though they describe the same field of the same type, they belong to
 	// different processingContexts built by different toCobraBase calls.
-	mirrors := []Param{rootInit, sub1Init, sub2Init}
-	seen := map[Param]string{}
+	mirrors := []Parameter{rootInit, sub1Init, sub2Init}
+	seen := map[Parameter]string{}
 	names := []string{"root", "sub1", "sub2"}
 	for i, m := range mirrors {
 		if prior, dup := seen[m]; dup {
@@ -333,5 +333,5 @@ func TestSubcommandIsolation_MirrorIdentity(t *testing.T) {
 
 	// Quick sanity on deterministic path ordering in AllMirrors (just to make
 	// sure the new AllMirrors() is sensible — orthogonal to the main point).
-	_ = slices.Clone([]Param{rootInit})
+	_ = slices.Clone([]Parameter{rootInit})
 }

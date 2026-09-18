@@ -21,7 +21,7 @@ func TestInitWithDefaultOptional(t *testing.T) {
 	Init(WithDefaultOptional())
 
 	// With defaultOptional, plain fields should not be required
-	err := CmdT[Params]{
+	err := Cmd[Params]{
 		Use:   "test",
 		Short: "test command",
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
@@ -40,7 +40,7 @@ func TestDefaultBehaviorWithoutInit(t *testing.T) {
 	}
 
 	// Without Init, plain fields should be required (default behavior)
-	err := CmdT[Params]{
+	err := Cmd[Params]{
 		Use:   "test",
 		Short: "test command",
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
@@ -62,7 +62,7 @@ func TestExplicitRequiredTagOverridesDefaultOptional(t *testing.T) {
 	Init(WithDefaultOptional())
 
 	// Explicit required:"true" should override defaultOptional
-	err := CmdT[Params]{
+	err := Cmd[Params]{
 		Use:   "test",
 		Short: "test command",
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
@@ -82,7 +82,7 @@ func TestExplicitOptionalTagOverridesDefault(t *testing.T) {
 	}
 
 	// No Init - default is required, but explicit optional:"true" overrides
-	err := CmdT[Params]{
+	err := Cmd[Params]{
 		Use:   "test",
 		Short: "test command",
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
@@ -92,4 +92,3 @@ func TestExplicitOptionalTagOverridesDefault(t *testing.T) {
 		t.Fatalf("expected no error for explicitly optional field, got: %v", err)
 	}
 }
-

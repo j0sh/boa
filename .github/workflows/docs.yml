@@ -5,6 +5,10 @@ on:
     branches: [main]
     paths:
       - 'docs/**'
+      - 'README.md'
+      - 'internal/example*/**'
+      - 'go.mod'
+      - 'go.sum'
       - 'mkdocs.yml'
       - '.github/workflows/docs.yml'
   workflow_dispatch:
@@ -23,6 +27,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Compile and test examples
+        run: go test ./internal/...
 
       - uses: actions/setup-python@v6
         with:

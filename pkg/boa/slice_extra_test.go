@@ -21,7 +21,7 @@ func TestSliceBool_Raw(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -46,7 +46,7 @@ func TestSliceBool_Raw_Default(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -73,7 +73,7 @@ func TestSliceTime_Raw(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -103,7 +103,7 @@ func TestSliceTime_Raw_RFC3339(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -134,7 +134,7 @@ func TestSliceDuration_Raw(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -165,7 +165,7 @@ func TestSliceDuration_Raw_Default(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -192,7 +192,7 @@ func TestSliceIP_Raw(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -223,7 +223,7 @@ func TestSliceIP_Raw_Mixed(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -255,7 +255,7 @@ func TestSliceURL_Raw(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -283,7 +283,7 @@ func TestSliceURL_Raw_WithPaths(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true

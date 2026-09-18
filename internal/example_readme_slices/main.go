@@ -15,7 +15,7 @@ type Params struct {
 }
 
 func main() {
-	boa.CmdT[Params]{
+	boa.Cmd[Params]{
 		Use:   "hello-world",
 		Short: "a generic cli tool",
 		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {

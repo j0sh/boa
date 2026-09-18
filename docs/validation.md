@@ -86,16 +86,16 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use: "app",
         InitFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command) error {
             // FilePath required when Mode is "file"
-            ctx.GetParam(&p.FilePath).SetRequiredFn(func() bool {
+            boa.Param(ctx, &p.FilePath).SetRequiredFn(func() bool {
                 return p.Mode == "file"
             })
 
             // URL required when Mode is "http"
-            ctx.GetParam(&p.URL).SetRequiredFn(func() bool {
+            boa.Param(ctx, &p.URL).SetRequiredFn(func() bool {
                 return p.Mode == "http"
             })
 
@@ -119,11 +119,11 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use: "app",
         InitFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command) error {
             // Verbose flag only visible when Debug is true
-            ctx.GetParam(&p.Verbose).SetIsEnabledFn(func() bool {
+            boa.Param(ctx, &p.Verbose).SetIsEnabledFn(func() bool {
                 return p.Debug
             })
             return nil
@@ -143,8 +143,8 @@ For alternatives that depend on runtime state, use `SetAlternatives` in a hook:
 func (c *Config) InitCtx(ctx *boa.HookContext) error {
     // Set alternatives based on available options
     envs := []string{"dev", "staging", "prod"}
-    ctx.GetParam(&c.Environment).SetAlternatives(envs)
-    ctx.GetParam(&c.Environment).SetStrictAlts(true)
+    boa.Param(ctx, &c.Environment).SetAlternatives(envs)
+    boa.Param(ctx, &c.Environment).SetStrictAlts(true)
     return nil
 }
 ```

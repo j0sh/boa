@@ -17,11 +17,11 @@ func TestRawParamSetRequiredFn(t *testing.T) {
 		}
 
 		// Set Mode to "file" but don't provide FilePath - should fail
-		err := CmdT[Params]{
+		err := Cmd[Params]{
 			Use: "test",
 			InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
 				// FilePath is required when Mode is "file"
-				filePathParam := ctx.GetParam(&p.FilePath)
+				filePathParam := Param(ctx, &p.FilePath)
 				filePathParam.SetRequiredFn(func() bool {
 					return p.Mode == "file"
 				})
@@ -42,10 +42,10 @@ func TestRawParamSetRequiredFn(t *testing.T) {
 		}
 
 		// Set Mode to "file" and provide FilePath - should pass
-		err := CmdT[Params]{
+		err := Cmd[Params]{
 			Use: "test",
 			InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
-				filePathParam := ctx.GetParam(&p.FilePath)
+				filePathParam := Param(ctx, &p.FilePath)
 				filePathParam.SetRequiredFn(func() bool {
 					return p.Mode == "file"
 				})
@@ -66,10 +66,10 @@ func TestRawParamSetRequiredFn(t *testing.T) {
 		}
 
 		// Set Mode to "stream" - FilePath should not be required
-		err := CmdT[Params]{
+		err := Cmd[Params]{
 			Use: "test",
 			InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
-				filePathParam := ctx.GetParam(&p.FilePath)
+				filePathParam := Param(ctx, &p.FilePath)
 				filePathParam.SetRequiredFn(func() bool {
 					return p.Mode == "file"
 				})
@@ -93,10 +93,10 @@ func TestRawParamSetIsEnabledFn(t *testing.T) {
 		}
 
 		// When Debug is false, Verbose is disabled - should pass even without verbose
-		err := CmdT[Params]{
+		err := Cmd[Params]{
 			Use: "test",
 			InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
-				verboseParam := ctx.GetParam(&p.Verbose)
+				verboseParam := Param(ctx, &p.Verbose)
 				verboseParam.SetIsEnabledFn(func() bool {
 					return p.Debug
 				})
@@ -119,10 +119,10 @@ func TestRawParamSetIsEnabledFn(t *testing.T) {
 		var capturedVerbose bool
 
 		// When Debug is true, Verbose is enabled and can be set
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
-				verboseParam := ctx.GetParam(&p.Verbose)
+				verboseParam := Param(ctx, &p.Verbose)
 				verboseParam.SetIsEnabledFn(func() bool {
 					return p.Debug
 				})
@@ -146,10 +146,10 @@ func TestRawParamGetRequiredFn(t *testing.T) {
 		Name string `optional:"true"`
 	}
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
-			nameParam := ctx.GetParam(&p.Name)
+			nameParam := Param(ctx, &p.Name)
 
 			// Initially, GetRequiredFn should return nil for raw params
 			if nameParam.GetRequiredFn() != nil {
@@ -172,29 +172,29 @@ func TestRawParamGetRequiredFn(t *testing.T) {
 	}.Validate() //nolint:errcheck // test only cares about side effects
 }
 
-// TestRawParamMixedWithWrapped tests that GetParam works for both raw fields
+// TestRawParamMixedWithWrapped tests that Param works for both raw fields
 func TestRawParamMixedWithWrapped(t *testing.T) {
 	type Params struct {
 		RawName string
 		Port    int `optional:"true"`
 	}
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
-			// GetParam should work for raw fields
-			rawParam := ctx.GetParam(&p.RawName)
+			// Param should work for raw fields
+			rawParam := Param(ctx, &p.RawName)
 			if rawParam == nil {
-				t.Error("expected GetParam to return non-nil for raw field")
+				t.Error("expected Param to return non-nil for raw field")
 			}
-			rawParam.SetDefault(Default("default-name"))
+			rawParam.SetDefault("default-name")
 
-			// GetParam should also work for other raw fields
-			portParam := ctx.GetParam(&p.Port)
+			// Param should also work for other raw fields
+			portParam := Param(ctx, &p.Port)
 			if portParam == nil {
-				t.Error("expected GetParam to return non-nil for port field")
+				t.Error("expected Param to return non-nil for port field")
 			}
-			portParam.SetDefault(Default(8080))
+			portParam.SetDefault(8080)
 
 			return nil
 		},
@@ -212,10 +212,10 @@ func TestRawParamConditionalWithDefault(t *testing.T) {
 	}
 
 	// With default Mode="auto", Target should not be required
-	err := CmdT[Params]{
+	err := Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
-			targetParam := ctx.GetParam(&p.Target)
+			targetParam := Param(ctx, &p.Target)
 			targetParam.SetRequiredFn(func() bool {
 				return p.Mode != "auto"
 			})
@@ -229,10 +229,10 @@ func TestRawParamConditionalWithDefault(t *testing.T) {
 	}
 
 	// Override Mode to something else, Target becomes required
-	err = CmdT[Params]{
+	err = Cmd[Params]{
 		Use: "test2",
 		InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
-			targetParam := ctx.GetParam(&p.Target)
+			targetParam := Param(ctx, &p.Target)
 			targetParam.SetRequiredFn(func() bool {
 				return p.Mode != "auto"
 			})

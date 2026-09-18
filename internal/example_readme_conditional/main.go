@@ -16,17 +16,17 @@ type Params struct {
 }
 
 func main() {
-	boa.CmdT[Params]{
+	boa.Cmd[Params]{
 		Use:   "hello-world",
 		Short: "a generic cli tool",
 		InitFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command) error {
 			// FilePath is required when Mode is "file"
-			ctx.GetParam(&p.FilePath).SetRequiredFn(func() bool {
+			boa.Param(ctx, &p.FilePath).SetRequiredFn(func() bool {
 				return p.Mode == "file"
 			})
 
 			// Verbose is only enabled when Debug is true
-			ctx.GetParam(&p.Verbose).SetIsEnabledFn(func() bool {
+			boa.Param(ctx, &p.Verbose).SetIsEnabledFn(func() bool {
 				return p.Debug
 			})
 

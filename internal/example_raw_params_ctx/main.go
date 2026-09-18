@@ -24,23 +24,23 @@ type ServerConfig struct {
 // This allows setting defaults, alternatives, env vars, etc. on raw fields.
 func (c *ServerConfig) InitCtx(ctx *boa.HookContext) error {
 	// Get the parameter mirror for the Host field
-	hostParam := ctx.GetParam(&c.Host)
-	hostParam.SetDefault(boa.Default("localhost"))
+	hostParam := boa.Param(ctx, &c.Host)
+	hostParam.SetDefault("localhost")
 	hostParam.SetEnv("SERVER_HOST")
 
 	// Get the parameter mirror for the Port field
-	portParam := ctx.GetParam(&c.Port)
-	portParam.SetDefault(boa.Default(8080))
+	portParam := boa.Param(ctx, &c.Port)
+	portParam.SetDefault(8080)
 	portParam.SetEnv("SERVER_PORT")
 
 	// Set up alternatives for LogLevel with shell completion
-	logParam := ctx.GetParam(&c.LogLevel)
-	logParam.SetDefault(boa.Default("info"))
+	logParam := boa.Param(ctx, &c.LogLevel)
+	logParam.SetDefault("info")
 	logParam.SetAlternatives([]string{"debug", "info", "warn", "error"})
 
 	// Set up strict alternatives for Protocol (validation will fail if not in list)
-	protoParam := ctx.GetParam(&c.Protocol)
-	protoParam.SetDefault(boa.Default("http"))
+	protoParam := boa.Param(ctx, &c.Protocol)
+	protoParam.SetDefault("http")
 	protoParam.SetAlternatives([]string{"http", "https", "grpc"})
 	protoParam.SetStrictAlts(true)
 
@@ -48,7 +48,7 @@ func (c *ServerConfig) InitCtx(ctx *boa.HookContext) error {
 }
 
 func main() {
-	boa.CmdT[ServerConfig]{
+	boa.Cmd[ServerConfig]{
 		Use:   "server",
 		Short: "Start the server with configurable options",
 		RunFunc: func(params *ServerConfig, cmd *cobra.Command, args []string) {
@@ -60,4 +60,3 @@ func main() {
 		},
 	}.Run()
 }
-

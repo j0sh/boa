@@ -15,7 +15,7 @@ func TestValidationTag_MinMax_Int(t *testing.T) {
 	}
 
 	// Valid value
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -25,7 +25,7 @@ func TestValidationTag_MinMax_Int(t *testing.T) {
 	}
 
 	// Below min
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -38,7 +38,7 @@ func TestValidationTag_MinMax_Int(t *testing.T) {
 	}
 
 	// Above max
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -56,7 +56,7 @@ func TestValidationTag_MinOnly(t *testing.T) {
 		Count int `descr:"count" min:"0"`
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -71,7 +71,7 @@ func TestValidationTag_MaxOnly(t *testing.T) {
 		Retries int `descr:"retries" max:"10"`
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -87,7 +87,7 @@ func TestValidationTag_MinMax_Float(t *testing.T) {
 	}
 
 	// Valid
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -97,7 +97,7 @@ func TestValidationTag_MinMax_Float(t *testing.T) {
 	}
 
 	// Above max
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -115,7 +115,7 @@ func TestValidationTag_Pattern(t *testing.T) {
 	}
 
 	// Valid
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -125,7 +125,7 @@ func TestValidationTag_Pattern(t *testing.T) {
 	}
 
 	// Invalid — starts with uppercase
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -144,7 +144,7 @@ func TestValidationTag_Pattern_Optional_NotSet(t *testing.T) {
 		Name *string `descr:"name" pattern:"^[a-z]+$"`
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -163,7 +163,7 @@ func TestValidationTag_MinMax_Pointer_Set(t *testing.T) {
 	}
 
 	// Valid
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -173,7 +173,7 @@ func TestValidationTag_MinMax_Pointer_Set(t *testing.T) {
 	}
 
 	// Below min
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -189,7 +189,7 @@ func TestValidationTag_MinMax_Pointer_NotSet(t *testing.T) {
 		Port *int `descr:"port" min:"1" max:"65535"`
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -206,7 +206,7 @@ func TestValidationTag_Pattern_Pointer_Set(t *testing.T) {
 	}
 
 	// Valid
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -216,7 +216,7 @@ func TestValidationTag_Pattern_Pointer_Set(t *testing.T) {
 	}
 
 	// Invalid
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -232,7 +232,7 @@ func TestValidationTag_MinMax_StringLength(t *testing.T) {
 	}
 
 	// Valid
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -242,7 +242,7 @@ func TestValidationTag_MinMax_StringLength(t *testing.T) {
 	}
 
 	// Too short
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -252,7 +252,7 @@ func TestValidationTag_MinMax_StringLength(t *testing.T) {
 	}
 
 	// Too long
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -270,7 +270,7 @@ func TestValidationTag_MinMax_Slice(t *testing.T) {
 	}
 
 	// Valid: 2 items
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -280,7 +280,7 @@ func TestValidationTag_MinMax_Slice(t *testing.T) {
 	}
 
 	// Below min: 1 item when min is 1 (need at least 1 tag provided)
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -290,7 +290,7 @@ func TestValidationTag_MinMax_Slice(t *testing.T) {
 	}
 
 	// Above max: 4 items
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -309,7 +309,7 @@ func TestValidationTag_MinOnly_Slice(t *testing.T) {
 	}
 
 	// Valid: exactly 2
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -319,7 +319,7 @@ func TestValidationTag_MinOnly_Slice(t *testing.T) {
 	}
 
 	// Below min: 1 item
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -335,7 +335,7 @@ func TestValidationTag_MaxOnly_Slice(t *testing.T) {
 	}
 
 	// Valid: 0 items
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -345,7 +345,7 @@ func TestValidationTag_MaxOnly_Slice(t *testing.T) {
 	}
 
 	// Valid: 2 items
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -355,7 +355,7 @@ func TestValidationTag_MaxOnly_Slice(t *testing.T) {
 	}
 
 	// Above max: 3 items
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -372,7 +372,7 @@ func TestValidationTag_MinMax_Slice_Positional(t *testing.T) {
 
 	// Valid: 3 items
 	var got []string
-	(CmdT[Params]{
+	(Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) { got = p.Files },
@@ -382,7 +382,7 @@ func TestValidationTag_MinMax_Slice_Positional(t *testing.T) {
 	}
 
 	// Below min: 1 item
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -395,7 +395,7 @@ func TestValidationTag_MinMax_Slice_Positional(t *testing.T) {
 	}
 
 	// Above max: 5 items
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -414,7 +414,7 @@ func TestValidationTag_MinMax_IntSlice(t *testing.T) {
 	}
 
 	// Valid: 2 items
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -424,7 +424,7 @@ func TestValidationTag_MinMax_IntSlice(t *testing.T) {
 	}
 
 	// Above max: 4 items
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -440,7 +440,7 @@ func TestValidationTag_MinMax_RequiredSliceFlag(t *testing.T) {
 	}
 
 	// 0 items: required error fires first
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -453,7 +453,7 @@ func TestValidationTag_MinMax_RequiredSliceFlag(t *testing.T) {
 	}
 
 	// 1 item: min validation fires
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -466,7 +466,7 @@ func TestValidationTag_MinMax_RequiredSliceFlag(t *testing.T) {
 	}
 
 	// 2 items: passes
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -482,7 +482,7 @@ func TestValidationTag_MinMax_RequiredSlicePositional(t *testing.T) {
 	}
 
 	// 0 items: cobra args validator fires first
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -492,7 +492,7 @@ func TestValidationTag_MinMax_RequiredSlicePositional(t *testing.T) {
 	}
 
 	// 1 item: min validation fires
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -505,7 +505,7 @@ func TestValidationTag_MinMax_RequiredSlicePositional(t *testing.T) {
 	}
 
 	// 2 items: passes
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},

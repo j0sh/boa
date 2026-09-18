@@ -25,12 +25,12 @@ type spCacheConfig struct {
 
 func TestStructPtr_NilWhenNoFlagsSet(t *testing.T) {
 	type Params struct {
-		Name string     `descr:"app name"`
+		Name string      `descr:"app name"`
 		DB   *spDBConfig // pointer — should be nil if no --db-* flags given
 	}
 
 	var gotDB *spDBConfig
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -50,12 +50,12 @@ func TestStructPtr_NilWhenNoFlagsSet(t *testing.T) {
 
 func TestStructPtr_SetViaCLI_Host(t *testing.T) {
 	type Params struct {
-		Name string      `descr:"app name"`
+		Name string `descr:"app name"`
 		DB   *spDBConfig
 	}
 
 	var gotDB *spDBConfig
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -84,7 +84,7 @@ func TestStructPtr_SetViaCLI_Port(t *testing.T) {
 	}
 
 	var gotDB *spDBConfig
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -120,7 +120,7 @@ func TestStructPtr_SetViaEnv(t *testing.T) {
 	t.Setenv("DB_SP_DB_HOST", "env-host.example.com")
 
 	var gotDB *Inner
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -153,7 +153,7 @@ func TestStructPtr_SetViaEnv_ExplicitEnvTag(t *testing.T) {
 	t.Setenv("THING_MY_CUSTOM_VAR", "from-env")
 
 	var gotThing *Inner
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherDefault,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -192,7 +192,7 @@ func TestStructPtr_SetViaConfigFile(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var gotDB *Inner
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -227,7 +227,7 @@ func TestStructPtr_CLIOverridesEnv(t *testing.T) {
 	t.Setenv("DB_SP_CLI_DB_HOST", "env-host")
 
 	var gotDB *Inner
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -266,7 +266,7 @@ func TestStructPtr_CLIOverridesConfigFile(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var gotDB *Inner
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -298,7 +298,7 @@ func TestStructPtr_TwoPointers_OnlyOneSet(t *testing.T) {
 
 	var gotDB *spDBConfig
 	var gotCache *spCacheConfig
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -331,7 +331,7 @@ func TestStructPtr_TwoPointers_BothSet(t *testing.T) {
 
 	var gotDB *spDBConfig
 	var gotCache *spCacheConfig
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -375,7 +375,7 @@ func TestStructPtr_NestedPtrInPtr(t *testing.T) {
 	}
 
 	var gotWrapper *Outer
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -414,7 +414,7 @@ func TestStructPtr_NestedPtrInPtr_NoneSet(t *testing.T) {
 	}
 
 	var gotWrapper *Outer
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -444,7 +444,7 @@ func TestStructPtr_NestedPtrInPtr_OnlyInnerSet(t *testing.T) {
 	}
 
 	var gotWrapper *Outer
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -478,7 +478,7 @@ func TestStructPtr_Embedded_Anonymous(t *testing.T) {
 	}
 
 	var gotParams *Params
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -507,7 +507,7 @@ func TestStructPtr_Embedded_Anonymous_NilWhenNotSet(t *testing.T) {
 	}
 
 	var gotParams *Params
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -531,7 +531,7 @@ func TestStructPtr_CustomValidator(t *testing.T) {
 	}
 
 	validatorCalled := false
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFunc: func(p *Params, cmd *cobra.Command) error {
@@ -561,12 +561,12 @@ func TestStructPtr_CustomValidator(t *testing.T) {
 
 func TestStructPtr_CustomValidator_NotCalledWhenNil(t *testing.T) {
 	type Params struct {
-		Name string     `descr:"name"`
+		Name string `descr:"name"`
 		DB   *spDBConfig
 	}
 
 	validatorCalled := false
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		PreValidateFunc: func(p *Params, cmd *cobra.Command, args []string) error {
@@ -591,7 +591,7 @@ func TestStructPtr_CustomValidatorViaHookCtx(t *testing.T) {
 		DB *spDBConfig
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		PostCreateFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command) error {
@@ -600,15 +600,14 @@ func TestStructPtr_CustomValidatorViaHookCtx(t *testing.T) {
 				t.Error("expected DB to be preallocated in PostCreateFuncCtx")
 				return nil
 			}
-			portParam := ctx.GetParam(&p.DB.Port)
+			portParam := Param(ctx, &p.DB.Port)
 			if portParam == nil {
 				t.Error("expected to find port param via HookContext")
 				return nil
 			}
-			portParam.SetCustomValidator(func(val any) error {
-				v := val.(int)
-				if v < 1024 {
-					return NewUserInputErrorf("port must be >= 1024, got %d", v)
+			portParam.SetCustomValidator(func(value int) error {
+				if value < 1024 {
+					return NewUserInputErrorf("port must be >= 1024, got %d", value)
 				}
 				return nil
 			})
@@ -629,7 +628,7 @@ func TestStructPtr_AlternativesFunc(t *testing.T) {
 		DB *spDBConfig
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		PostCreateFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command) error {
@@ -637,7 +636,7 @@ func TestStructPtr_AlternativesFunc(t *testing.T) {
 				t.Error("expected DB to be preallocated in PostCreateFuncCtx")
 				return nil
 			}
-			hostParam := ctx.GetParam(&p.DB.Host)
+			hostParam := Param(ctx, &p.DB.Host)
 			if hostParam == nil {
 				t.Error("expected to find host param via HookContext")
 				return nil
@@ -664,7 +663,7 @@ func TestStructPtr_Alternatives_Strict(t *testing.T) {
 	}
 
 	// Valid value
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -675,7 +674,7 @@ func TestStructPtr_Alternatives_Strict(t *testing.T) {
 	}
 
 	// Invalid value
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -697,7 +696,7 @@ func TestStructPtr_ValidationTags_MinMax(t *testing.T) {
 	}
 
 	// Valid
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -708,7 +707,7 @@ func TestStructPtr_ValidationTags_MinMax(t *testing.T) {
 	}
 
 	// Invalid (too high)
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -728,7 +727,7 @@ func TestStructPtr_ValidationTags_Pattern(t *testing.T) {
 	}
 
 	// Valid
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -739,7 +738,7 @@ func TestStructPtr_ValidationTags_Pattern(t *testing.T) {
 	}
 
 	// Invalid
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -763,7 +762,7 @@ func TestStructPtr_RequiredFieldInsidePtr_NoErrorWhenStructNil(t *testing.T) {
 		Server *Inner
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -778,15 +777,15 @@ func TestStructPtr_RequiredFieldInsidePtr_ErrorWhenPartiallySet(t *testing.T) {
 	// If one field is set but another required field in the same struct isn't,
 	// that should be a validation error.
 	type Inner struct {
-		Host string `descr:"host"`              // required
+		Host string `descr:"host"`                 // required
 		Port int    `descr:"port" optional:"true"` // optional
-		Name string `descr:"name"`              // required
+		Name string `descr:"name"`                 // required
 	}
 	type Params struct {
 		Server *Inner
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -802,13 +801,13 @@ func TestStructPtr_RequiredFieldInsidePtr_ErrorWhenPartiallySet(t *testing.T) {
 
 func TestStructPtr_MixedPointerAndValue(t *testing.T) {
 	type Params struct {
-		DB    spDBConfig    // value struct — always present
+		DB    spDBConfig     // value struct — always present
 		Cache *spCacheConfig // pointer struct — nil if not set
 	}
 
 	var gotDB spDBConfig
 	var gotCache *spCacheConfig
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -840,7 +839,7 @@ func TestStructPtr_AllOptionalFields_NilWhenNotSet(t *testing.T) {
 	}
 
 	var gotLogging *Inner
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -866,7 +865,7 @@ func TestStructPtr_AllOptionalFields_SetWhenOneProvided(t *testing.T) {
 	}
 
 	var gotLogging *Inner
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -898,7 +897,7 @@ func TestStructPtr_DefaultsAloneDontInstantiate(t *testing.T) {
 	}
 
 	var gotDB *Inner
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -938,7 +937,7 @@ func TestStructPtr_EnvAndConfigFile(t *testing.T) {
 	t.Setenv("DB_SP_ENV_CFG_HOST", "env-host")
 
 	var gotDB *Inner
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -981,7 +980,7 @@ func TestStructPtr_ConfigFileKeepsStructAlive(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var gotDB *Inner
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -1020,7 +1019,7 @@ func TestStructPtr_ConfigFileSetsZeroValue_StillKeepsStruct(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var gotStats *Inner
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -1057,7 +1056,7 @@ func TestStructPtr_ConfigFileSetsDefaultValue_StillKeepsStruct(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var gotDB *Inner
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -1095,7 +1094,7 @@ func TestStructPtr_SubstructOwnConfigFile(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var gotDB *Inner
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -1135,7 +1134,7 @@ func TestStructPtr_SubstructOwnConfigFile_ZeroValue(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var gotStats *Inner
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -1175,7 +1174,7 @@ func TestStructPtr_TwoLevelNestedPtrs_ConfigFile(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var gotOuter *Y
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -1220,7 +1219,7 @@ func TestStructPtr_TwoLevelNestedPtrs_ConfigFile_ZeroValue(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var gotOuter *Y
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -1263,7 +1262,7 @@ func TestStructPtr_TwoLevelNestedPtrs_OnlyMiddleSetViaConfig(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var gotOuter *Y
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -1297,7 +1296,7 @@ func TestStructPtr_PreInitialized_KeptEvenIfNoFlagsSet(t *testing.T) {
 
 	params := &Params{DB: &Inner{Host: "pre-init"}}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		Params:      params,
 		ParamEnrich: ParamEnricherName,
@@ -1325,7 +1324,7 @@ func TestStructPtr_HasValue_SetField(t *testing.T) {
 
 	hostHasValue := false
 	portHasValue := false
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
@@ -1353,12 +1352,12 @@ func TestStructPtr_HasValue_NoFieldsSet(t *testing.T) {
 	// When struct pointer is nil (nothing set), user should nil-check before HasValue.
 	// This test verifies the nil-check pattern works and mirrors are cleaned up properly.
 	type Params struct {
-		Name string     `descr:"name"`
+		Name string `descr:"name"`
 		DB   *spDBConfig
 	}
 
 	dbWasNil := false
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
@@ -1387,7 +1386,7 @@ func TestStructPtr_HasValue_SetViaEnv(t *testing.T) {
 
 	hostHasValue := false
 	portHasValue := false
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
@@ -1428,7 +1427,7 @@ func TestStructPtr_HasValue_SetViaConfigFile(t *testing.T) {
 
 	hostHasValue := false
 	portHasValue := false
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
@@ -1466,7 +1465,7 @@ func TestStructPtr_HasValue_NestedPtr(t *testing.T) {
 
 	valueHasValue := false
 	nameHasValue := false
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
@@ -1513,7 +1512,7 @@ func TestStructPtr_ConfigFile_CaseInsensitive_NoJsonTag(t *testing.T) {
 	var gotDB *Inner
 	hostHasValue := false
 	portHasValue := false
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
@@ -1565,7 +1564,7 @@ func TestStructPtr_ConfigFile_WithJsonTag(t *testing.T) {
 	var gotDB *Inner
 	hostHasValue := false
 	portHasValue := false
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
@@ -1615,7 +1614,7 @@ func TestStructPtr_ConfigFile_JsonTagCaseInsensitive(t *testing.T) {
 
 	var gotDB *Inner
 	hostHasValue := false
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
@@ -1660,7 +1659,7 @@ func TestStructPtr_ConfigFile_BoaNameDiffersFromJsonName(t *testing.T) {
 
 	var gotBox *Inner
 	fruitHasValue := false
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
@@ -1704,7 +1703,7 @@ func TestStructPtr_ConfigFile_EmptyObject_KeepsStructAlive(t *testing.T) {
 
 	var gotDB *Inner
 	hostHasValue := false
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
@@ -1742,7 +1741,7 @@ func TestStructPtr_Cleanup_NoArgsAtAll_NestedPtrsAllNil(t *testing.T) {
 	}
 
 	var gotOuter *Outer
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -1773,7 +1772,7 @@ func TestStructPtr_Cleanup_CLISetsOuterNotInner(t *testing.T) {
 	}
 
 	var gotWrapper *Outer
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -1815,7 +1814,7 @@ func TestStructPtr_Cleanup_ConfigMentionsOuterNotInner(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var gotSection *Outer
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -1854,7 +1853,7 @@ func TestStructPtr_Cleanup_ConfigDoesNotMentionStruct(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var gotDB *Inner
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -1872,7 +1871,7 @@ func TestStructPtr_Cleanup_ConfigDoesNotMentionStruct(t *testing.T) {
 
 func TestStructPtr_Cleanup_MultiplePtrs_ConfigMentionsOnlyOne(t *testing.T) {
 	type Params struct {
-		ConfigFile string         `configfile:"true" optional:"true"`
+		ConfigFile string `configfile:"true" optional:"true"`
 		DB         *spDBConfig
 		Cache      *spCacheConfig
 	}
@@ -1884,7 +1883,7 @@ func TestStructPtr_Cleanup_MultiplePtrs_ConfigMentionsOnlyOne(t *testing.T) {
 
 	var gotDB *spDBConfig
 	var gotCache *spCacheConfig
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -1927,7 +1926,7 @@ func TestStructPtr_Cleanup_ThreeLevelNesting_OnlyMiddleSet(t *testing.T) {
 	}
 
 	var gotRoot *A
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -1956,11 +1955,11 @@ func TestStructPtr_Cleanup_ThreeLevelNesting_OnlyMiddleSet(t *testing.T) {
 
 func TestStructPtr_FlagsVisibleInHelp(t *testing.T) {
 	type Params struct {
-		Name string     `descr:"app name"`
+		Name string `descr:"app name"`
 		DB   *spDBConfig
 	}
 
-	cmd := (CmdT[Params]{
+	cmd := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},

@@ -28,7 +28,7 @@ func TestBoaIgnore_StillLoadedFromConfigFile(t *testing.T) {
 
 	var gotName string
 	var gotMeta map[string]string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -52,7 +52,7 @@ func TestBoaIgnore_StillLoadedFromConfigFile(t *testing.T) {
 }
 
 func TestBoaConfigOnly_LoadedFromConfigFile(t *testing.T) {
-	// boa:"configonly" is now a noflag+noenv shorthand (NOT an ignore alias).
+	// boa:"configonly" is a noflag+noenv shorthand.
 	// The mirror still exists — validation runs — but the field is hidden
 	// from CLI and env, so config files are the only remaining write path.
 	type Params struct {
@@ -70,7 +70,7 @@ func TestBoaConfigOnly_LoadedFromConfigFile(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var gotMeta map[string]string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -93,7 +93,7 @@ func TestBoaConfigOnly_NoCLIFlag(t *testing.T) {
 		Metadata map[string]string `boa:"configonly"`
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -111,7 +111,7 @@ func TestBoaIgnore_NoCLIFlag(t *testing.T) {
 		Metadata map[string]string `boa:"ignore"`
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -145,7 +145,7 @@ func TestSubStruct_NotFlattenedWhenIgnored(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var gotDB DBConfig
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -178,7 +178,7 @@ func TestSubStruct_FlattenedByDefault(t *testing.T) {
 
 	var gotHost string
 	var gotPort int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {

@@ -19,7 +19,7 @@ func TestWithConfigFile(t *testing.T) {
 	}()
 
 	configPath := getTestdataPath()
-	os.Args = []string{"my-app", "--file", configPath}
+	os.Args = []string{"my-app", "--config-file", configPath}
 	main()
 }
 
@@ -30,7 +30,7 @@ func TestWithoutConfigFile(t *testing.T) {
 	}()
 
 	// Without config file, use CLI args
-	os.Args = []string{"my-app", "--host", "example.com", "--port", "9000"}
+	os.Args = []string{"my-app", "--config-file=", "--host", "example.com", "--port", "9000"}
 	main()
 }
 
@@ -42,6 +42,6 @@ func TestCliOverridesConfigFile(t *testing.T) {
 
 	// CLI args take precedence over config file
 	configPath := getTestdataPath()
-	os.Args = []string{"my-app", "--file", configPath, "--port", "9999"}
+	os.Args = []string{"my-app", "--config-file", configPath, "--port", "9999"}
 	main()
 }

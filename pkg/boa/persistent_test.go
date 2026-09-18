@@ -20,7 +20,7 @@ func TestPersistentFlag_InheritedThroughTwoLevels(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			type RootParams struct {
-				DB string `long:"db" persistent:"true" optional:"true"`
+				DB string `name:"db" persistent:"true" optional:"true"`
 			}
 
 			var got string
@@ -34,7 +34,7 @@ func TestPersistentFlag_InheritedThroughTwoLevels(t *testing.T) {
 			middle.AddCommand(leaf)
 
 			params := RootParams{}
-			root := (CmdT[RootParams]{
+			root := (Cmd[RootParams]{
 				Use:     "root",
 				Params:  &params,
 				SubCmds: []*cobra.Command{middle},
@@ -60,12 +60,12 @@ func TestPersistentFlag_InheritedThroughTwoLevels(t *testing.T) {
 
 func TestPersistentFlag_RootValidationRunsForLeaf(t *testing.T) {
 	type RootParams struct {
-		DB string `long:"db" persistent:"true"`
+		DB string `name:"db" persistent:"true"`
 	}
 
 	leafRan := false
 	leaf := &cobra.Command{Use: "leaf", Run: func(cmd *cobra.Command, args []string) { leafRan = true }}
-	root := (CmdT[RootParams]{
+	root := (Cmd[RootParams]{
 		Use:     "root",
 		SubCmds: []*cobra.Command{leaf},
 	}).ToCobra()
@@ -82,12 +82,12 @@ func TestPersistentFlag_RootValidationRunsForLeaf(t *testing.T) {
 
 func TestPersistentFlag_DeclaredAtSubtreeNode(t *testing.T) {
 	type MiddleParams struct {
-		Region string `long:"region" persistent:"true" optional:"true"`
+		Region string `name:"region" persistent:"true" optional:"true"`
 	}
 
 	params := MiddleParams{}
 	leaf := &cobra.Command{Use: "leaf", Run: func(cmd *cobra.Command, args []string) {}}
-	middle := (CmdT[MiddleParams]{
+	middle := (Cmd[MiddleParams]{
 		Use:     "middle",
 		Params:  &params,
 		SubCmds: []*cobra.Command{leaf},
@@ -106,10 +106,10 @@ func TestPersistentFlag_DeclaredAtSubtreeNode(t *testing.T) {
 
 func TestPersistentFlag_ComposesRootAndIntermediatePipelines(t *testing.T) {
 	type RootParams struct {
-		DB string `long:"db" persistent:"true"`
+		DB string `name:"db" persistent:"true"`
 	}
 	type MiddleParams struct {
-		Region string `long:"region" persistent:"true"`
+		Region string `name:"region" persistent:"true"`
 	}
 
 	rootParams := RootParams{}
@@ -124,7 +124,7 @@ func TestPersistentFlag_ComposesRootAndIntermediatePipelines(t *testing.T) {
 		},
 		Run: func(cmd *cobra.Command, args []string) { leafRan = true },
 	}
-	middle := (CmdT[MiddleParams]{
+	middle := (Cmd[MiddleParams]{
 		Use:     "middle",
 		Params:  &middleParams,
 		SubCmds: []*cobra.Command{leaf},
@@ -133,7 +133,7 @@ func TestPersistentFlag_ComposesRootAndIntermediatePipelines(t *testing.T) {
 			return nil
 		},
 	}).ToCobra()
-	root := (CmdT[RootParams]{
+	root := (Cmd[RootParams]{
 		Use:     "root",
 		Params:  &rootParams,
 		SubCmds: []*cobra.Command{middle},
@@ -160,20 +160,20 @@ func TestPersistentFlag_ComposesRootAndIntermediatePipelines(t *testing.T) {
 
 func TestPersistentFlag_ChildLocalFlagShadowsParent(t *testing.T) {
 	type RootParams struct {
-		Value string `long:"value" persistent:"true" optional:"true"`
+		Value string `name:"value" persistent:"true" optional:"true"`
 	}
 	type ChildParams struct {
-		Value string `long:"value" optional:"true"`
+		Value string `name:"value" optional:"true"`
 	}
 
 	rootParams := RootParams{}
 	childParams := ChildParams{}
-	child := (CmdT[ChildParams]{
+	child := (Cmd[ChildParams]{
 		Use:     "child",
 		Params:  &childParams,
 		RunFunc: func(params *ChildParams, cmd *cobra.Command, args []string) {},
 	}).ToCobra()
-	root := (CmdT[RootParams]{
+	root := (Cmd[RootParams]{
 		Use:     "root",
 		Params:  &rootParams,
 		SubCmds: []*cobra.Command{child},
@@ -193,11 +193,11 @@ func TestPersistentFlag_ChildLocalFlagShadowsParent(t *testing.T) {
 
 func TestPersistentFlag_AppearsInLeafHelp(t *testing.T) {
 	type RootParams struct {
-		DB string `long:"db" persistent:"true" optional:"true" descr:"database path"`
+		DB string `name:"db" persistent:"true" optional:"true" descr:"database path"`
 	}
 
 	leaf := &cobra.Command{Use: "leaf", Run: func(cmd *cobra.Command, args []string) {}}
-	root := (CmdT[RootParams]{Use: "root", SubCmds: []*cobra.Command{leaf}}).ToCobra()
+	root := (Cmd[RootParams]{Use: "root", SubCmds: []*cobra.Command{leaf}}).ToCobra()
 	var output bytes.Buffer
 	root.SetOut(&output)
 	root.SetErr(&output)
@@ -217,7 +217,7 @@ func TestPersistentFlag_RejectsPositional(t *testing.T) {
 		Target string `positional:"true" persistent:"true" optional:"true"`
 	}
 
-	_, err := (CmdT[Params]{Use: "cmd"}).ToCobraE()
+	_, err := (Cmd[Params]{Use: "cmd"}).ToCobraE()
 	if err == nil || !strings.Contains(err.Error(), "cannot be both positional and persistent") {
 		t.Fatalf("ToCobraE() error = %v, want positional/persistent error", err)
 	}
@@ -225,20 +225,20 @@ func TestPersistentFlag_RejectsPositional(t *testing.T) {
 
 func TestSetPersistent_Programmatic(t *testing.T) {
 	type Params struct {
-		DB string `long:"db" optional:"true"`
+		DB string `name:"db" optional:"true"`
 	}
 
 	params := Params{}
 	leafRan := false
 	leaf := &cobra.Command{Use: "leaf", Run: func(cmd *cobra.Command, args []string) { leafRan = true }}
-	root := (CmdT[Params]{
+	root := (Cmd[Params]{
 		Use:     "root",
 		Params:  &params,
 		SubCmds: []*cobra.Command{leaf},
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			param := GetParamT(ctx, &params.DB)
+			param := Param(ctx, &params.DB)
 			param.SetPersistent(true)
-			if !param.Param().IsPersistent() {
+			if !param.IsPersistent() {
 				t.Error("IsPersistent() = false after SetPersistent(true)")
 			}
 			return nil
@@ -259,7 +259,7 @@ func TestPersistentFlag_InvalidTagValue(t *testing.T) {
 		DB string `persistent:"yes" optional:"true"`
 	}
 
-	_, err := (CmdT[Params]{Use: "cmd"}).ToCobraE()
+	_, err := (Cmd[Params]{Use: "cmd"}).ToCobraE()
 	if err == nil || !strings.Contains(err.Error(), "invalid persistent value") {
 		t.Fatalf("ToCobraE() error = %v, want invalid persistent value error", err)
 	}
@@ -267,20 +267,20 @@ func TestPersistentFlag_InvalidTagValue(t *testing.T) {
 
 func TestPersistentFlag_AutoShortDoesNotCollideWithDescendant(t *testing.T) {
 	type RootParams struct {
-		DB string `long:"db" persistent:"true" optional:"true"`
+		DB string `name:"db" persistent:"true" optional:"true"`
 	}
 	type ChildParams struct {
-		Description string `long:"description" optional:"true"`
+		Description string `name:"description" optional:"true"`
 	}
 
 	rootParams := RootParams{}
 	childParams := ChildParams{}
-	child := (CmdT[ChildParams]{
+	child := (Cmd[ChildParams]{
 		Use:     "create",
 		Params:  &childParams,
 		RunFunc: func(params *ChildParams, cmd *cobra.Command, args []string) {},
 	}).ToCobra()
-	root, err := (CmdT[RootParams]{
+	root, err := (Cmd[RootParams]{
 		Use:     "root",
 		Params:  &rootParams,
 		SubCmds: []*cobra.Command{child},
@@ -307,18 +307,18 @@ func TestPersistentFlag_AutoShortDoesNotCollideWithDescendant(t *testing.T) {
 
 func TestPersistentFlag_AutoShortRetainedWithoutConflict(t *testing.T) {
 	type RootParams struct {
-		DB string `long:"db" persistent:"true" optional:"true"`
+		DB string `name:"db" persistent:"true" optional:"true"`
 	}
 	type ChildParams struct {
-		Name string `long:"name" optional:"true"`
+		Name string `name:"name" optional:"true"`
 	}
 
 	rootParams := RootParams{}
-	child := (CmdT[ChildParams]{
+	child := (Cmd[ChildParams]{
 		Use:     "create",
 		RunFunc: func(params *ChildParams, cmd *cobra.Command, args []string) {},
 	}).ToCobra()
-	root, err := (CmdT[RootParams]{
+	root, err := (Cmd[RootParams]{
 		Use:     "root",
 		Params:  &rootParams,
 		SubCmds: []*cobra.Command{child},
@@ -341,17 +341,17 @@ func TestPersistentFlag_AutoShortRetainedWithoutConflict(t *testing.T) {
 
 func TestPersistentFlag_ExplicitShortCollisionIsConstructionError(t *testing.T) {
 	type RootParams struct {
-		DB string `long:"db" short:"d" persistent:"true" optional:"true"`
+		DB string `name:"db" short:"d" persistent:"true" optional:"true"`
 	}
 	type ChildParams struct {
-		Description string `long:"description" optional:"true"`
+		Description string `name:"description" optional:"true"`
 	}
 
-	child := (CmdT[ChildParams]{
+	child := (Cmd[ChildParams]{
 		Use:     "create",
 		RunFunc: func(params *ChildParams, cmd *cobra.Command, args []string) {},
 	}).ToCobra()
-	_, err := (CmdT[RootParams]{
+	_, err := (Cmd[RootParams]{
 		Use:     "root",
 		SubCmds: []*cobra.Command{child},
 	}).ToCobraE()
@@ -367,17 +367,17 @@ func TestPersistentFlag_ExplicitShortCollisionIsConstructionError(t *testing.T) 
 
 func TestPersistentFlag_ExplicitShortAllowsLongNameShadow(t *testing.T) {
 	type RootParams struct {
-		DB string `long:"db" short:"d" persistent:"true" optional:"true"`
+		DB string `name:"db" short:"d" persistent:"true" optional:"true"`
 	}
 	type ChildParams struct {
-		DB string `long:"db" short:"d" optional:"true"`
+		DB string `name:"db" short:"d" optional:"true"`
 	}
 
-	child := (CmdT[ChildParams]{
+	child := (Cmd[ChildParams]{
 		Use:     "create",
 		RunFunc: func(params *ChildParams, cmd *cobra.Command, args []string) {},
 	}).ToCobra()
-	if _, err := (CmdT[RootParams]{
+	if _, err := (Cmd[RootParams]{
 		Use:     "root",
 		SubCmds: []*cobra.Command{child},
 	}).ToCobraE(); err != nil {

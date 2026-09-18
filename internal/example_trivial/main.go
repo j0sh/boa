@@ -12,7 +12,7 @@ type Params struct {
 }
 
 func main() {
-	boa.CmdT[Params]{
+	boa.Cmd[Params]{
 		Use:  "hello-world",
 		Long: `A generic cli tool that has a longer description. See the README.MD for more information`,
 		RunFunc: func(p *Params, _ *cobra.Command, _ []string) {

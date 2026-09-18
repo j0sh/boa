@@ -38,8 +38,8 @@ Explicit annotations always take precedence over the global default:
 
 | Mechanism | Behavior |
 |-----------|----------|
-| `required:"true"` / `req:"true"` tag | Always required |
-| `optional:"true"` / `opt:"true"` tag | Always optional |
+| `required:"true"` tag | Always required |
+| `optional:"true"` tag | Always optional |
 | Plain Go type (no tag) | Follows global default |
 
 #### Example
@@ -57,4 +57,4 @@ type Params struct {
 
 ## Without Init
 
-If you don't call `boa.Init()`, all behavior remains unchanged from previous versions. Plain Go type fields default to required.
+If you don't call `boa.Init()`, plain Go fields are required by default.

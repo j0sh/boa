@@ -10,11 +10,11 @@ import (
 
 func TestCollectionArray_StringOccurrenceSemantics(t *testing.T) {
 	type Params struct {
-		Labels []string `long:"label" collection:"array" optional:"true"`
+		Labels []string `name:"label" collection:"array" optional:"true"`
 	}
 
 	var got []string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, _ *cobra.Command, _ []string) {
 			got = append([]string(nil), p.Labels...)
@@ -32,12 +32,12 @@ func TestCollectionArray_StringOccurrenceSemantics(t *testing.T) {
 
 func TestCollectionArray_StringDefaultAndEnvKeepCSVSemantics(t *testing.T) {
 	type Params struct {
-		Labels []string `long:"label" collection:"array" default:"default,values" env:"BOA_ARRAY_LABELS" optional:"true"`
+		Labels []string `name:"label" collection:"array" default:"default,values" env:"BOA_ARRAY_LABELS" optional:"true"`
 	}
 
 	t.Run("default is CSV when CLI is absent", func(t *testing.T) {
 		var got []string
-		err := (CmdT[Params]{
+		err := (Cmd[Params]{
 			Use:         "test",
 			ParamEnrich: ParamEnricherName,
 			RunFunc: func(p *Params, _ *cobra.Command, _ []string) {
@@ -54,7 +54,7 @@ func TestCollectionArray_StringDefaultAndEnvKeepCSVSemantics(t *testing.T) {
 
 	t.Run("first CLI occurrence replaces default", func(t *testing.T) {
 		var got []string
-		err := (CmdT[Params]{
+		err := (Cmd[Params]{
 			Use: "test",
 			RunFunc: func(p *Params, _ *cobra.Command, _ []string) {
 				got = append([]string(nil), p.Labels...)
@@ -71,7 +71,7 @@ func TestCollectionArray_StringDefaultAndEnvKeepCSVSemantics(t *testing.T) {
 	t.Run("environment remains CSV", func(t *testing.T) {
 		t.Setenv("BOA_ARRAY_LABELS", "env,values")
 		var got []string
-		err := (CmdT[Params]{
+		err := (Cmd[Params]{
 			Use:         "test",
 			ParamEnrich: ParamEnricherName,
 			RunFunc: func(p *Params, _ *cobra.Command, _ []string) {
@@ -90,11 +90,11 @@ func TestCollectionArray_StringDefaultAndEnvKeepCSVSemantics(t *testing.T) {
 func TestCollectionArray_StringSliceAlias(t *testing.T) {
 	type Labels []string
 	type Params struct {
-		Labels Labels `long:"label" collection:"array" optional:"true"`
+		Labels Labels `name:"label" collection:"array" optional:"true"`
 	}
 
 	var got Labels
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, _ *cobra.Command, _ []string) {
 			got = append(Labels(nil), p.Labels...)
@@ -115,7 +115,7 @@ func TestCollectionArray_NumericSlicesUseOneScalarPerOccurrence(t *testing.T) {
 	}
 
 	var got []int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, _ *cobra.Command, _ []string) {
 			got = append([]int(nil), p.Numbers...)
@@ -128,7 +128,7 @@ func TestCollectionArray_NumericSlicesUseOneScalarPerOccurrence(t *testing.T) {
 		t.Fatalf("want %#v, got %#v", want, got)
 	}
 
-	err = (CmdT[Params]{Use: "test", RunFunc: func(*Params, *cobra.Command, []string) {}}).
+	err = (Cmd[Params]{Use: "test", RunFunc: func(*Params, *cobra.Command, []string) {}}).
 		RunArgsE([]string{"--numbers", "1,2"})
 	if err == nil || !strings.Contains(err.Error(), "invalid syntax") {
 		t.Fatalf("expected comma-containing numeric occurrence to be parsed as one invalid scalar, got %v", err)
@@ -141,10 +141,10 @@ func TestCollectionArray_ProgrammaticConfiguration(t *testing.T) {
 	}
 
 	var got []string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
-			GetParamT(ctx, &p.Labels).SetCollection(CollectionArray)
+			Param(ctx, &p.Labels).SetCollection(CollectionArray)
 			return nil
 		},
 		RunFunc: func(p *Params, _ *cobra.Command, _ []string) {
@@ -161,12 +161,12 @@ func TestCollectionArray_ProgrammaticConfiguration(t *testing.T) {
 
 func TestCollectionArray_PersistentFlagIsInherited(t *testing.T) {
 	type Params struct {
-		Labels []string `long:"label" collection:"array" persistent:"true" optional:"true"`
+		Labels []string `name:"label" collection:"array" persistent:"true" optional:"true"`
 	}
 
 	params := Params{}
 	leaf := &cobra.Command{Use: "leaf", Run: func(*cobra.Command, []string) {}}
-	root := (CmdT[Params]{
+	root := (Cmd[Params]{
 		Use:     "root",
 		Params:  &params,
 		SubCmds: []*cobra.Command{leaf},
@@ -186,7 +186,7 @@ func TestCollectionTagRejectsInvalidUses(t *testing.T) {
 		type Params struct {
 			Labels []string `collection:"unknown" optional:"true"`
 		}
-		err := (CmdT[Params]{Use: "test", RunFunc: func(*Params, *cobra.Command, []string) {}}).RunArgsE(nil)
+		err := (Cmd[Params]{Use: "test", RunFunc: func(*Params, *cobra.Command, []string) {}}).RunArgsE(nil)
 		if err == nil || !strings.Contains(err.Error(), "invalid collection mode") {
 			t.Fatalf("expected invalid collection mode error, got %v", err)
 		}
@@ -196,7 +196,7 @@ func TestCollectionTagRejectsInvalidUses(t *testing.T) {
 		type Params struct {
 			Label string `collection:"array" optional:"true"`
 		}
-		err := (CmdT[Params]{Use: "test", RunFunc: func(*Params, *cobra.Command, []string) {}}).RunArgsE(nil)
+		err := (Cmd[Params]{Use: "test", RunFunc: func(*Params, *cobra.Command, []string) {}}).RunArgsE(nil)
 		if err == nil || !strings.Contains(err.Error(), "only slice fields") {
 			t.Fatalf("expected non-slice collection error, got %v", err)
 		}

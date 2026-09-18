@@ -23,7 +23,7 @@ func TestNestedSlice_ConfigFile(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var got [][]string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -59,7 +59,7 @@ func TestNestedSlice_IntMatrix_ConfigFile(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var got [][]int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -84,7 +84,7 @@ func TestNestedSlice_CLI_JSON(t *testing.T) {
 	}
 
 	var got [][]string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -112,7 +112,7 @@ func TestNestedSlice_IntMatrix_CLI_JSON(t *testing.T) {
 	}
 
 	var got [][]int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -140,7 +140,7 @@ func TestNestedSlice_EnvVar_JSON(t *testing.T) {
 	defer func() { _ = os.Unsetenv("TEST_NESTED_MATRIX") }()
 
 	var got [][]string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -165,7 +165,7 @@ func TestComplexMap_CLI_JSON(t *testing.T) {
 	}
 
 	var got map[string][]string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -193,7 +193,7 @@ func TestNestedSlice_DefaultOptional(t *testing.T) {
 		Matrix [][]string `descr:"matrix"`
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 		},

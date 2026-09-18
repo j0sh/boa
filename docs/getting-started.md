@@ -26,7 +26,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "hello-world",
         Short: "a generic cli tool",
         Long:  "A generic cli tool that has a longer description",
@@ -76,11 +76,11 @@ type OtherParams struct {
 }
 
 func main() {
-    boa.CmdT[boa.NoParams]{
+    boa.Cmd[boa.NoParams]{
         Use:   "hello-world",
         Short: "a generic cli tool",
         SubCmds: boa.SubCmds(
-            boa.CmdT[SubParams]{
+            boa.Cmd[SubParams]{
                 Use:   "subcommand1",
                 Short: "a subcommand",
                 RunFunc: func(params *SubParams, cmd *cobra.Command, args []string) {
@@ -88,7 +88,7 @@ func main() {
                         params.Foo, params.Bar, params.Path)
                 },
             },
-            boa.CmdT[OtherParams]{
+            boa.Cmd[OtherParams]{
                 Use:   "subcommand2",
                 Short: "another subcommand",
                 RunFunc: func(params *OtherParams, cmd *cobra.Command, args []string) {
@@ -163,7 +163,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use: "app",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
             if p.Name != nil {
@@ -219,7 +219,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use: "my-app",
         RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
             fmt.Printf("Host: %s, Port: %d\n", params.Host, params.Port)
@@ -237,7 +237,7 @@ Nested structs can also have their own `configfile:"true"` field for independent
 Access the underlying Cobra command for advanced customization:
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "hello-world",
     InitFunc: func(params *Params, cmd *cobra.Command) error {
         cmd.Deprecated = "this command is deprecated"

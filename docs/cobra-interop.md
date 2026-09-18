@@ -9,10 +9,10 @@ BOA is built on top of [Cobra](https://github.com/spf13/cobra) and provides full
 
 ## Exposed Cobra Types
 
-BOA's `CmdT` struct directly exposes Cobra types in its API - no wrapping or abstraction:
+BOA's `Cmd` struct directly exposes Cobra types in its API - no wrapping or abstraction:
 
 ```go
-type CmdT[Struct any] struct {
+type Cmd[Struct any] struct {
     // ...
     GroupID string              // Cobra's group ID for help categorization
     Groups  []*cobra.Group      // Cobra's Group type directly
@@ -25,7 +25,7 @@ type CmdT[Struct any] struct {
 This means you can use Cobra types directly when configuring BOA commands:
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use:     "myapp",
     Groups:  []*cobra.Group{{ID: "admin", Title: "Admin Commands:"}},
     Args:    cobra.ExactArgs(2),
@@ -39,7 +39,7 @@ boa.CmdT[Params]{
 BOA commands can be converted to Cobra commands using `ToCobra()`:
 
 ```go
-boaCmd := boa.CmdT[Params]{
+boaCmd := boa.Cmd[Params]{
     Use:   "myapp",
     Short: "My application",
     RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
@@ -60,7 +60,7 @@ cobraCmd.SetUsageFunc(customUsageFunc)
 The `*cobra.Command` is available in run functions and lifecycle hooks:
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "myapp",
     RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
         // cmd is the *cobra.Command
@@ -90,12 +90,12 @@ legacyCmd := &cobra.Command{
 }
 
 // BOA root command with mixed subcommands
-boa.CmdT[RootParams]{
+boa.Cmd[RootParams]{
     Use:   "myapp",
     Short: "Application with mixed commands",
     SubCmds: []*cobra.Command{
         legacyCmd,  // Pure Cobra command
-        boa.CmdT[ServeParams]{
+        boa.Cmd[ServeParams]{
             Use:   "serve",
             Short: "Start the server",
             RunFunc: func(p *ServeParams, cmd *cobra.Command, args []string) { /* ... */ },
@@ -115,13 +115,13 @@ rootCmd := &cobra.Command{
 
 // Add BOA subcommands to Cobra parent
 rootCmd.AddCommand(
-    boa.CmdT[ServeParams]{
+    boa.Cmd[ServeParams]{
         Use:   "serve",
         Short: "Start the server",
         RunFunc: func(p *ServeParams, cmd *cobra.Command, args []string) { /* ... */ },
     }.ToCobra(),
 
-    boa.CmdT[MigrateParams]{
+    boa.Cmd[MigrateParams]{
         Use:   "migrate",
         Short: "Run migrations",
         RunFunc: func(p *MigrateParams, cmd *cobra.Command, args []string) { /* ... */ },
@@ -161,7 +161,7 @@ func main() {
 
     // Migrated to BOA - now with type-safe params!
     rootCmd.AddCommand(
-        boa.CmdT[ConfigParams]{
+        boa.Cmd[ConfigParams]{
             Use:   "config",
             Short: "Manage configuration",
             RunFunc: func(p *ConfigParams, cmd *cobra.Command, args []string) {
@@ -179,12 +179,12 @@ func main() {
 ```go
 func main() {
     // Root is now BOA, subcommands can be either
-    boa.CmdT[RootParams]{
+    boa.Cmd[RootParams]{
         Use: "myapp",
         SubCmds: []*cobra.Command{
             serveCmd,   // Legacy Cobra commands
             migrateCmd,
-            boa.CmdT[ConfigParams]{
+            boa.Cmd[ConfigParams]{
                 Use: "config",
                 RunFunc: func(p *ConfigParams, cmd *cobra.Command, args []string) { /* ... */ },
             }.ToCobra(),
@@ -198,7 +198,7 @@ func main() {
 BOA supports Cobra's positional argument validation:
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use:  "greet [names...]",
     Args: cobra.MinimumNArgs(1), // Cobra's validation
     RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
@@ -214,19 +214,19 @@ boa.CmdT[Params]{
 Organize subcommands with Cobra's grouping feature:
 
 ```go
-boa.CmdT[boa.NoParams]{
+boa.Cmd[boa.NoParams]{
     Use:   "myapp",
     Groups: []*cobra.Group{
         {ID: "core", Title: "Core Commands:"},
         {ID: "util", Title: "Utility Commands:"},
     },
     SubCmds: boa.SubCmds(
-        boa.CmdT[ServeParams]{
+        boa.Cmd[ServeParams]{
             Use:     "serve",
             GroupID: "core",
             RunFunc: func(p *ServeParams, cmd *cobra.Command, args []string) { /* ... */ },
         },
-        boa.CmdT[StatusParams]{
+        boa.Cmd[StatusParams]{
             Use:     "status",
             GroupID: "util",
             RunFunc: func(p *StatusParams, cmd *cobra.Command, args []string) { /* ... */ },
@@ -244,7 +244,7 @@ Since BOA commands convert to standard `*cobra.Command`, you can use the entire 
 Cobra's built-in completion generators work with BOA:
 
 ```go
-cmd := boa.CmdT[Params]{
+cmd := boa.Cmd[Params]{
     Use: "myapp",
     SubCmds: boa.SubCmds(/* ... */),
 }.ToCobra()
@@ -260,7 +260,7 @@ Use Cobra's doc generation packages:
 ```go
 import "github.com/spf13/cobra/doc"
 
-cmd := boa.CmdT[Params]{Use: "myapp"}.ToCobra()
+cmd := boa.Cmd[Params]{Use: "myapp"}.ToCobra()
 
 // Generate markdown docs
 doc.GenMarkdownTree(cmd, "./docs")
@@ -276,7 +276,7 @@ Libraries like [elewis787/boa](https://github.com/elewis787/boa) add interactive
 ```go
 import eboa "github.com/elewis787/boa"
 
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "myapp",
     PostCreateFunc: func(params *Params, cmd *cobra.Command) error {
         cmd.SetUsageFunc(eboa.UsageFunc)
@@ -298,7 +298,7 @@ type Params struct {
     Port int    `descr:"server port" default:"8080"`
 }
 
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "serve",
     InitFunc: func(params *Params, cmd *cobra.Command) error {
         // --json and --yaml cannot both be set

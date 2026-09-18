@@ -17,32 +17,25 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// Cmd represents a CLI command with all its configuration options.
-// It serves as a wrapper around cobra.Command with additional functionality
-// for parameter handling, validation, and lifecycle hooks.
-type Cmd struct {
-	// Use is the one-line usage message shown in help
-	Use string
-	// Short is a short description shown in the 'help' output
-	Short string
-	// Long is the long description shown in the 'help <this-command>' output
-	Long string
-	// Version is the version for this command
-	Version string
-	// Aliases are alternative names for this command
-	Aliases []string
-	// GroupID is the group id to which this command belongs (for help categorization)
-	GroupID string
-	// Groups defines command groups for organizing subcommands in help output (optional, auto-generated if not specified)
-	Groups []*cobra.Group
-	// Args defines how cobra should validate positional arguments
-	Args cobra.PositionalArgs
-	// SubCmds contains sub-commands for this command
-	SubCmds []*cobra.Command
+// command is the erased implementation behind Cmd[T].
+type command struct {
+	Use            string
+	Short          string
+	Long           string
+	Version        string
+	Aliases        []string
+	GroupID        string
+	Groups         []*cobra.Group
+	Args           cobra.PositionalArgs
+	SubCmds        []*cobra.Command
+	ParamEnrich    ParamEnricher
+	UseCobraErrLog bool
+	SortFlags      bool
+	ValidArgs      []string
+	ConfigFormat   ConfigFormat
+	RawArgs        []string
 	// Params is a pointer to a struct containing command parameters
 	Params any
-	// ParamEnrich is a function that enriches parameter definitions
-	ParamEnrich ParamEnricher
 	// RunFunc is the function to run when this command is called
 	RunFunc func(cmd *cobra.Command, args []string)
 	// RunFuncCtx is the function to run when this command is called, with access to HookContext
@@ -51,12 +44,6 @@ type Cmd struct {
 	RunFuncE func(cmd *cobra.Command, args []string) error
 	// RunFuncCtxE is like RunFuncCtx but returns an error instead of requiring manual error handling
 	RunFuncCtxE func(ctx *HookContext, cmd *cobra.Command, args []string) error
-	// UseCobraErrLog determines whether to use Cobra's error logging
-	UseCobraErrLog bool
-	// SortFlags determines whether to sort command flags alphabetically
-	SortFlags bool
-	// ValidArgs is a list of valid non-flag arguments
-	ValidArgs []string
 	// ValidArgsFunc is a function returning valid arguments for bash completion
 	ValidArgsFunc func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective)
 	// Lifecycle hook functions
@@ -77,59 +64,21 @@ type Cmd struct {
 	PreValidateFuncCtx func(ctx *HookContext, params any, cmd *cobra.Command, args []string) error
 	// PreExecuteFuncCtx runs after validation but before command execution with access to HookContext
 	PreExecuteFuncCtx func(ctx *HookContext, params any, cmd *cobra.Command, args []string) error
-	// ConfigUnmarshal specifies the unmarshal function for config files loaded via the configfile tag.
-	// If nil, defaults to json.Unmarshal.
-	//
-	// For richer support (including key-presence probing that lets boa detect
-	// zero-valued or default-matching writes to optional struct-pointer groups),
-	// prefer the ConfigFormat field, which accepts a full ConfigFormat value.
-	// When both are set, ConfigFormat takes precedence.
-	ConfigUnmarshal func([]byte, any) error
-	// ConfigFormat specifies a per-command config file format — both the
-	// unmarshaler and an optional key-tree probe used for set-by-config detection.
-	// When set, this takes precedence over ConfigUnmarshal and over any format
-	// registered via RegisterConfigFormat for the file extension.
-	ConfigFormat ConfigFormat
-	// RawArgs allows injecting command line arguments instead of using os.Args
-	RawArgs []string
 
-	// reloadFactory, when non-nil, allocates a fresh copy of the params
-	// struct and re-runs the full post-flag-parse pipeline (defaults →
-	// env → config files → CLI precedence → validation → pre-validate
-	// hooks) against it, returning the validated fresh struct. It is
-	// populated by CmdT[T].ToCmd so that the generic type parameter is
-	// captured *before* the generic→non-generic bridge, letting
-	// HookContext.Reload / boa.Reload return typed structs.
-	//
-	// Unexported so users can't accidentally wire it themselves — reload
-	// only makes sense when it goes through the same pipeline the command
-	// was built with.
-	reloadFactory func() (any, error)
-}
-
-// HasValue checks if a parameter has a value from any source.
-// Returns true if the parameter was set by environment variable, command line,
-// config file, default value, or programmatic injection.
-func HasValue(f Param) bool {
-	if f.wasSetByEnv() || f.wasSetOnCli() || f.hasDefaultValue() || f.wasSetByInject() {
-		return true
-	}
-	if pm, ok := f.(*paramMeta); ok && pm.setByConfig {
-		return true
-	}
-	return false
+	newParams    func() any
+	validateOnly bool
 }
 
 // ParamEnricher is a function type that can add or modify parameter metadata.
 // It's used to implement auto-generation of parameter properties like names,
 // environment variables, short flags, etc.
-type ParamEnricher func(alreadyProcessed []Param, param Param, paramFieldName string) error
+type ParamEnricher func(alreadyProcessed []Parameter, param Parameter, paramFieldName string) error
 
 // ParamEnricherCombine combines multiple parameter enrichers into a single function.
 // The enrichers are applied in the order they are provided and an error from any
 // enricher will stop the process and return the error.
 func ParamEnricherCombine(enrichers ...ParamEnricher) ParamEnricher {
-	return func(alreadyProcessed []Param, param Param, paramFieldName string) error {
+	return func(alreadyProcessed []Parameter, param Parameter, paramFieldName string) error {
 		for _, enricher := range enrichers {
 			err := enricher(alreadyProcessed, param, paramFieldName)
 			if err != nil {
@@ -144,16 +93,16 @@ func ParamEnricherCombine(enrichers ...ParamEnricher) ParamEnricher {
 var (
 	// ParamEnricherBool sets a default value of false for boolean parameters
 	// that don't already have a default value.
-	ParamEnricherBool ParamEnricher = func(alreadyProcessed []Param, param Param, paramFieldName string) error {
-		if param.GetKind() == reflect.Bool && !param.hasDefaultValue() {
-			param.SetDefault(Default(false))
+	ParamEnricherBool ParamEnricher = func(alreadyProcessed []Parameter, param Parameter, paramFieldName string) error {
+		if param.GetKind() == reflect.Bool && !param.HasValue() {
+			param.SetDefault(false)
 		}
 		return nil
 	}
 
 	// ParamEnricherName sets the flag name for a parameter based on its field name
 	// if a name isn't already set. Converts from camelCase to kebab-case.
-	ParamEnricherName ParamEnricher = func(alreadyProcessed []Param, param Param, paramFieldName string) error {
+	ParamEnricherName ParamEnricher = func(alreadyProcessed []Parameter, param Parameter, paramFieldName string) error {
 		if param.GetName() == "" {
 			param.SetName(camelToKebabCase(paramFieldName))
 		}
@@ -166,7 +115,7 @@ var (
 	// if another parameter already uses that character. Auto-derived persistent
 	// shorthands are finalized against the assembled command subtree before
 	// flag binding and omitted if they would conflict with a descendant flag.
-	ParamEnricherShort ParamEnricher = func(alreadyProcessed []Param, param Param, paramFieldName string) error {
+	ParamEnricherShort ParamEnricher = func(alreadyProcessed []Parameter, param Parameter, paramFieldName string) error {
 		if param.GetShort() == "" && param.GetName() != "" {
 			wantShort := string(param.GetName()[0])
 			if wantShort == "h" {
@@ -179,7 +128,11 @@ var (
 				}
 			}
 			if shortAvailable {
-				param.(*paramMeta).setAutoShort(wantShort)
+				if meta, ok := param.(*paramMeta); ok {
+					meta.setAutoShort(wantShort)
+				} else {
+					param.SetShort(wantShort)
+				}
 			}
 		}
 		return nil
@@ -188,8 +141,8 @@ var (
 	// ParamEnricherEnv sets an environment variable name for a parameter
 	// based on its flag name. Converts from kebab-case to UPPER_SNAKE_CASE.
 	// Only applies to non-positional parameters.
-	ParamEnricherEnv ParamEnricher = func(alreadyProcessed []Param, param Param, paramFieldName string) error {
-		if param.GetEnv() == "" && param.GetName() != "" && !param.isPositional() {
+	ParamEnricherEnv ParamEnricher = func(alreadyProcessed []Parameter, param Parameter, paramFieldName string) error {
+		if param.GetEnv() == "" && param.GetName() != "" && !param.IsPositional() {
 			param.SetEnv(kebabCaseToUpperSnakeCase(param.GetName()))
 		}
 		return nil
@@ -214,7 +167,7 @@ var (
 //
 //goland:noinspection GoUnusedExportedFunction
 func ParamEnricherEnvPrefix(prefix string) ParamEnricher {
-	return func(alreadyProcessed []Param, param Param, paramFieldName string) error {
+	return func(alreadyProcessed []Parameter, param Parameter, paramFieldName string) error {
 		if param.GetEnv() != "" {
 			param.SetEnv(prefix + "_" + param.GetEnv())
 		}
@@ -224,7 +177,7 @@ func ParamEnricherEnvPrefix(prefix string) ParamEnricher {
 
 // ToCobra converts a Cmd to a cobra.Command by setting up flags, parameter binding,
 // and other command properties.
-func (b Cmd) ToCobra() *cobra.Command {
+func (b command) ToCobra() *cobra.Command {
 	return b.toCobraImpl()
 }
 
@@ -242,67 +195,52 @@ func runH(cmd *cobra.Command, handler resultHandler) {
 }
 
 // Run executes the command with default error handling.
-func (b Cmd) Run() {
+func (b command) Run() {
 	runH(b.ToCobra(), resultHandler{})
 }
 
 // RunArgs executes the command with the provided arguments and default error handling.
-func (b Cmd) RunArgs(rawArgs []string) {
+func (b command) RunArgs(rawArgs []string) {
 	b.RawArgs = rawArgs
 	runH(b.ToCobra(), resultHandler{})
 }
 
-// Validate validates parameter values without executing the command's RunFunc.
+// Validate validates this command's parameters without routing to subcommands.
+// All PreExecute hooks and Run functions are skipped.
 // This is used mostly in tests.
-func (b Cmd) Validate() error {
-	b.RunFunc = func(cmd *cobra.Command, args []string) {}
-	b.UseCobraErrLog = false
-	var err error
-	handler := resultHandler{
-		Panic: func(a any) {
-			err = fmt.Errorf("panic: %v", a)
-		},
-		Failure: func(e error) {
-			err = e
-		},
-	}
-	cobraCmd := b.ToCobra()
-	cobraCmd.SilenceErrors = true
-	cobraCmd.SilenceUsage = true
-	runH(cobraCmd, handler)
-	return err
+func (b command) Validate() error {
+	b.validateOnly = true
+	b.SubCmds = nil // Validate this command, without routing or mutating children.
+	return b.RunE()
 }
 
 // ToCobraE converts a Cmd to a cobra.Command that uses RunE for error handling.
 // Returns an error if command setup fails (e.g., invalid configuration, hook errors).
-func (b Cmd) ToCobraE() (*cobra.Command, error) {
+func (b command) ToCobraE() (*cobra.Command, error) {
 	return b.toCobraImplE()
 }
 
 // RunE executes the command and returns any error that occurred.
 // All errors (from hooks like InitFunc, PreValidate, PreExecute, and RunFuncE) are
 // returned as errors rather than causing panics.
-func (b Cmd) RunE() error {
+func (b command) RunE() error {
 	cmd, err := b.ToCobraE()
 	if err != nil {
 		return err
 	}
 	cmd.SilenceUsage = true
 	cmd.SilenceErrors = true
-	return cmd.Execute()
+	executed, err := cmd.ExecuteC()
+	if err != nil && executed != nil && !executed.Runnable() {
+		return NewUserInputError(err)
+	}
+	return err
 }
 
 // RunArgsE executes the command with the provided arguments and returns any error.
-func (b Cmd) RunArgsE(rawArgs []string) error {
+func (b command) RunArgsE(rawArgs []string) error {
 	b.RawArgs = rawArgs
 	return b.RunE()
-}
-
-// Default creates a pointer to a value of a supported type.
-// This is used to define default values for parameters programmatically
-// via HookContext.GetParam().SetDefault().
-func Default[T any](val T) *T {
-	return &val
 }
 
 // CfgStructInit is an interface that parameter structs can implement
@@ -353,11 +291,6 @@ type CfgStructPostCreateCtx interface {
 	PostCreateCtx(ctx *HookContext) error
 }
 
-// CmdIfc common interface between Cmd and CmdT for reusing code.
-type CmdIfc interface {
-	ToCobra() *cobra.Command
-}
-
 // HookContext provides access to parameter mirrors and advanced configuration APIs
 // within startup hooks. This allows hooks to access and modify parameters
 // programmatically (SetDefault, SetAlternatives, SetRequiredFn, etc.).
@@ -366,7 +299,7 @@ type CmdIfc interface {
 // parameters struct. This keeps the identity of a mirror stable even when pointer
 // substructs are reassigned, and makes subtree operations efficient string-prefix
 // queries rather than address walks. The address → path cache exists solely to
-// support the ergonomic GetParam(&params.Field) API.
+// support the ergonomic boa.Param(ctx, &params.Field) API.
 type HookContext struct {
 	ctx *processingContext
 }
@@ -377,8 +310,7 @@ func newHookContext(pctx *processingContext) *HookContext {
 	return &HookContext{ctx: pctx}
 }
 
-// GetParam returns the Param for any field pointer.
-// This provides a unified API for accessing parameter configuration.
+// parameter resolves a field pointer to its internal metadata.
 //
 // Usage:
 //
@@ -386,45 +318,42 @@ func newHookContext(pctx *processingContext) *HookContext {
 //	    Name string
 //	    Age  int
 //	}
-//	boa.CmdT[Params]{
+//	boa.Cmd[Params]{
 //	    Use: "cmd",
 //	    InitFuncCtx: func(ctx *boa.HookContext, params *Params, cmd *cobra.Command) error {
-//	        nameParam := ctx.GetParam(&params.Name)
-//	        nameParam.SetDefault(boa.Default("default-name"))
+//	        nameParam := Param(ctx, &params.Name)
+//	        nameParam.SetDefault("default-name")
 //	        return nil
 //	    },
 //	}
 //
-// GetParam returns nil and logs a descriptive slog.Error if the field pointer
+// It returns nil and logs a descriptive slog.Error if the field pointer
 // does not belong to the parameters struct associated with this HookContext —
 // for example, if the caller passes a pointer to a field in an unrelated
 // struct, in a different command's params, or in a substruct that was never
 // registered (e.g., tagged boa:"ignore"). Callers using the idiomatic
-// ctx.GetParam(&p.X).SetY(...) pattern will still see a nil-dereference crash
+// Param(ctx, &p.X).SetY(...) pattern will still see a nil-dereference crash
 // if they chain against a nil return, but the preceding slog.Error log line
 // will carry the descriptive cause so the real bug is visible in the output.
 // Callers that want "probe without crashing" semantics can explicitly check
 // for nil.
-func (c *HookContext) GetParam(fieldPtr any) Param {
-	if param, ok := fieldPtr.(Param); ok {
-		return param
-	}
+func (c *HookContext) parameter(fieldPtr any) parameter {
 	if c == nil || c.ctx == nil || c.ctx.mirrorByPath == nil {
-		slog.Error("boa.HookContext.GetParam: called on a nil or uninitialized HookContext (no parameters are registered)")
+		slog.Error("boa.Param: called with a nil or uninitialized HookContext (no parameters are registered)")
 		return nil
 	}
 	if fieldPtr == nil {
-		slog.Error("boa.HookContext.GetParam: fieldPtr is nil")
+		slog.Error("boa.Param: fieldPtr is nil")
 		return nil
 	}
 	rv := reflect.ValueOf(fieldPtr)
 	if rv.Kind() != reflect.Pointer {
-		slog.Error("boa.HookContext.GetParam: fieldPtr must be a pointer to a struct field",
+		slog.Error("boa.Param: fieldPtr must be a pointer to a struct field",
 			"got_type", fmt.Sprintf("%T", fieldPtr))
 		return nil
 	}
 	if rv.IsNil() {
-		slog.Error("boa.HookContext.GetParam: fieldPtr is a typed nil",
+		slog.Error("boa.Param: fieldPtr is a typed nil",
 			"got_type", fmt.Sprintf("%T", fieldPtr))
 		return nil
 	}
@@ -450,7 +379,7 @@ func (c *HookContext) GetParam(fieldPtr any) Param {
 		}
 	}
 	slog.Error(
-		"boa.HookContext.GetParam: the field pointer does not belong to the parameters struct associated with this HookContext. "+
+		"boa.Param: the field pointer does not belong to the parameters struct associated with this HookContext. "+
 			"Likely causes: "+
 			"(1) you passed a pointer to a field in an unrelated struct; "+
 			"(2) you passed a field from a different command's params in the same command tree (each command has its own mirror set); "+
@@ -463,11 +392,11 @@ func (c *HookContext) GetParam(fieldPtr any) Param {
 }
 
 // AllMirrors returns all parameter mirrors in the context in declaration/insertion order.
-func (c *HookContext) AllMirrors() []Param {
+func (c *HookContext) AllMirrors() []Parameter {
 	if c == nil || c.ctx == nil || c.ctx.mirrorByPath == nil {
 		return nil
 	}
-	result := make([]Param, 0, len(c.ctx.pathOrder))
+	result := make([]Parameter, 0, len(c.ctx.pathOrder))
 	for _, p := range c.ctx.pathOrder {
 		if m, ok := c.ctx.mirrorByPath[p]; ok {
 			result = append(result, m)
@@ -480,7 +409,7 @@ func (c *HookContext) AllMirrors() []Param {
 //
 // Usage:
 //
-//	boa.CmdT[Params]{
+//	boa.Cmd[Params]{
 //	    Use: "cmd",
 //	    RunFuncCtx: func(ctx *boa.HookContext, params *Params, cmd *cobra.Command, args []string) {
 //	        if ctx.HasValue(&params.Port) {
@@ -489,12 +418,12 @@ func (c *HookContext) AllMirrors() []Param {
 //	    },
 //	}
 func (c *HookContext) HasValue(fieldPtr any) bool {
-	param := c.GetParam(fieldPtr)
+	param := c.parameter(fieldPtr)
 	if param == nil {
 		slog.Error("HookContext.HasValue: could not find param for field pointer", "fieldPtr", fieldPtr)
 		return false
 	}
-	return HasValue(param)
+	return param.HasValue()
 }
 
 // WatchedConfigFiles returns every config file path the pipeline read
@@ -505,7 +434,7 @@ func (c *HookContext) HasValue(fieldPtr any) bool {
 // Auto-tracked sources:
 //
 //   - `configfile:"true"` tagged fields (single path or []string overlay chain)
-//   - Per-command `Cmd.ConfigFormat` / `Cmd.ConfigUnmarshal` escape hatches
+//   - Per-command `Cmd.ConfigFormat` overrides
 //     (they go through the same internal loader)
 //
 // Not auto-tracked:
@@ -525,6 +454,8 @@ func (c *HookContext) WatchedConfigFiles() []string {
 	if c == nil || c.ctx == nil {
 		return nil
 	}
+	c.ctx.watchMu.RLock()
+	defer c.ctx.watchMu.RUnlock()
 	total := len(c.ctx.LoadedConfigFiles) + len(c.ctx.ExtraWatchedConfigFiles)
 	if total == 0 {
 		return nil
@@ -549,6 +480,8 @@ func (c *HookContext) WatchConfigFile(path string) {
 	if c == nil || c.ctx == nil || path == "" {
 		return
 	}
+	c.ctx.watchMu.Lock()
+	defer c.ctx.watchMu.Unlock()
 	c.ctx.ExtraWatchedConfigFiles = append(c.ctx.ExtraWatchedConfigFiles, path)
 }
 
@@ -565,7 +498,7 @@ func (c *HookContext) reloadAny() (any, error) {
 		return nil, fmt.Errorf("boa: HookContext.Reload: uninitialized HookContext")
 	}
 	if c.ctx.reloadFactory == nil {
-		return nil, fmt.Errorf("boa: HookContext.Reload: no reload factory registered — this HookContext came from a Cmd that was constructed without CmdT[T].ToCmd (the generic wrapper is what installs the factory)")
+		return nil, fmt.Errorf("boa: HookContext.Reload is unavailable for this context")
 	}
 	return c.ctx.reloadFactory()
 }
@@ -585,12 +518,12 @@ func (c *HookContext) reloadAny() (any, error) {
 // Hooks that run on reload: InitFunc, PostCreateFunc, PreValidateFunc,
 // and their Ctx variants, plus any CfgStructInit / CfgStructPreValidate
 // interface methods implemented on params. Hooks that DO NOT run on
-// reload: PreExecuteFunc (and Ctx) and the command's own RunFunc — a
+// reload: all struct and command PreExecute hooks and Run functions — a
 // reload is value-sourcing + validation, not command execution.
 //
 // Typical use:
 //
-//	boa.CmdT[Params]{
+//	boa.Cmd[Params]{
 //	    RunFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command, args []string) {
 //	        // Wire some trigger — SIGHUP, an admin HTTP endpoint,
 //	        // fsnotify, a timer. On fire:
@@ -604,7 +537,7 @@ func (c *HookContext) reloadAny() (any, error) {
 //	    },
 //	}.Run()
 //
-// Reload is safe to call from any goroutine, but it's the caller's
+// Reload serializes calls made through the same HookContext. It is the caller's
 // responsibility to coordinate readers against whatever swap model they
 // choose (atomic.Pointer, RWMutex, etc.).
 func Reload[T any](ctx *HookContext) (*T, error) {
@@ -614,7 +547,7 @@ func Reload[T any](ctx *HookContext) (*T, error) {
 	}
 	typed, ok := raw.(*T)
 	if !ok {
-		return nil, fmt.Errorf("boa.Reload: reloaded params is %T, not *%T — check that the type parameter matches CmdT[T]", raw, *new(T))
+		return nil, fmt.Errorf("boa.Reload: reloaded params is %T, not *%T — check that the type parameter matches Cmd[T]", raw, *new(T))
 	}
 	return typed, nil
 }
@@ -778,7 +711,7 @@ func (c *HookContext) buildSetValueTree(tagName string) (map[string]any, error) 
 // a hand-written `false` default are indistinguishable. Users who want the
 // explicit emission can run with --their-flag=false once; the source
 // tracking then records wasSetOnCli and the dump emits it.
-func shouldEmitInDump(f Param, v reflect.Value) bool {
+func shouldEmitInDump(f parameter, v reflect.Value) bool {
 	if f.wasSetOnCli() || f.wasSetByEnv() || f.wasSetByInject() {
 		return true
 	}
@@ -884,18 +817,14 @@ func buildSetValueMapNode(v reflect.Value, ctx *processingContext, pathIdx []int
 	return out
 }
 
-// CmdList converts a list of CmdIfc to a slice of cobra.Command.
-func CmdList(cmds ...CmdIfc) []*cobra.Command {
-	var cobraCmds []*cobra.Command
+// SubCmds converts typed Boa commands to the Cobra slice accepted by
+// Cmd.SubCmds. Commands with different parameter types can be mixed.
+func SubCmds(cmds ...interface{ ToCobra() *cobra.Command }) []*cobra.Command {
+	result := make([]*cobra.Command, 0, len(cmds))
 	for _, cmd := range cmds {
-		cobraCmds = append(cobraCmds, cmd.ToCobra())
+		result = append(result, cmd.ToCobra())
 	}
-	return cobraCmds
-}
-
-// SubCmds converts a list of CmdIfc to a slice of cobra.Command.
-func SubCmds(cmds ...CmdIfc) []*cobra.Command {
-	return CmdList(cmds...)
+	return result
 }
 
 // LoadConfigFile reads a config file and unmarshals it into the target struct.
@@ -905,7 +834,7 @@ func SubCmds(cmds ...CmdIfc) []*cobra.Command {
 // If unmarshalFunc is non-nil it is used directly. If unmarshalFunc is nil the
 // resolution order is the same as for configfile:"true" fields: the registered
 // format matching the file's extension first (RegisterConfigFormat /
-// RegisterConfigFormatFull), and json.Unmarshal as the final fallback when no
+// RegisterConfigFormatFull), and UnmarshalJSON as the final fallback when no
 // registration matches.
 func LoadConfigFile[T any](filePath string, target *T, unmarshalFunc func([]byte, any) error) error {
 	override := ConfigFormat{}
@@ -929,12 +858,9 @@ func LoadConfigFile[T any](filePath string, target *T, unmarshalFunc func([]byte
 // that includes an optional override without a preceding filter. A nil or
 // empty paths slice is a no-op.
 //
-// Slices and maps are fully replaced by the later file — json.Unmarshal
-// overwrites the whole field when a key appears, it does not merge. If the
-// base file has `Tags: [a, b]` and the overlay has `Tags: [c]`, the final
-// value is `[c]`. (Deep merging is deliberately out of scope here; the
-// cascading replace semantics are what most users expect for configfile
-// overlays and map/slice merging is hard to make unsurprising.)
+// Collection overlays follow the selected decoder's native semantics. JSON
+// replaces slices and merges object members into existing maps. Omitted fields
+// retain their previous values.
 //
 // Format resolution is per-file, so a chain may mix formats (e.g. a
 // registered .yaml base with a .json overlay) as long as both formats
@@ -1046,7 +972,8 @@ func DumpConfigFile[T any](filePath string, v *T, marshalFunc func(v any) ([]byt
 // bring your own parser and register it via RegisterConfigFormatFull — or set
 // Cmd.ConfigFormat on a single command.
 type ConfigFormat struct {
-	// Unmarshal parses raw bytes into the target struct. Required for
+	// Unmarshal owns decoding, including custom methods and errors. Boa calls
+	// it once for the target and never retries with modified types. Required for
 	// LoadConfigFile / LoadConfigBytes. A ConfigFormat with a nil Unmarshal
 	// is "dump-only" — it can still be used by DumpConfigFile /
 	// DumpConfigBytes if Marshal is set, but reading will fall through to
@@ -1088,7 +1015,7 @@ var (
 	configFormatsMu sync.RWMutex
 	configFormats   = map[string]ConfigFormat{
 		".json": {
-			Unmarshal: json.Unmarshal,
+			Unmarshal: UnmarshalJSON,
 			Marshal:   jsonMarshalPretty,
 			KeyTree:   jsonKeyTree,
 		},
@@ -1134,7 +1061,7 @@ func jsonMarshalPretty(v any) ([]byte, error) {
 // UniversalConfigFormat yourself when you want to set a format inline on a
 // single command via Cmd.ConfigFormat:
 //
-//	boa.CmdT[Params]{
+//	boa.Cmd[Params]{
 //	    ConfigFormat: boa.UniversalConfigFormat(yaml.Unmarshal),
 //	    ...
 //	}
@@ -1292,7 +1219,7 @@ func ConfigFormatExtensions() []string {
 
 // loadConfigFileInto is the non-generic implementation used internally.
 // Resolution order for the effective ConfigFormat:
-//  1. override (from Cmd.ConfigFormat / Cmd.ConfigUnmarshal) when its Unmarshal is non-nil
+//  1. override from Cmd.ConfigFormat when its Unmarshal is non-nil
 //  2. Registered format for the file extension
 //  3. JSON fallback (unmarshal + key-tree)
 //
@@ -1318,7 +1245,7 @@ func loadConfigFileInto(filePath string, target any, override ConfigFormat) ([]b
 // loadConfigFileInto and runs the unmarshaler against the supplied bytes.
 func loadConfigBytesInto(data []byte, ext string, target any, override ConfigFormat) (ConfigFormat, error) {
 	effective := resolveConfigFormatByExt(ext, override)
-	if err := unmarshalConfigWithExactTypes(data, target, effective); err != nil {
+	if err := effective.Unmarshal(data, target); err != nil {
 		return effective, err
 	}
 	return effective, nil
@@ -1341,7 +1268,7 @@ func resolveConfigFormatByExt(ext string, override ConfigFormat) ConfigFormat {
 			return cf
 		}
 	}
-	return ConfigFormat{Unmarshal: json.Unmarshal, KeyTree: jsonKeyTree}
+	return ConfigFormat{Unmarshal: UnmarshalJSON, KeyTree: jsonKeyTree}
 }
 
 // resolveConfigMarshalByExt picks the marshaler for the Dump* helpers.
@@ -1370,30 +1297,4 @@ func resolveConfigMarshalByExt(ext string, override func(v any) ([]byte, error))
 		return nil, fmt.Errorf("boa: no marshaler registered for config extension %q — call RegisterConfigMarshaler(%q, ...) or pass a marshalFunc", ext, ext)
 	}
 	return cf.Marshal, nil
-}
-
-// UnMarshalFromFileParam reads a file path from a parameter and unmarshals its contents into a target struct.
-//
-// Deprecated: Use LoadConfigFile instead for a simpler API.
-func UnMarshalFromFileParam[T any](
-	fileParam Param,
-	v *T,
-	unmarshalFunc func(data []byte, v any) error,
-) error {
-	if !fileParam.HasValue() {
-		return nil
-	} else {
-		valuePtrAny := fileParam.valuePtrF()
-		valuePtrStr, ok := valuePtrAny.(*string)
-		if !ok {
-			return fmt.Errorf("expected string value, got %T", valuePtrAny)
-		}
-		if valuePtrStr == nil {
-			return fmt.Errorf("expected string value, got nil")
-		}
-		if *valuePtrStr == "" {
-			return fmt.Errorf("expected string value, got empty string")
-		}
-		return LoadConfigFile(*valuePtrStr, v, unmarshalFunc)
-	}
 }

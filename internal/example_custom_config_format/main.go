@@ -187,8 +187,8 @@ type Observed struct {
 
 // newServerCmd builds the command and wires it to capture the parsed state.
 // It is the testable entry point; main() just runs the same builder.
-func newServerCmd(obs *Observed) boa.CmdT[Params] {
-	return boa.CmdT[Params]{
+func newServerCmd(obs *Observed) boa.Cmd[Params] {
+	return boa.Cmd[Params]{
 		Use:         "server",
 		Short:       "Server with a custom config file format",
 		ParamEnrich: boa.ParamEnricherName,

@@ -26,7 +26,7 @@ func TestTypeAlias_Required(t *testing.T) {
 
 	ran := false
 
-	CmdT[Config]{
+	Cmd[Config]{
 		Use: "test",
 		RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 			ran = true
@@ -66,7 +66,7 @@ func TestTypeAlias_Optional(t *testing.T) {
 
 	ran := false
 
-	CmdT[Config]{
+	Cmd[Config]{
 		Use: "test",
 		RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 			ran = true
@@ -103,7 +103,7 @@ func TestTypeAlias_Bool(t *testing.T) {
 
 	ran := false
 
-	CmdT[Config]{
+	Cmd[Config]{
 		Use: "test",
 		RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 			ran = true
@@ -126,7 +126,7 @@ func TestTypeAlias_BoolWithEnricher(t *testing.T) {
 
 	ran := false
 
-	CmdT[Config]{
+	Cmd[Config]{
 		Use: "test",
 		RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 			ran = true
@@ -150,7 +150,7 @@ func TestTypeAlias_WithDefaults(t *testing.T) {
 
 	ran := false
 
-	CmdT[Config]{
+	Cmd[Config]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
@@ -179,7 +179,7 @@ func TestTypeAlias_Raw(t *testing.T) {
 
 	ran := false
 
-	CmdT[Config]{
+	Cmd[Config]{
 		Use: "test",
 		RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 			ran = true
@@ -219,7 +219,7 @@ func TestTypeAlias_RawAllTypes(t *testing.T) {
 
 		ran := false
 
-		CmdT[Config]{
+		Cmd[Config]{
 			Use: "test",
 			RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 				ran = true
@@ -273,7 +273,7 @@ func TestTypeAlias_RawAllTypes(t *testing.T) {
 
 		ran := false
 
-		CmdT[Config]{
+		Cmd[Config]{
 			Use: "test",
 			RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 				ran = true
@@ -313,7 +313,7 @@ func TestTypeAlias_RawAllTypes(t *testing.T) {
 
 		ran := false
 
-		CmdT[Config]{
+		Cmd[Config]{
 			Use: "test",
 			RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 				ran = true
@@ -336,7 +336,7 @@ func TestTypeAlias_RawAllTypes(t *testing.T) {
 
 		ran := false
 
-		CmdT[Config]{
+		Cmd[Config]{
 			Use: "test",
 			RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 				ran = true
@@ -367,7 +367,7 @@ func TestTypeAlias_RawSliceTypes(t *testing.T) {
 
 		ran := false
 
-		CmdT[Config]{
+		Cmd[Config]{
 			Use: "test",
 			RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 				ran = true
@@ -413,7 +413,7 @@ func TestTypeAlias_RawSliceTypes(t *testing.T) {
 
 		ran := false
 
-		CmdT[Config]{
+		Cmd[Config]{
 			Use: "test",
 			RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 				ran = true
@@ -447,7 +447,7 @@ func TestTypeAlias_Slice(t *testing.T) {
 
 	ran := false
 
-	CmdT[Config]{
+	Cmd[Config]{
 		Use: "test",
 		RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 			ran = true
@@ -493,7 +493,7 @@ func TestTypeAlias_AllPrimitiveTypes(t *testing.T) {
 	t.Run("with defaults only", func(t *testing.T) {
 		ran := false
 
-		CmdT[Config]{
+		Cmd[Config]{
 			Use: "test",
 			RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 				ran = true
@@ -529,7 +529,7 @@ func TestTypeAlias_AllPrimitiveTypes(t *testing.T) {
 	t.Run("with CLI values", func(t *testing.T) {
 		ran := false
 
-		CmdT[Config]{
+		Cmd[Config]{
 			Use: "test",
 			RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 				ran = true
@@ -585,7 +585,7 @@ func TestTypeAlias_AllPrimitiveTypesRequired(t *testing.T) {
 
 	ran := false
 
-	CmdT[Config]{
+	Cmd[Config]{
 		Use: "test",
 		RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 			ran = true
@@ -640,7 +640,7 @@ func TestTypeAlias_AllSliceTypes(t *testing.T) {
 	t.Run("with defaults only", func(t *testing.T) {
 		ran := false
 
-		CmdT[Config]{
+		Cmd[Config]{
 			Use: "test",
 			RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 				ran = true
@@ -679,7 +679,7 @@ func TestTypeAlias_AllSliceTypes(t *testing.T) {
 	t.Run("with CLI values", func(t *testing.T) {
 		ran := false
 
-		CmdT[Config]{
+		Cmd[Config]{
 			Use: "test",
 			RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 				ran = true
@@ -712,7 +712,7 @@ func TestTypeAlias_BoolEnricherAllWrappers(t *testing.T) {
 
 		ran := false
 
-		CmdT[Config]{
+		Cmd[Config]{
 			Use: "test",
 			RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 				ran = true
@@ -735,7 +735,7 @@ func TestTypeAlias_BoolEnricherAllWrappers(t *testing.T) {
 
 		ran := false
 
-		CmdT[Config]{
+		Cmd[Config]{
 			Use: "test",
 			RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 				ran = true
@@ -758,7 +758,7 @@ func TestTypeAlias_BoolEnricherAllWrappers(t *testing.T) {
 
 		ran := false
 
-		CmdT[Config]{
+		Cmd[Config]{
 			Use: "test",
 			RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
 				ran = true
@@ -788,21 +788,14 @@ func TestTypeAlias_SetDefaultExplicit(t *testing.T) {
 
 		ran := false
 
-		CmdT[Config]{
+		Cmd[Config]{
 			Use:         "test",
 			ParamEnrich: ParamEnricherName,
 			InitFuncCtx: func(ctx *HookContext, params *Config, cmd *cobra.Command) error {
-				strVal := "test-string"
-				ctx.GetParam(&params.Str).SetDefault(&strVal)
-
-				intVal := 42
-				ctx.GetParam(&params.Int).SetDefault(&intVal)
-
-				boolVal := true
-				ctx.GetParam(&params.Bool).SetDefault(&boolVal)
-
-				f64Val := 6.4
-				ctx.GetParam(&params.F64).SetDefault(&f64Val)
+				Param(ctx, &params.Str).SetDefault(MyString("test-string"))
+				Param(ctx, &params.Int).SetDefault(MyInt(42))
+				Param(ctx, &params.Bool).SetDefault(MyBool(true))
+				Param(ctx, &params.F64).SetDefault(MyFloat64(6.4))
 
 				return nil
 			},
@@ -829,9 +822,9 @@ func TestTypeAlias_SetDefaultExplicit(t *testing.T) {
 	})
 }
 
-// TestTypeAlias_SetDefaultWithDefaultHelper tests using the Default() helper function
-func TestTypeAlias_SetDefaultWithDefaultHelper(t *testing.T) {
-	t.Run("SetDefault via HookContext with Default helper", func(t *testing.T) {
+// TestTypeAlias_SetDefaultDirect tests typed defaults for named types.
+func TestTypeAlias_SetDefaultDirect(t *testing.T) {
+	t.Run("SetDefault via HookContext", func(t *testing.T) {
 		type Config struct {
 			Bool MyBool   `descr:"bool" optional:"true"`
 			Str  MyString `descr:"string" optional:"true"`
@@ -840,13 +833,13 @@ func TestTypeAlias_SetDefaultWithDefaultHelper(t *testing.T) {
 
 		ran := false
 
-		CmdT[Config]{
+		Cmd[Config]{
 			Use:         "test",
 			ParamEnrich: ParamEnricherName,
 			InitFuncCtx: func(ctx *HookContext, params *Config, cmd *cobra.Command) error {
-				ctx.GetParam(&params.Bool).SetDefault(Default(false))
-				ctx.GetParam(&params.Str).SetDefault(Default("default-via-helper"))
-				ctx.GetParam(&params.Int).SetDefault(Default(999))
+				Param(ctx, &params.Bool).SetDefault(false)
+				Param(ctx, &params.Str).SetDefault("configured-default")
+				Param(ctx, &params.Int).SetDefault(999)
 				return nil
 			},
 			RunFunc: func(params *Config, cmd *cobra.Command, args []string) {
@@ -854,8 +847,8 @@ func TestTypeAlias_SetDefaultWithDefaultHelper(t *testing.T) {
 				if params.Bool != false {
 					t.Errorf("boolParam: expected false, got %v", params.Bool)
 				}
-				if params.Str != "default-via-helper" {
-					t.Errorf("strParam: expected 'default-via-helper', got %v", params.Str)
+				if params.Str != "configured-default" {
+					t.Errorf("strParam: expected 'configured-default', got %v", params.Str)
 				}
 				if params.Int != 999 {
 					t.Errorf("intParam: expected 999, got %v", params.Int)

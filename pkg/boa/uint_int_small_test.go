@@ -20,7 +20,7 @@ func TestUint_CLI(t *testing.T) {
 		Count uint `descr:"count"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -41,7 +41,7 @@ func TestUint_Default(t *testing.T) {
 		Count uint `descr:"count" default:"7" optional:"true"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -64,7 +64,7 @@ func TestUint8_CLI(t *testing.T) {
 		Byte uint8 `descr:"byte"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -84,7 +84,7 @@ func TestUint8_OutOfRange(t *testing.T) {
 	type P struct {
 		Byte uint8 `descr:"byte"`
 	}
-	err := (CmdT[P]{
+	err := (Cmd[P]{
 		Use:     "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {},
 	}).RunArgsE([]string{"--byte", "256"})
@@ -100,7 +100,7 @@ func TestUint16_CLI(t *testing.T) {
 		Port uint16 `descr:"port"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -123,7 +123,7 @@ func TestUint32_CLI(t *testing.T) {
 		ID uint32 `descr:"id"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -146,7 +146,7 @@ func TestUint64_CLI(t *testing.T) {
 		Port uint64 `descr:"port"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -167,7 +167,7 @@ func TestUint64_LargeValue(t *testing.T) {
 		N uint64 `descr:"n"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -189,7 +189,7 @@ func TestUint64_EnvVar(t *testing.T) {
 	}
 	t.Setenv("TEST_UINT64_N", "12345")
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -212,7 +212,7 @@ func TestInt8_CLI(t *testing.T) {
 		N int8 `descr:"n"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -235,7 +235,7 @@ func TestInt16_CLI(t *testing.T) {
 		N int16 `descr:"n"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -258,7 +258,7 @@ func TestSliceUint_CLI(t *testing.T) {
 		Vals []uint `descr:"vals"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -279,7 +279,7 @@ func TestSliceUint8_CLI(t *testing.T) {
 		Bytes []uint8 `descr:"bytes"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -300,7 +300,7 @@ func TestSliceUint16_CLI(t *testing.T) {
 		Ports []uint16 `descr:"ports"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -321,7 +321,7 @@ func TestSliceUint32_CLI(t *testing.T) {
 		Vals []uint32 `descr:"vals"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -342,7 +342,7 @@ func TestSliceUint64_CLI(t *testing.T) {
 		Vals []uint64 `descr:"vals"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -363,7 +363,7 @@ func TestSliceInt8_CLI(t *testing.T) {
 		Vals []int8 `descr:"vals"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -384,7 +384,7 @@ func TestSliceInt16_CLI(t *testing.T) {
 		Vals []int16 `descr:"vals"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -412,7 +412,7 @@ type CustomUintParams struct {
 
 func TestCustomUintTypeAliases(t *testing.T) {
 	wasRun := false
-	if err := (CmdT[CustomUintParams]{
+	if err := (Cmd[CustomUintParams]{
 		Use: "test",
 		RunFunc: func(p *CustomUintParams, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -441,7 +441,7 @@ func TestSliceUint16_CSVSingleFlag(t *testing.T) {
 		Vals []uint16 `descr:"vals"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -465,7 +465,7 @@ func TestSliceUint16_EnvVar(t *testing.T) {
 	}
 	t.Setenv("TEST_UINT16_VALS", "10,20,30")
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -487,7 +487,7 @@ func TestSliceUint8_Default(t *testing.T) {
 		Bytes []uint8 `descr:"bytes" default:"0,127,255" optional:"true"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -509,7 +509,7 @@ func TestSliceInt16_DefaultBracketed(t *testing.T) {
 		Vals []int16 `descr:"vals" default:"[-1,0,1]" optional:"true"`
 	}
 	wasRun := false
-	if err := (CmdT[P]{
+	if err := (Cmd[P]{
 		Use: "test",
 		RunFunc: func(p *P, cmd *cobra.Command, args []string) {
 			wasRun = true

@@ -4,12 +4,12 @@ BOA provides two execution modes: `Run()` for simple CLI apps, and `RunE()` for 
 
 ## Run() vs RunE()
 
-| Method | Setup Errors | User Input Errors | Hook Errors | Runtime Errors |
-|--------|--------------|-------------------|-------------|----------------|
-| `Run()` | Panic | Exit(1) | Exit(1) | Panic |
-| `RunE()` | Panic | Return | Return | Return |
-| `RunArgs(args)` | Panic | Exit(1) | Exit(1) | Panic |
-| `RunArgsE(args)` | Panic | Return | Return | Return |
+| Method | Returned setup errors (including Init/PostCreate) | Input and PreValidate/PreExecute errors | Ordinary RunFuncE/RunFuncCtxE errors |
+|--------|-------------------------------------------------|---------------------------------------|------------------------------------|
+| `Run()` / `RunArgs(args)` | Panic | Print usage/error, exit 1 | Panic |
+| `RunE()` / `RunArgsE(args)` | Return | Return | Return |
+
+API misuse that panics internally (such as configuring multiple run functions) and panics raised by user code remain panics in either mode. `RunE()` does not recover them. An action error wrapped with `NewUserInputError` follows the input-error behavior.
 
 ### Using Run()
 
@@ -17,7 +17,7 @@ BOA provides two execution modes: `Run()` for simple CLI apps, and `RunE()` for 
 
 ```go
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use: "app",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
             // Your command logic
@@ -28,10 +28,10 @@ func main() {
 
 ### Using RunE()
 
-`RunE()` returns all non-setup errors for programmatic handling. Ideal for testing, embedding, or custom error handling.
+`RunE()` returns setup and execution errors for programmatic handling. It is useful for testing, embedding, or custom error handling; it does not recover panics.
 
 ```go
-err := boa.CmdT[Params]{
+err := boa.Cmd[Params]{
     Use: "app",
     RunFuncE: func(p *Params, cmd *cobra.Command, args []string) error {
         if p.Port < 1024 {
@@ -53,17 +53,13 @@ BOA handles four categories of errors (see table above for behavior):
 
 ### 1. Setup Errors
 
-Programming mistakes caught during command setup. Always panic.
+Command construction can return errors for invalid tag values (such as `default:"abc"` on an `int`), invalid positional ordering, and errors returned by Init/PostCreate hooks. `Run()` panics on these errors; `RunE()` returns them.
 
-- Invalid default value types (e.g., `default:"abc"` on an `int` field)
-- Malformed struct tag syntax
-- Unsupported field types
-- Setting multiple run functions
-- Positional argument ordering errors
+Some API misuse still panics in both modes, including setting multiple run functions or using a non-struct `Cmd` type. Unsupported fields may be ignored with a warning rather than rejected; mark intentionally excluded fields with `boa:"ignore"`.
 
 ```go
 type Params struct {
-    Port int `default:"not-a-number"` // Will panic during setup
+    Port int `default:"not-a-number"` // RunE returns a setup error; Run panics
 }
 ```
 
@@ -95,7 +91,7 @@ type Params struct {
 Use `NewUserInputError` or `NewUserInputErrorf` to return user input errors from hooks:
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "app",
     PreValidateFunc: func(p *Params, cmd *cobra.Command, args []string) error {
         if p.StartPort > p.EndPort {
@@ -117,10 +113,10 @@ if boa.IsUserInputError(err) {
 
 ### 3. Hook Errors
 
-Errors from lifecycle hooks (Init, PostCreate, PreValidate, PreExecute). Behavior depends on `Run()` vs `RunE()` - see table.
+Init and PostCreate errors occur during construction; PreValidate and PreExecute errors occur during execution. `RunE()` returns both. `Run()` panics on construction errors and exits 1 on execution-hook errors. A panic raised inside a hook is not converted to an error.
 
 ```go
-err := boa.CmdT[Params]{
+err := boa.Cmd[Params]{
     Use: "app",
     InitFunc: func(p *Params, cmd *cobra.Command) error {
         return fmt.Errorf("initialization failed")
@@ -134,7 +130,7 @@ err := boa.CmdT[Params]{
 Errors from your `RunFuncE`. Behavior depends on `Run()` vs `RunE()` - see table.
 
 ```go
-err := boa.CmdT[Params]{
+err := boa.Cmd[Params]{
     Use: "app",
     RunFuncE: func(p *Params, cmd *cobra.Command, args []string) error {
         return fmt.Errorf("something went wrong")
@@ -152,10 +148,12 @@ err := boa.CmdT[Params]{
 
 ## ToCobra() vs ToCobraE()
 
-| Method | Returns | Setup Errors | Hook Errors |
-|--------|---------|--------------|-------------|
-| `ToCobra()` | `*cobra.Command` | Panic | Panic |
-| `ToCobraE()` | `(*cobra.Command, error)` | Panic | Return |
+| Method | Returns | Returned construction errors |
+|--------|---------|------------------------------|
+| `ToCobra()` | `*cobra.Command` | Panic |
+| `ToCobraE()` | `(*cobra.Command, error)` | Return |
+
+These methods run Init and PostCreate hooks while building the command. PreValidate, PreExecute, and action hooks run later when the Cobra command executes. Neither method recovers panics.
 
 ## Testing
 
@@ -163,7 +161,7 @@ Use `RunE()` and `RunArgsE()` for testing:
 
 ```go
 func TestMyCommand_InvalidPort(t *testing.T) {
-    err := boa.CmdT[Params]{
+    err := boa.Cmd[Params]{
         Use: "app",
         RunFuncE: func(p *Params, cmd *cobra.Command, args []string) error {
             if p.Port < 1024 {
@@ -185,7 +183,7 @@ You can only set one run function per command. Setting multiple causes a setup e
 
 ```go
 // This will panic - can't use both RunFunc and RunFuncE
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use:      "app",
     RunFunc:  func(p *Params, cmd *cobra.Command, args []string) {},
     RunFuncE: func(p *Params, cmd *cobra.Command, args []string) error { return nil },

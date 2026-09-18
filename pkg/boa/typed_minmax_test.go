@@ -23,14 +23,14 @@ func TestValidationTag_Int64_PrecisionBug(t *testing.T) {
 	// 2^53 is exactly representable in float64; 2^53+1 is not (it rounds to
 	// 2^53). So if the bound is 2^53 and the input is 2^53+1, the old
 	// float64-based comparison said "equal" and let it through.
-	const maxStr = "9007199254740992"          // 2^53
-	const cheatingVal = "9007199254740993"     // 2^53 + 1 — must be rejected
+	const maxStr = "9007199254740992"      // 2^53
+	const cheatingVal = "9007199254740993" // 2^53 + 1 — must be rejected
 
 	type Params struct {
 		N int64 `descr:"n" max:"9007199254740992"`
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -39,7 +39,7 @@ func TestValidationTag_Int64_PrecisionBug(t *testing.T) {
 		t.Fatalf("value == max (2^53) should pass, got: %v", err)
 	}
 
-	err = (CmdT[Params]{
+	err = (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -52,21 +52,21 @@ func TestValidationTag_Int64_PrecisionBug(t *testing.T) {
 	}
 }
 
-// TestSetMaxT_Int64_PrecisionBug does the same check via the typed
+// TestSetMax_Int64_PrecisionBug does the same check via the typed
 // programmatic API.
-func TestSetMaxT_Int64_PrecisionBug(t *testing.T) {
-	const max = int64(1 << 53)     // 9007199254740992, exactly representable in f64
-	const cheating = max + 1       // 9007199254740993, rounds down in f64
+func TestSetMax_Int64_PrecisionBug(t *testing.T) {
+	const max = int64(1 << 53) // 9007199254740992, exactly representable in f64
+	const cheating = max + 1   // 9007199254740993, rounds down in f64
 
 	type Params struct {
 		N int64 `descr:"n" optional:"true"`
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &params.N).SetMaxT(max)
+			Param(ctx, &params.N).SetMax(max)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
@@ -83,7 +83,7 @@ func TestValidationTag_Int64_MaxBoundary(t *testing.T) {
 		N int64 `descr:"n" max:"9223372036854775807"` // math.MaxInt64
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -108,21 +108,21 @@ func TestValidationTag_MapLength(t *testing.T) {
 		Labels map[string]string `descr:"labels" min:"2" max:"3" optional:"true"`
 	}
 	// 1 entry → below min
-	if err := (CmdT[Params]{
+	if err := (Cmd[Params]{
 		Use: "test", ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
 	}).RunArgsE([]string{"--labels", "a=1"}); err == nil || !strings.Contains(err.Error(), "min") {
 		t.Errorf("expected min error for 1-entry map, got: %v", err)
 	}
 	// 4 entries → above max
-	if err := (CmdT[Params]{
+	if err := (Cmd[Params]{
 		Use: "test", ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
 	}).RunArgsE([]string{"--labels", "a=1,b=2,c=3,d=4"}); err == nil || !strings.Contains(err.Error(), "max") {
 		t.Errorf("expected max error for 4-entry map, got: %v", err)
 	}
 	// 2 entries → valid
-	if err := (CmdT[Params]{
+	if err := (Cmd[Params]{
 		Use: "test", ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
 	}).RunArgsE([]string{"--labels", "a=1,b=2"}); err != nil {
@@ -134,11 +134,11 @@ func TestSetMinMaxLen_Programmatic_Map(t *testing.T) {
 	type Params struct {
 		Labels map[string]string `descr:"labels" optional:"true"`
 	}
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			p := GetParamT(ctx, &params.Labels)
+			p := Param(ctx, &params.Labels)
 			p.SetMinLen(2)
 			p.SetMaxLen(3)
 			return nil
@@ -157,13 +157,13 @@ func TestSetMinMaxT_TypeAlias(t *testing.T) {
 	type Params struct {
 		P Port `descr:"p" optional:"true"`
 	}
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			p := GetParamT(ctx, &params.P)
-			p.SetMinT(Port(1))
-			p.SetMaxT(Port(100))
+			p := Param(ctx, &params.P)
+			p.SetMin(Port(1))
+			p.SetMax(Port(100))
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
@@ -179,7 +179,7 @@ func TestValidationTag_MinMax_RejectsFloatOnIntField(t *testing.T) {
 	type Params struct {
 		N int `descr:"n" min:"1.5"`
 	}
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -193,7 +193,7 @@ func TestValidationTag_MinMax_RejectsNegativeLengthOnSlice(t *testing.T) {
 	type Params struct {
 		Xs []string `descr:"xs" min:"-1" optional:"true"`
 	}
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -220,10 +220,10 @@ func TestSetMin_RejectsFloatBoundOnIntField(t *testing.T) {
 			t.Errorf("expected panic to mention 'float', got: %v", r)
 		}
 	}()
-	_ = (CmdT[Params]{
+	_ = (Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			ctx.GetParam(&params.N).SetMin(1.5)
+			Param(ctx, &params.N).Parameter.SetMin(1.5)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
@@ -241,20 +241,20 @@ func toString(v any) string {
 	return ""
 }
 
-// --- non-generic Param.SetMin accepts any numeric ---
+// --- non-generic Parameter.SetMin accepts any numeric ---
 
 func TestParamSetMin_AcceptsAnyNumericOnIntField(t *testing.T) {
 	type Params struct {
 		N int `descr:"n" optional:"true"`
 	}
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *Params, cmd *cobra.Command) error {
-			p := ctx.GetParam(&params.N)
+			p := Param(ctx, &params.N)
 			// An int8 value should be coerced into the *int64 storage.
-			p.SetMin(int8(5))
-			p.SetMax(int16(10))
+			p.Parameter.SetMin(int8(5))
+			p.Parameter.SetMax(int16(10))
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},

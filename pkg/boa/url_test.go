@@ -16,7 +16,7 @@ func TestURL_Required(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -39,7 +39,7 @@ func TestURL_Optional(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -65,7 +65,7 @@ func TestURL_WithPath(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -94,7 +94,7 @@ func TestURL_WithQueryParams(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -120,7 +120,7 @@ func TestURL_Raw(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -145,7 +145,7 @@ func TestURL_EnvVar(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -184,7 +184,7 @@ func TestURL_ParseFormats(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			wasRun := false
 
-			CmdT[Params]{
+			Cmd[Params]{
 				Use: "test",
 				RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 					wasRun = true

@@ -17,7 +17,7 @@ func TestSliceString_Required(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -43,7 +43,7 @@ func TestSliceString_Optional(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -69,7 +69,7 @@ func TestSliceString_Raw(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -94,7 +94,7 @@ func TestSliceString_Default(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -122,7 +122,7 @@ func TestSliceString_EnvVar(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -147,7 +147,7 @@ func TestSliceInt_Required(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -173,7 +173,7 @@ func TestSliceInt_Optional(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -199,7 +199,7 @@ func TestSliceInt_Raw(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -221,7 +221,7 @@ func TestSliceInt_Default(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -246,7 +246,7 @@ func TestSliceInt32_Required(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -269,7 +269,7 @@ func TestSliceInt32_Optional(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -295,7 +295,7 @@ func TestSliceInt32_Raw(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -319,7 +319,7 @@ func TestSliceInt64_Required(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -342,7 +342,7 @@ func TestSliceInt64_Optional(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -368,7 +368,7 @@ func TestSliceInt64_Raw(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -392,7 +392,7 @@ func TestSliceFloat32_Required(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -418,7 +418,7 @@ func TestSliceFloat32_Optional(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -444,7 +444,7 @@ func TestSliceFloat32_Raw(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -468,7 +468,7 @@ func TestSliceFloat64_Required(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -494,7 +494,7 @@ func TestSliceFloat64_Optional(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -520,7 +520,7 @@ func TestSliceFloat64_Raw(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -542,7 +542,7 @@ func TestSliceFloat64_Default(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -567,7 +567,7 @@ func TestSlice_Empty(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -591,7 +591,7 @@ func TestSlice_SingleElement(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true

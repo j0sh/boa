@@ -37,7 +37,7 @@ func TestMultiConfigFile_StringSliceTag(t *testing.T) {
 		local := writeFile(t, dir, "local.json", `{"Port":8080,"Region":"eu"}`)
 
 		var got Params
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 				got = *p
@@ -61,7 +61,7 @@ func TestMultiConfigFile_StringSliceTag(t *testing.T) {
 		local := writeFile(t, dir, "local.json", `{"Tags":["c"]}`)
 
 		var got Params
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 				got = *p
@@ -78,7 +78,7 @@ func TestMultiConfigFile_StringSliceTag(t *testing.T) {
 		only := writeFile(t, dir, "only.json", `{"Host":"solo","Port":1}`)
 
 		var got Params
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 				got = *p
@@ -92,7 +92,7 @@ func TestMultiConfigFile_StringSliceTag(t *testing.T) {
 
 	t.Run("empty list is a no-op", func(t *testing.T) {
 		var got Params
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 				got = *p
@@ -108,7 +108,7 @@ func TestMultiConfigFile_StringSliceTag(t *testing.T) {
 		dir := t.TempDir()
 		base := writeFile(t, dir, "base.json", `{"Host":"base"}`)
 
-		err := CmdT[Params]{
+		err := Cmd[Params]{
 			Use: "test",
 			RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 				t.Fatal("should not run")
@@ -130,7 +130,7 @@ func TestMultiConfigFile_StringSliceTag(t *testing.T) {
 		local := writeFile(t, dir, "local.json", `{"Port":8080}`)
 
 		var got Params
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 				got = *p
@@ -165,11 +165,11 @@ func TestMultiConfigFile_HasValueAcrossChain(t *testing.T) {
 	local := writeFile(t, dir, "local.json", `{"Port":8080}`)
 
 	var (
-		hostHasValue   bool
-		portHasValue   bool
-		onlyHasValue   bool
+		hostHasValue bool
+		portHasValue bool
+		onlyHasValue bool
 	)
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			hostHasValue = ctx.HasValue(&p.Host)
@@ -203,10 +203,10 @@ func TestMultiConfigFile_ProgrammaticSetConfigFile(t *testing.T) {
 	local := writeFile(t, dir, "local.json", `{"Port":8080}`)
 
 	var got Params
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		InitFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command) error {
-			ctx.GetParam(&p.ConfigFiles).SetConfigFile(true)
+			Param(ctx, &p.ConfigFiles).SetConfigFile(true)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -242,7 +242,7 @@ func TestMultiConfigFile_SubstructAndRoot(t *testing.T) {
 	root := writeFile(t, dir, "root.json", `{"Name":"app","DB":{"Port":6000}}`)
 
 	var got Params
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			got = *p
@@ -334,7 +334,7 @@ func TestLoadConfigFiles_PublicHelper(t *testing.T) {
 		local := writeFile(t, dir, "local.json", `{"Port":8080}`)
 
 		var got Params
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			PreValidateFunc: func(p *Params, cmd *cobra.Command, args []string) error {
 				return LoadConfigFiles([]string{base, local}, p, nil)

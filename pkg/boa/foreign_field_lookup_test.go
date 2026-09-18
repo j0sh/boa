@@ -9,7 +9,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// The tests in this file verify that HookContext.GetParam fails loudly *via
+// The tests in this file verify that boa.Param fails loudly *via
 // logging* (but still returns nil) when called with a field pointer that does
 // not belong to the parameters struct associated with the context.
 //
@@ -36,7 +36,7 @@ func captureSlog(fn func()) string {
 // assertBoaError checks that captured output contains the expected substrings.
 func assertBoaError(t *testing.T, captured string, wantSubstrings ...string) {
 	t.Helper()
-	if !strings.Contains(captured, "boa.HookContext.GetParam") {
+	if !strings.Contains(captured, "boa.Param") {
 		t.Errorf("slog output does not carry boa prefix: %q", captured)
 	}
 	for _, w := range wantSubstrings {
@@ -46,10 +46,10 @@ func assertBoaError(t *testing.T, captured string, wantSubstrings ...string) {
 	}
 }
 
-// TestGetParam_ForeignFieldLogsError: pass a pointer to a field in an
-// unrelated struct. GetParam must return nil AND emit a descriptive slog.Error
+// TestParam_ForeignFieldLogsError: pass a pointer to a field in an
+// unrelated struct. Param must return nil AND emit a descriptive slog.Error
 // naming the likely causes.
-func TestGetParam_ForeignFieldLogsError(t *testing.T) {
+func TestParam_ForeignFieldLogsError(t *testing.T) {
 	type Params struct {
 		Name string `descr:"name" default:"default-name"`
 	}
@@ -58,13 +58,13 @@ func TestGetParam_ForeignFieldLogsError(t *testing.T) {
 	}
 	other := &Other{Foreign: "unrelated"}
 
-	var gotMirror Param
+	var gotMirror *Field[string]
 
 	captured := captureSlog(func() {
-		cmd := (CmdT[Params]{
+		cmd := (Cmd[Params]{
 			Use: "test",
 			InitFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command) error {
-				gotMirror = ctx.GetParam(&other.Foreign)
+				gotMirror = Param(ctx, &other.Foreign)
 				return nil
 			},
 			RunFunc: func(p *Params, c *cobra.Command, args []string) {},
@@ -82,22 +82,22 @@ func TestGetParam_ForeignFieldLogsError(t *testing.T) {
 	assertBoaError(t, captured, "does not belong to the parameters struct")
 }
 
-// TestGetParam_SameTypeDifferentInstanceLogsError: pass a pointer to a field
+// TestParam_SameTypeDifferentInstanceLogsError: pass a pointer to a field
 // in a separately-allocated instance of the SAME Params type. Must return nil
 // and log the same descriptive error.
-func TestGetParam_SameTypeDifferentInstanceLogsError(t *testing.T) {
+func TestParam_SameTypeDifferentInstanceLogsError(t *testing.T) {
 	type Params struct {
 		Name string `descr:"name" default:"default-name"`
 	}
 	stranger := &Params{Name: "stranger"}
 
-	var gotMirror Param
+	var gotMirror *Field[string]
 
 	captured := captureSlog(func() {
-		cmd := (CmdT[Params]{
+		cmd := (Cmd[Params]{
 			Use: "test",
 			InitFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command) error {
-				gotMirror = ctx.GetParam(&stranger.Name)
+				gotMirror = Param(ctx, &stranger.Name)
 				return nil
 			},
 			RunFunc: func(p *Params, c *cobra.Command, args []string) {},
@@ -115,21 +115,21 @@ func TestGetParam_SameTypeDifferentInstanceLogsError(t *testing.T) {
 	assertBoaError(t, captured, "does not belong to the parameters struct")
 }
 
-// TestGetParam_NilFieldPointerLogsError: passing untyped nil must return nil
+// TestParam_NilFieldPointerLogsError verifies that a typed nil returns nil
 // and produce a descriptive log line, not a generic reflect crash.
-func TestGetParam_NilFieldPointerLogsError(t *testing.T) {
+func TestParam_NilFieldPointerLogsError(t *testing.T) {
 	type Params struct {
 		Name string `descr:"name" default:"default-name"`
 	}
 
-	var gotMirror Param
-	gotMirror = nil // keep compiler happy when set inside closure
+	var gotMirror *Field[string]
+	var field *string
 
 	captured := captureSlog(func() {
-		cmd := (CmdT[Params]{
+		cmd := (Cmd[Params]{
 			Use: "test",
 			InitFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command) error {
-				gotMirror = ctx.GetParam(nil)
+				gotMirror = Param(ctx, field)
 				return nil
 			},
 			RunFunc: func(p *Params, c *cobra.Command, args []string) {},
@@ -144,54 +144,23 @@ func TestGetParam_NilFieldPointerLogsError(t *testing.T) {
 	if gotMirror != nil {
 		t.Errorf("expected nil mirror for nil fieldPtr, got %p", gotMirror)
 	}
-	assertBoaError(t, captured, "fieldPtr is nil")
+	assertBoaError(t, captured, "fieldPtr is a typed nil")
 }
 
-// TestGetParam_NonPointerLogsError: passing a non-pointer value must return nil
-// with a descriptive message rather than crashing inside reflect.
-func TestGetParam_NonPointerLogsError(t *testing.T) {
-	type Params struct {
-		Name string `descr:"name" default:"default-name"`
-	}
-
-	var gotMirror Param
-
-	captured := captureSlog(func() {
-		cmd := (CmdT[Params]{
-			Use: "test",
-			InitFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command) error {
-				gotMirror = ctx.GetParam("not-a-pointer")
-				return nil
-			},
-			RunFunc: func(p *Params, c *cobra.Command, args []string) {},
-		}).ToCobra()
-
-		cmd.SetArgs([]string{})
-		if err := Execute(cmd); err != nil {
-			t.Fatalf("execute: %v", err)
-		}
-	})
-
-	if gotMirror != nil {
-		t.Errorf("expected nil mirror for non-pointer fieldPtr, got %p", gotMirror)
-	}
-	assertBoaError(t, captured, "must be a pointer")
-}
-
-// TestGetParam_RegisteredFieldStillWorks is a paired sanity check: the happy
+// TestParam_RegisteredFieldStillWorks is a paired sanity check: the happy
 // path still returns a non-nil mirror and the log stream should be empty.
-func TestGetParam_RegisteredFieldStillWorks(t *testing.T) {
+func TestParam_RegisteredFieldStillWorks(t *testing.T) {
 	type Params struct {
 		Name string `descr:"name" default:"default-name"`
 	}
 
-	var gotMirror Param
+	var gotMirror *Field[string]
 
 	captured := captureSlog(func() {
-		cmd := (CmdT[Params]{
+		cmd := (Cmd[Params]{
 			Use: "test",
 			InitFuncCtx: func(ctx *HookContext, p *Params, c *cobra.Command) error {
-				gotMirror = ctx.GetParam(&p.Name)
+				gotMirror = Param(ctx, &p.Name)
 				return nil
 			},
 			RunFunc: func(p *Params, c *cobra.Command, args []string) {},
@@ -206,7 +175,7 @@ func TestGetParam_RegisteredFieldStillWorks(t *testing.T) {
 	if gotMirror == nil {
 		t.Errorf("registered field lookup returned nil")
 	}
-	if strings.Contains(captured, "boa.HookContext.GetParam") {
-		t.Errorf("unexpected boa GetParam error in log for happy path: %q", captured)
+	if strings.Contains(captured, "boa.Param") {
+		t.Errorf("unexpected boa Param error in log for happy path: %q", captured)
 	}
 }

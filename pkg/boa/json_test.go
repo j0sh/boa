@@ -121,7 +121,7 @@ func TestJsonSerializationEmbeddedStruct(t *testing.T) {
 
 func TestJsonSerializationEmbeddedStructPointerValid(t *testing.T) {
 
-	err := Cmd{
+	err := command{
 		Params: &EmbeddedConfigStructPointer{
 			Foobar: "foobar",
 			AppConfig: &AppConfig{
@@ -137,7 +137,7 @@ func TestJsonSerializationEmbeddedStructPointerValid(t *testing.T) {
 		t.Errorf("Validation error: %v", err)
 	}
 
-	err = Cmd{
+	err = command{
 		Params: &EmbeddedConfigStructPointer{
 			Foobar: "foobar",
 			AppConfig: &AppConfig{
@@ -254,7 +254,7 @@ func TestWriteJsonToFileAndTreatAsConfig(t *testing.T) {
 		t.Fatalf("Failed to write to temp file: %v", err)
 	}
 
-	CmdT[AppConfigFromFile]{
+	Cmd[AppConfigFromFile]{
 		Use: "root",
 		PreValidateFunc: func(params *AppConfigFromFile, cmd *cobra.Command, args []string) error {
 			if params.File != "" {
@@ -301,7 +301,7 @@ func TestWriteJsonToFileAndTreatAsConfigCliOvrd(t *testing.T) {
 		t.Fatalf("Failed to write to temp file: %v", err)
 	}
 
-	CmdT[AppConfigFromFile]{
+	Cmd[AppConfigFromFile]{
 		Use: "root",
 		PreValidateFunc: func(params *AppConfigFromFile, cmd *cobra.Command, args []string) error {
 			if params.File != "" {

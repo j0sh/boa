@@ -25,7 +25,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "my-app",
         Short: "a simple CLI tool",
         RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
@@ -82,7 +82,7 @@ type Params struct {
     Port      int               `descr:"port" default:"8080"`            // with default
     Name      *string           `descr:"user name"`                      // pointer = optional, nil = not set
     Tags      []string          `descr:"tags" default:"[a,b,c]"`         // --tags a,b,c
-    LabelList []string          `long:"label" collection:"array"`        // --label 'one,opaque' --label two
+    LabelList []string          `name:"label" collection:"array"`        // --label 'one,opaque' --label two
     Labels    map[string]string `descr:"labels"`                         // --labels env=prod,team=backend
     Input     string            `positional:"true"`                      // positional arg
     Timeout   time.Duration     `descr:"timeout" default:"30s"`          // durations, IPs, URLs, etc.
@@ -97,7 +97,7 @@ type Params struct {
     Retries *int `descr:"retry count"` // nil if not provided, *0 if --retries 0
 }
 
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "app",
     RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
         if p.Retries != nil {
@@ -125,17 +125,17 @@ type DeployParams struct {
 }
 
 func main() {
-    boa.CmdT[boa.NoParams]{
+    boa.Cmd[boa.NoParams]{
         Use:   "my-app",
         Short: "a multi-command CLI",
         SubCmds: boa.SubCmds(
-            boa.CmdT[ServeParams]{
+            boa.Cmd[ServeParams]{
                 Use: "serve", Short: "start the server",
                 RunFunc: func(p *ServeParams, cmd *cobra.Command, args []string) {
                     fmt.Printf("Serving on %s:%d\n", p.Host, p.Port)
                 },
             },
-            boa.CmdT[DeployParams]{
+            boa.Cmd[DeployParams]{
                 Use: "deploy", Short: "deploy the app",
                 RunFunc: func(p *DeployParams, cmd *cobra.Command, args []string) {
                     fmt.Printf("Deploying to %s (dry-run: %v)\n", p.Target, p.DryRun)
@@ -173,7 +173,7 @@ Tag a field with `configfile` and boa loads it automatically. CLI and env vars a
 ```go
 type Params struct {
     ConfigFile string     `configfile:"true" optional:"true" default:"config.json"`
-    Host       string     `descr:"server host"`
+    Host       string     `descr:"server host" env:"HOST"`
     Port       int        `descr:"port" default:"8080"`
     Internal   [][]string `boa:"configonly"` // loaded from config only, no CLI flag
 }
@@ -204,7 +204,7 @@ type Params struct {
 }
 ```
 
-JSON is built in. Register other formats with one line:
+JSON is built in. Other formats retain their decoder's native behavior; see [config decoding](docs/config-decoding.md) for portable custom types. Register other formats with one line:
 
 ```go
 boa.RegisterConfigFormat(".yaml", yaml.Unmarshal)
@@ -215,46 +215,18 @@ boa.RegisterConfigFormat(".toml", toml.Unmarshal)
 <details>
 <summary><b>Live Config Reload</b></summary>
 
-For long-running programs, `boa.Reload[T](ctx)` re-reads every config file, re-applies precedence (CLI still wins), re-validates, and returns a **brand-new `*T`**. The struct you originally got in `RunFunc` is never touched — every reload is a fresh allocation, and callers swap the pointer (typically via `atomic.Pointer[T]`) only when they're ready. On any failure — parse error, validation failure, missing file — Reload returns `(nil, err)` and nothing else changes, so noisy triggers (fsnotify fires multiple events per save) are safe to wire directly.
+`boa.Reload[T](ctx)` replays command setup and validation with a fresh parameter struct. On success, the caller can publish it with `atomic.Pointer[T]`; on error, keep the previous snapshot.
 
 ```go
-import (
-    "os"
-    "os/signal"
-    "sync/atomic"
-    "syscall"
-)
-
-var active atomic.Pointer[Params]
-
-boa.CmdT[Params]{
-    Use: "server",
-    RunFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command, args []string) {
-        active.Store(p)
-
-        sighup := make(chan os.Signal, 1)
-        signal.Notify(sighup, syscall.SIGHUP)
-        go func() {
-            for range sighup {
-                fresh, err := boa.Reload[Params](ctx)
-                if err != nil {
-                    log.Printf("reload rejected: %v", err) // old config still serving
-                    continue
-                }
-                active.Store(fresh)
-            }
-        }()
-
-        startServer()
-    },
-}.Run()
+fresh, err := boa.Reload[Params](ctx)
+if err != nil {
+    log.Printf("reload rejected: %v", err)
+    return
+}
+active.Store(fresh) // active is an atomic.Pointer[Params]
 ```
 
-Readers elsewhere in the program just do `cfg := active.Load()` — lock-free, always-consistent snapshots. `ctx.WatchedConfigFiles()` returns the paths you should hand to your trigger (fsnotify, timer, etc.).
-
-**No fsnotify in core.** Wire your own trigger: SIGHUP, an admin HTTP endpoint, fsnotify, a timer. The primitive just answers "give me a fresh validated config now". A higher-level watcher subpackage is planned as a follow-up.
-
-See the [Live Config Reload](https://gigurra.github.io/boa/live-reload/) page for SIGHUP / HTTP / fsnotify / timer recipes, error semantics, and the atomic-pointer swap pattern.
+Supply your own trigger, such as SIGHUP, fsnotify, or an admin endpoint. Hooks run again and can have side effects. See [Live Config Reload](https://gigurra.github.io/boa/live-reload/) for a complete example, hook behavior, and current limitations.
 </details>
 
 <details>
@@ -315,11 +287,11 @@ type Params struct {
     CIDR string `descr:"Allowed CIDR range" optional:"true"`
 }
 
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "server",
     InitFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command) error {
         // Type-safe custom validator
-        boa.GetParamT(ctx, &p.Port).SetCustomValidatorT(func(port int) error {
+        boa.Param(ctx, &p.Port).SetCustomValidator(func(port int) error {
             if port < 1024 && port != 80 && port != 443 {
                 return fmt.Errorf("non-standard privileged port %d", port)
             }
@@ -327,7 +299,7 @@ boa.CmdT[Params]{
         })
 
         // Conditional required: CIDR only required when host is not localhost
-        ctx.GetParam(&p.CIDR).SetRequiredFn(func() bool {
+        boa.Param(ctx, &p.CIDR).SetRequiredFn(func() bool {
             return p.Host != "localhost"
         })
 
@@ -349,9 +321,9 @@ type ServerConfig struct {
 }
 
 func (c *ServerConfig) InitCtx(ctx *boa.HookContext) error {
-    ctx.GetParam(&c.Port).SetDefault(boa.Default(8080))
-    ctx.GetParam(&c.LogLevel).SetAlternatives([]string{"debug", "info", "warn", "error"})
-    ctx.GetParam(&c.LogLevel).SetStrictAlts(true)
+    boa.Param(ctx, &c.Port).SetDefault(8080)
+    boa.Param(ctx, &c.LogLevel).SetAlternatives([]string{"debug", "info", "warn", "error"})
+    boa.Param(ctx, &c.LogLevel).SetStrictAlts(true)
     return nil
 }
 ```
@@ -369,7 +341,7 @@ func (c *ServerConfig) InitCtx(ctx *boa.HookContext) error {
 `Run()` for simple CLIs:
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "app",
     RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
         fmt.Println("Success!")
@@ -382,7 +354,7 @@ boa.CmdT[Params]{
 `RunE()` when you need error handling:
 
 ```go
-err := boa.CmdT[Params]{
+err := boa.Cmd[Params]{
     Use: "app",
     RunFuncE: func(p *Params, cmd *cobra.Command, args []string) error {
         if p.Port < 1024 {
@@ -400,7 +372,7 @@ if err != nil {
 `ToCobra()` when embedding boa in a larger cobra app:
 
 ```go
-cmd := boa.CmdT[Params]{
+cmd := boa.Cmd[Params]{
     Use: "sub",
     RunFunc: func(p *Params, cmd *cobra.Command, args []string) { ... },
 }.ToCobra()
@@ -448,7 +420,7 @@ type Params struct {
 Dynamic completions — e.g. completing based on output from other CLIs:
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "deploy",
     InitFunc: func(p *Params, cmd *cobra.Command) error {
         cmd.RegisterFlagCompletionFunc("namespace", func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
@@ -473,15 +445,15 @@ boa.CmdT[Params]{
 
 | Tag | Description | Example |
 |-----|-------------|---------|
-| `descr` / `desc` | Description text | `descr:"User name"` |
-| `name` / `long` | Override flag name | `name:"user-name"` |
+| `descr` | Description text | `descr:"User name"` |
+| `name` | Override flag name | `name:"user-name"` |
 | `default` | Default value | `default:"8080"` |
 | `env` | Environment variable name | `env:"PORT"` |
 | `short` | Short flag (single char) | `short:"p"` |
-| `positional` / `pos` | Marks positional argument | `positional:"true"` |
+| `positional` | Marks positional argument | `positional:"true"` |
 | `persistent` | Makes a flag inherited by descendant commands | `persistent:"true"` |
-| `required` / `req` | Marks as required | `required:"true"` |
-| `optional` / `opt` | Marks as optional | `optional:"true"` |
+| `required` | Marks as required | `required:"true"` |
+| `optional` | Marks as optional | `optional:"true"` |
 | `alts` | Allowed values (enum) | `alts:"debug,info,warn,error"` |
 | `strict` | Validate against alts | `strict:"true"` |
 | `min` | Min value or min length | `min:"1"` |
@@ -489,7 +461,7 @@ boa.CmdT[Params]{
 | `pattern` | Regex pattern | `pattern:"^[a-z]+$"` |
 | `collection` | Slice CLI parsing: `slice` (CSV, default) or `array` (one scalar per occurrence) | `collection:"array"` |
 | `configfile` | Auto-load config from path | `configfile:"true"` |
-| `boa` | Special directives | `boa:"ignore"` (no mirror), `boa:"configonly"` (no CLI/env, mirror + validation preserved), `boa:"noflag"` / `"nocli"`, `boa:"noenv"` |
+| `boa` | Special directives | `boa:"ignore"` (no mirror), `boa:"configonly"` (no CLI/env, mirror + validation preserved), `boa:"noflag"`, `boa:"noenv"` |
 
 </details>
 

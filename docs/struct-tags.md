@@ -4,25 +4,25 @@ Quick reference for all BOA struct tags.
 
 ## Tag Reference
 
-| Tag | Aliases | Description | Example |
-|-----|---------|-------------|---------|
-| `descr` | `desc`, `description`, `help` | Help text | `descr:"User name"` |
-| `name` | `long` | Override flag name | `name:"server-host"` |
-| `short` | | Single-char flag | `short:"n"` |
-| `env` | | Environment variable | `env:"APP_HOST"` |
-| `default` | | Default value | `default:"8080"` |
-| `required` | `req` | Mark as required | `required:"true"` |
-| `optional` | `opt` | Mark as optional | `optional:"true"` |
-| `positional` | `pos` | Positional argument | `positional:"true"` |
-| `persistent` | | Flag inherited by descendant commands | `persistent:"true"` |
-| `alts` | `alternatives` | Allowed values | `alts:"a,b,c"` |
-| `strict-alts` | `strict` | Validate alts | `strict:"true"` |
-| `min` | | Min value (numeric) or min length (string/slice) | `min:"1"` |
-| `max` | | Max value (numeric) or max length (string/slice) | `max:"65535"` |
-| `pattern` | | Regex pattern (strings only) | `pattern:"^[a-z]+$"` |
-| `collection` | | Slice CLI parsing: `slice` (CSV, default) or `array` (one scalar per occurrence) | `collection:"array"` |
-| `configfile` | | Auto-load config file (root or substruct) | `configfile:"true"` |
-| `boa` | | Special directives | `boa:"ignore"`, `boa:"configonly"`, `boa:"noflag"`, `boa:"nocli"`, `boa:"noenv"` |
+| Tag | Description | Example |
+|-----|-------------|---------|
+| `descr` | Help text | `descr:"User name"` |
+| `name` | Override flag name | `name:"server-host"` |
+| `short` | Single-character flag | `short:"n"` |
+| `env` | Environment variable | `env:"APP_HOST"` |
+| `default` | Default value | `default:"8080"` |
+| `required` | Mark as required | `required:"true"` |
+| `optional` | Mark as optional | `optional:"true"` |
+| `positional` | Positional argument | `positional:"true"` |
+| `persistent` | Flag inherited by descendant commands | `persistent:"true"` |
+| `alts` | Allowed values | `alts:"a,b,c"` |
+| `strict` | Validate against `alts` | `strict:"true"` |
+| `min` | Minimum number or collection length | `min:"1"` |
+| `max` | Maximum number or collection length | `max:"65535"` |
+| `pattern` | Regular expression for a string | `pattern:"^[a-z]+$"` |
+| `collection` | Slice CLI parsing: `slice` (CSV, default) or `array` (one scalar per occurrence) | `collection:"array"` |
+| `configfile` | Auto-load a config file for the enclosing struct | `configfile:"true"` |
+| `boa` | Directives: `ignore`, `configonly`, `noflag`, `noenv` | `boa:"configonly"` |
 
 ## Special Field Types
 
@@ -42,7 +42,7 @@ type Params struct {
 
 Both tags hide a field from the CLI and from env vars, but they differ in whether boa's mirror and validation still run:
 
-- **`boa:"ignore"`** (aliases `boa:"ignored"`, `boa:"-"`) — field is **fully excluded** from boa. No mirror, no validation, no required check. Only raw config-file unmarshal writes to it.
+- **`boa:"ignore"`** — field is **fully excluded** from boa. No mirror, no validation, no required check. Only raw config-file unmarshal writes to it.
 - **`boa:"configonly"`** — field is hidden from CLI and env (it's shorthand for `noflag` + `noenv`) but the **mirror is preserved** and validation, required checks, and custom validators still run. Use this when you want a config-file-only field that's still validated.
 
 ```go
@@ -55,11 +55,9 @@ type Params struct {
 }
 ```
 
-**Changed in this release:** `boa:"configonly"` used to be an alias for `boa:"ignore"`. Migrate by switching to `boa:"ignore"` if you need the old no-validation behavior, or leave it as-is for the new (validated) behavior.
+### The `boa:"noflag"` Tag
 
-### The `boa:"noflag"` / `boa:"nocli"` Tag
-
-Fields tagged `boa:"noflag"` (or its alias `boa:"nocli"`) are **excluded from CLI flag registration only**. They do not appear in `--help` and cannot be set with a `--flag`, but they are fully processed in every other way: env vars, config files, defaults, `min`/`max`/`pattern` validation, and custom validators all still apply.
+Fields tagged `boa:"noflag"` are **excluded from CLI flag registration only**. They do not appear in `--help` and cannot be set with a `--flag`, but they are fully processed in every other way: env vars, config files, defaults, `min`/`max`/`pattern` validation, and custom validators all still apply.
 
 ```go
 type Params struct {
@@ -94,7 +92,7 @@ either before or after the subcommand path:
 
 ```go
 type RootParams struct {
-    DB string `long:"db" persistent:"true" optional:"true"`
+    DB string `name:"db" persistent:"true" optional:"true"`
 }
 // Both forms work:
 // myapp --db app.db child
@@ -117,28 +115,28 @@ flag.
 
 ### Programmatic parity
 
-Anything configurable with a struct tag is also configurable programmatically through `HookContext.GetParam(&p.Field)` (or the typed `GetParamT`). This is the escape hatch for parameter structs you don't own and can't add tags to:
+Anything configurable with a struct tag is also configurable programmatically through `boa.Param(ctx, &p.Field)`. This is the escape hatch for parameter structs you don't own and can't add tags to:
 
 ```go
-boa.CmdT[ExternalConfig]{
+boa.Cmd[ExternalConfig]{
     Use: "cmd",
     InitFuncCtx: func(ctx *boa.HookContext, p *ExternalConfig, cmd *cobra.Command) error {
-        secret := boa.GetParamT(ctx, &p.Secret)
+        secret := boa.Param(ctx, &p.Secret)
         secret.SetDescription("auth token (env or config only)")
         secret.SetNoFlag(true)    // equivalent to `boa:"noflag"`
         secret.SetEnv("APP_TOKEN")
 
-        port := boa.GetParamT(ctx, &p.Port)
-        port.SetMinT(1)           // equivalent to `min:"1"`
-        port.SetMaxT(65535)       // equivalent to `max:"65535"`
+        port := boa.Param(ctx, &p.Port)
+        port.SetMin(1)           // equivalent to `min:"1"`
+        port.SetMax(65535)       // equivalent to `max:"65535"`
         return nil
     },
 }
 ```
 
-Available setters include `SetDescription`, `SetName`, `SetShort`, `SetEnv`, `SetPositional`, `SetPersistent`, `SetRequired(bool)` / `SetRequiredFn`, `SetNoFlag`, `SetNoEnv`, `SetIgnored`, `SetCollection`, `SetMinT(T)` / `SetMaxT(T)` for numeric fields, `SetMinLen(int)` / `SetMaxLen(int)` for string/slice/map fields, `ClearMin` / `ClearMax`, `SetPattern`, `SetAlternatives`, `SetAlternativesFunc`, `SetStrictAlts`, `SetDefault` / `SetDefaultT`, `SetCustomValidator` / `SetCustomValidatorT`, and `SetIsEnabledFn`. The numeric setters store at the field's natural precision (e.g. `int64` bounds past 2^53 round-trip losslessly), unlike the older float64-only API.
+Available setters include `SetDescription`, `SetName`, `SetShort`, `SetEnv`, `SetPositional`, `SetPersistent`, `SetRequired` / `SetRequiredFn`, `SetNoFlag`, `SetNoEnv`, `SetIgnored`, `SetCollection`, `SetMin` / `SetMax` for numeric fields, `SetMinLen` / `SetMaxLen` for strings, slices, and maps, `ClearMin` / `ClearMax`, `SetPattern`, `SetAlternatives`, `SetAlternativesFunc`, `SetStrictAlts`, `SetDefault`, `SetCustomValidator`, and `SetIsEnabledFn`. Numeric bounds retain the field's natural precision.
 
-All programmatic setters must be called from `InitFunc` / `InitFuncCtx` (or `CfgStructInit` / `CfgStructInitCtx`) so they take effect before cobra flag binding and env parsing.
+Call these setters from `InitFuncCtx` or `CfgStructInitCtx.InitCtx`, before BOA binds flags or reads environment variables.
 
 ### Map Fields
 
@@ -257,7 +255,7 @@ type Params struct {
 // Or just: myapp (loads config.json by default)
 ```
 
-The tagged field must be a `string`. Only one `configfile` field per struct level. Nested structs can also have their own `configfile:"true"` field for substruct-level config files. See [Advanced](advanced.md#substruct-config-files) for details.
+The tagged field may be a `string` or `[]string`. Multiple paths load from left to right. Nested structs can also have their own `configfile:"true"` field for substruct-level config files. See [Advanced](advanced.md#substruct-config-files) for details.
 
 ### Combined Example
 
@@ -297,7 +295,7 @@ The `camelToKebabCase` conversion handles acronyms correctly:
 To auto-derive env vars, set `ParamEnrich`:
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "app",
     ParamEnrich: boa.ParamEnricherCombine(
         boa.ParamEnricherName,
@@ -359,10 +357,10 @@ Struct tags cover the most common use cases, but for dynamic behavior you'll nee
 - **Custom validation** - Complex validation logic
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "app",
     InitFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command) error {
-        param := ctx.GetParam(&p.Region)
+        param := boa.Param(ctx, &p.Region)
         param.SetAlternatives(fetchRegionsFromAPI())
         param.SetStrictAlts(true)
         return nil

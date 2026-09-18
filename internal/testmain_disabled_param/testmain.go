@@ -16,7 +16,7 @@ func main() {
 
 	var params disabledParamParams
 
-	if err := (boa.CmdT[disabledParamParams]{
+	if err := (boa.Cmd[disabledParamParams]{
 		Use:   "hello-world",
 		Short: "a generic cli tool",
 		Long:  `A generic cli tool that has a longer description. See the README.MD for more information`,
@@ -26,10 +26,10 @@ func main() {
 		),
 		Params: &params,
 		InitFuncCtx: func(ctx *boa.HookContext, p *disabledParamParams, cmd *cobra.Command) error {
-			ctx.GetParam(&p.Bar).SetIsEnabledFn(func() bool {
+			boa.Param(ctx, &p.Bar).SetIsEnabledFn(func() bool {
 				return ctx.HasValue(&p.Foo)
 			})
-			ctx.GetParam(&p.Baz).SetRequiredFn(func() bool {
+			boa.Param(ctx, &p.Baz).SetRequiredFn(func() bool {
 				return ctx.HasValue(&p.Foo)
 			})
 			return nil

@@ -27,7 +27,7 @@ func TestEmbeddedStruct_NoPrefixByDefault(t *testing.T) {
 
 	var gotVerbose bool
 	var gotName string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -57,7 +57,7 @@ func TestNamedStruct_AutoPrefixed(t *testing.T) {
 
 	var gotHost string
 	var gotPort int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -84,7 +84,7 @@ func TestNamedStruct_AutoPrefixedEnvVar(t *testing.T) {
 		DB DBConfig
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherDefault,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -105,7 +105,7 @@ func TestNamedStruct_TwoInstances_NoPrefixCollision(t *testing.T) {
 	}
 
 	var gotPrimaryHost, gotReplicaHost string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -142,7 +142,7 @@ func TestNamedStruct_DeepNesting(t *testing.T) {
 
 	var gotPrimaryHost, gotReplicaHost string
 	var gotPrimaryPort, gotReplicaPort int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -180,12 +180,12 @@ func TestNamedStruct_MixedEmbeddedAndNamed(t *testing.T) {
 		Level string `descr:"log level" default:"info" optional:"true"`
 	}
 	type Params struct {
-		Logging            // embedded — --level (no prefix)
-		DB      DBConfig   // named — --db-host, --db-port
+		Logging          // embedded — --level (no prefix)
+		DB      DBConfig // named — --db-host, --db-port
 	}
 
 	var gotLevel, gotHost string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -218,7 +218,7 @@ func TestNamedStruct_EnvVarAutoPrefix(t *testing.T) {
 
 	var gotHost string
 	var gotPort int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherCombine(ParamEnricherDefault, ParamEnricherEnv),
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -248,7 +248,7 @@ func TestEmbeddedStruct_EnvVarNoPrefix(t *testing.T) {
 	defer func() { _ = os.Unsetenv("VERBOSE") }()
 
 	var gotVerbose bool
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherCombine(ParamEnricherDefault, ParamEnricherEnv),
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -280,7 +280,7 @@ func TestNamedStruct_DeepNesting_EnvVar(t *testing.T) {
 	defer func() { _ = os.Unsetenv("INFRA_PRIMARY_HOST") }()
 
 	var gotHost string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherCombine(ParamEnricherDefault, ParamEnricherEnv),
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -314,7 +314,7 @@ func TestNamedStruct_ExplicitEnvTag(t *testing.T) {
 
 	var gotHost string
 	var gotPort int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName, // no env enricher — rely on explicit tags
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -348,7 +348,7 @@ func TestNamedStruct_ExplicitNameGetsPrefixed(t *testing.T) {
 
 	var gotHost string
 	var gotPort int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -385,7 +385,7 @@ func TestNamedStruct_ExplicitEnvGetsPrefixed(t *testing.T) {
 	defer func() { _ = os.Unsetenv("REPLICA_HOST") }()
 
 	var gotPrimary, gotReplica string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -418,7 +418,7 @@ func TestNamedStruct_ExplicitEnvNoPrefixWhenEmbedded(t *testing.T) {
 	defer func() { _ = os.Unsetenv("MY_HOST") }()
 
 	var gotHost string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {

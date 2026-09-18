@@ -16,7 +16,7 @@ func TestNetIP_Required(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -39,7 +39,7 @@ func TestNetIP_Optional(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -65,7 +65,7 @@ func TestNetIP_IPv6(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -88,7 +88,7 @@ func TestNetIP_IPv6Full(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -111,7 +111,7 @@ func TestNetIP_Raw(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -136,7 +136,7 @@ func TestNetIP_EnvVar(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -173,7 +173,7 @@ func TestNetIP_ParseFormats(t *testing.T) {
 		t.Run(tc.input, func(t *testing.T) {
 			wasRun := false
 
-			CmdT[Params]{
+			Cmd[Params]{
 				Use: "test",
 				RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 					wasRun = true

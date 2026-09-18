@@ -21,12 +21,12 @@ type OtherParams struct {
 }
 
 func main() {
-	boa.CmdT[boa.NoParams]{
+	boa.Cmd[boa.NoParams]{
 		Use:   "hello-world",
 		Short: "a generic cli tool",
 		Long:  "A generic cli tool that has a longer description",
 		SubCmds: boa.SubCmds(
-			boa.CmdT[SubParams]{
+			boa.Cmd[SubParams]{
 				Use:   "subcommand1",
 				Short: "a subcommand",
 				RunFunc: func(params *SubParams, cmd *cobra.Command, args []string) {
@@ -34,7 +34,7 @@ func main() {
 						params.Foo, params.Bar, params.Path, params.Baz)
 				},
 			},
-			boa.CmdT[OtherParams]{
+			boa.Cmd[OtherParams]{
 				Use:   "subcommand2",
 				Short: "a subcommand",
 				RunFunc: func(params *OtherParams, cmd *cobra.Command, args []string) {

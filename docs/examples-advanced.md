@@ -57,7 +57,7 @@ func main() {
         Format: func(v SemVer) string { return v.String() },
     })
 
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "release",
         Short: "Create a release",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -143,7 +143,7 @@ func main() {
         Format: func(l LogLevel) string { return l.String() },
     })
 
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "logger",
         Short: "Demo custom log level type",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -189,7 +189,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "deploy",
         Short: "Deploy with labels and ports",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -265,7 +265,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "matrix",
         Short: "Process a data matrix",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -341,7 +341,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "db",
         Short: "Database connection manager",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -433,11 +433,11 @@ type GetParams struct {
 }
 
 func main() {
-    boa.CmdT[boa.NoParams]{
+    boa.Cmd[boa.NoParams]{
         Use:   "items",
         Short: "Manage items",
         SubCmds: boa.SubCmds(
-            boa.CmdT[ListParams]{
+            boa.Cmd[ListParams]{
                 Use:   "list",
                 Short: "List items",
                 RunFunc: func(p *ListParams, cmd *cobra.Command, args []string) {
@@ -445,7 +445,7 @@ func main() {
                         p.Limit, p.Format, p.Verbose)
                 },
             },
-            boa.CmdT[GetParams]{
+            boa.Cmd[GetParams]{
                 Use:   "get",
                 Short: "Get an item",
                 RunFunc: func(p *GetParams, cmd *cobra.Command, args []string) {
@@ -504,11 +504,11 @@ type ListParams struct {
 }
 
 func main() {
-    boa.CmdT[boa.NoParams]{
+    boa.Cmd[boa.NoParams]{
         Use:   "inventory",
         Short: "Manage inventory items",
         SubCmds: boa.SubCmds(
-            boa.CmdT[AddParams]{
+            boa.Cmd[AddParams]{
                 Use:     "add",
                 Short:   "Add an item",
                 Aliases: []string{"a"},
@@ -516,7 +516,7 @@ func main() {
                     fmt.Printf("Added %d x %s\n", p.Count, p.Name)
                 },
             },
-            boa.CmdT[RemoveParams]{
+            boa.Cmd[RemoveParams]{
                 Use:     "remove",
                 Short:   "Remove an item",
                 Aliases: []string{"rm"},
@@ -528,7 +528,7 @@ func main() {
                     }
                 },
             },
-            boa.CmdT[ListParams]{
+            boa.Cmd[ListParams]{
                 Use:     "list",
                 Short:   "List items",
                 Aliases: []string{"ls"},
@@ -566,15 +566,15 @@ Available Commands:
 ### Nested Subcommands
 
 ```go
-boa.CmdT[boa.NoParams]{
+boa.Cmd[boa.NoParams]{
     Use: "app",
     SubCmds: boa.SubCmds(
-        boa.CmdT[boa.NoParams]{
+        boa.Cmd[boa.NoParams]{
             Use:   "cluster",
             Short: "Cluster management",
             SubCmds: boa.SubCmds(
-                boa.CmdT[CreateParams]{Use: "create", ...},
-                boa.CmdT[DeleteParams]{Use: "delete", ...},
+                boa.Cmd[CreateParams]{Use: "create", ...},
+                boa.Cmd[DeleteParams]{Use: "delete", ...},
             ),
         },
     ),
@@ -590,17 +590,17 @@ $ go run . cluster create --name my-cluster
 Organize subcommands into named groups in help output:
 
 ```go
-boa.CmdT[boa.NoParams]{
+boa.Cmd[boa.NoParams]{
     Use: "app",
     Groups: []*cobra.Group{
         {ID: "core", Title: "Core Commands:"},
         {ID: "util", Title: "Utility Commands:"},
     },
     SubCmds: boa.SubCmds(
-        boa.CmdT[boa.NoParams]{Use: "init", GroupID: "core", ...},
-        boa.CmdT[boa.NoParams]{Use: "run", GroupID: "core", ...},
-        boa.CmdT[boa.NoParams]{Use: "version", GroupID: "util", ...},
-        boa.CmdT[boa.NoParams]{Use: "config", GroupID: "util", ...},
+        boa.Cmd[boa.NoParams]{Use: "init", GroupID: "core", ...},
+        boa.Cmd[boa.NoParams]{Use: "run", GroupID: "core", ...},
+        boa.Cmd[boa.NoParams]{Use: "version", GroupID: "util", ...},
+        boa.Cmd[boa.NoParams]{Use: "config", GroupID: "util", ...},
     ),
 }
 ```
@@ -629,7 +629,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "server",
         Short: "Start with validated params",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -721,7 +721,7 @@ $ go run . --port 0
 
 ## Custom Validators
 
-Use `SetCustomValidatorT` in `InitFuncCtx` for validation logic beyond what tags offer.
+Use `SetCustomValidator` in `InitFuncCtx` for validation logic beyond what tags offer.
 
 ```go
 package main
@@ -740,20 +740,20 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "server",
         Short: "Server with custom validation",
         InitFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command) error {
-            portParam := boa.GetParamT(ctx, &p.Port)
-            portParam.SetCustomValidatorT(func(port int) error {
+            portParam := boa.Param(ctx, &p.Port)
+            portParam.SetCustomValidator(func(port int) error {
                 if port < 1024 && port != 80 && port != 443 {
                     return fmt.Errorf("non-standard privileged port %d (use 80, 443, or >= 1024)", port)
                 }
                 return nil
             })
 
-            cidrParam := boa.GetParamT(ctx, &p.CIDR)
-            cidrParam.SetCustomValidatorT(func(cidr string) error {
+            cidrParam := boa.Param(ctx, &p.CIDR)
+            cidrParam.SetCustomValidator(func(cidr string) error {
                 if cidr == "" {
                     return nil
                 }
@@ -807,14 +807,14 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "ingest",
         Short: "Ingest data from various sources",
         InitFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command) error {
-            ctx.GetParam(&p.FilePath).SetRequiredFn(func() bool {
+            boa.Param(ctx, &p.FilePath).SetRequiredFn(func() bool {
                 return p.Mode == "file"
             })
-            ctx.GetParam(&p.URL).SetRequiredFn(func() bool {
+            boa.Param(ctx, &p.URL).SetRequiredFn(func() bool {
                 return p.Mode == "http"
             })
             return nil
@@ -861,14 +861,14 @@ type Params struct {
     TraceFile string `descr:"Trace output file" optional:"true"`
 }
 
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "server",
     InitFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command) error {
         // DebugPort and TraceFile only visible when Debug is true
-        ctx.GetParam(&p.DebugPort).SetIsEnabledFn(func() bool {
+        boa.Param(ctx, &p.DebugPort).SetIsEnabledFn(func() bool {
             return p.Debug
         })
-        ctx.GetParam(&p.TraceFile).SetIsEnabledFn(func() bool {
+        boa.Param(ctx, &p.TraceFile).SetIsEnabledFn(func() bool {
             return p.Debug
         })
         return nil
@@ -914,18 +914,18 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "app",
         Short: "App with dynamic completion",
         InitFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command) error {
-            ctx.GetParam(&p.Config).SetAlternativesFunc(
+            boa.Param(ctx, &p.Config).SetAlternativesFunc(
                 func(cmd *cobra.Command, args []string, toComplete string) []string {
                     // List JSON files in the current directory
                     matches, _ := filepath.Glob("*.json")
                     return matches
                 },
             )
-            ctx.GetParam(&p.Config).SetStrictAlts(false) // suggestions only
+            boa.Param(ctx, &p.Config).SetStrictAlts(false) // suggestions only
             return nil
         },
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -940,7 +940,7 @@ func main() {
 For positional argument completion:
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "deploy",
     ValidArgsFunc: func(p *Params, cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
         if len(args) == 0 {
@@ -973,19 +973,19 @@ type ServerConfig struct {
 
 // InitCtx runs during initialization -- configure defaults and validation
 func (c *ServerConfig) InitCtx(ctx *boa.HookContext) error {
-    ctx.GetParam(&c.Host).SetDefault(boa.Default("localhost"))
+    boa.Param(ctx, &c.Host).SetDefault("localhost")
 
-    portParam := boa.GetParamT(ctx, &c.Port)
-    portParam.SetDefaultT(8080)
-    portParam.SetCustomValidatorT(func(port int) error {
+    portParam := boa.Param(ctx, &c.Port)
+    portParam.SetDefault(8080)
+    portParam.SetCustomValidator(func(port int) error {
         if port < 1 || port > 65535 {
             return fmt.Errorf("port must be between 1 and 65535")
         }
         return nil
     })
 
-    logParam := ctx.GetParam(&c.LogLevel)
-    logParam.SetDefault(boa.Default("info"))
+    logParam := boa.Param(ctx, &c.LogLevel)
+    logParam.SetDefault("info")
     logParam.SetAlternatives([]string{"debug", "info", "warn", "error"})
     logParam.SetStrictAlts(true)
 
@@ -999,7 +999,7 @@ func (c *ServerConfig) PreExecute() error {
 }
 
 func main() {
-    boa.CmdT[ServerConfig]{
+    boa.Cmd[ServerConfig]{
         Use:   "server",
         Short: "Server with interface hooks",
         RunFunc: func(p *ServerConfig, cmd *cobra.Command, args []string) {
@@ -1043,7 +1043,7 @@ func TestMyCommand(t *testing.T) {
         Port int    `descr:"Port" default:"8080"`
     }
 
-    err := boa.CmdT[Params]{
+    err := boa.Cmd[Params]{
         Use: "test",
         RunFuncE: func(p *Params, cmd *cobra.Command, args []string) error {
             if p.Name != "alice" {
@@ -1072,7 +1072,7 @@ func TestValidation(t *testing.T) {
         Port int `descr:"Port" min:"1" max:"65535"`
     }
 
-    err := boa.CmdT[Params]{
+    err := boa.Cmd[Params]{
         Use:     "test",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
         RawArgs: []string{"--port", "0"},
@@ -1094,7 +1094,7 @@ func TestWithCobra(t *testing.T) {
         Name string
     }
 
-    cobraCmd, err := boa.CmdT[Params]{
+    cobraCmd, err := boa.Cmd[Params]{
         Use: "test",
         RunFuncE: func(p *Params, cmd *cobra.Command, args []string) error {
             return nil

@@ -1,6 +1,6 @@
 # Live Config Reload
 
-Long-running programs — servers, daemons, background workers — often want to re-read config without restarting. BOA ships a primitive for this: `boa.Reload[T](ctx) (*T, error)`. It re-runs the entire post-flag-parse pipeline — CLI → env → config files → defaults → validation — on a **freshly allocated** `*T` and returns it.
+Long-running programs — servers, daemons, background workers — often want to re-read config without restarting. BOA ships a primitive for this: `boa.Reload[T](ctx) (*T, error)`. It allocates a fresh `*T`, rebuilds that command's parameter bindings, restores its parsed CLI values, and runs source loading and validation.
 
 ## Quick Start
 
@@ -27,7 +27,7 @@ type Params struct {
 var active atomic.Pointer[Params]
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use: "server",
         RunFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command, args []string) {
             active.Store(p)
@@ -58,21 +58,21 @@ func main() {
 ## What Reload does
 
 1. **Allocates a fresh `*T`.** The struct you were handed in `RunFunc` is **not mutated**. Callers decide what to do with the new snapshot: atomic pointer swap, diff for "did the field I care about actually change?", notify subscribers, or discard entirely. BOA doesn't dictate a concurrency model.
-2. **Re-runs the full pipeline.** Defaults → env (re-read from the current process environment) → config files (re-read from disk) → CLI precedence (the original startup args still win) → validation → `PreValidate` hooks.
-3. **Skips `PreExecuteFunc` and the command's `RunFunc`** — a reload is value-sourcing, not command execution.
+2. **Re-runs setup and validation.** Init and PostCreate hooks run again, followed by restoring the original CLI values, env/config loading, PreValidate hooks, and field validation. CLI values retain precedence over env, config, and defaults.
+3. **Skips every PreExecute and Run hook**, including struct methods. Reload does not route to subcommands or reparent the original Cobra tree.
 
 ## Error Handling: Reload is All-or-Nothing
 
-`Reload` never mutates anything — every call is either a clean success (fresh `*T` returned) or a clean failure (`(nil, err)` returned and nothing else happens). The struct you're holding is a completely separate allocation that Reload can't see; your atomic swap target keeps pointing at whatever it was pointing at before.
+For a returned load or validation error, `Reload` returns `(nil, err)` and does not publish a new parameter pointer. Keep the previous pointer until a reload succeeds. Setup and PreValidate hooks can still change external state; those effects are not rolled back. Panics from hooks or API misuse are not recovered.
 
 | Failure | What the caller sees |
 |---|---|
-| **File parse error** (malformed JSON/YAML/TOML, truncated mid-write) | Error names the offending file. Nothing allocated, nothing swapped — the previous snapshot is still the live one. |
+| **File parse error** (malformed JSON/YAML/TOML, truncated mid-write) | Error names the offending file. The fresh struct is discarded; the caller keeps the previous snapshot. |
 | **Validation failure** (`min` / `max` / `pattern` / custom validator) | Error describes which field failed. Fresh struct is discarded before it ever leaves Reload. |
 | **File disappeared** | Clean read error naming the path. |
-| **PreValidate hook error** | Propagated as-is. |
+| **PreValidate hook error** | Returned with hook context; the original error remains available through error unwrapping. |
 
-This is deliberate so you can wire `Reload` to a noisy trigger — fsnotify fires 2–5 times per save on most editors — and safely ignore every error. Each failed attempt just logs and keeps serving the existing config:
+A file watcher can emit multiple events for one save. Log rejected reloads and keep serving the existing snapshot:
 
 ```go
 for range fileChanges {
@@ -87,9 +87,9 @@ for range fileChanges {
 
 ## What Reload does NOT do
 
-- **No fsnotify, no SIGHUP handler, no HTTP endpoint.** The primitive just answers "give me a fresh validated config now". Wire whatever trigger makes sense — `signal.Notify(syscall.SIGHUP)`, a timer, a tiny admin endpoint, fsnotify, a test harness. A higher-level watcher subpackage that wraps fsnotify with sane debouncing is planned as a follow-up.
-- **No concurrency coordination.** If your goroutines read from a shared `*Params`, you have to coordinate reads against whatever swap model you pick. `atomic.Pointer[T]` is the cleanest, but `sync.RWMutex` works too. BOA refuses to dictate sync for you.
-- **No deep merging**, no partial reload of a single file from a chain — the whole pipeline re-runs against the whole input set. Simplest semantics, easiest to reason about.
+- **No built-in trigger.** Supply a signal handler, timer, admin endpoint, or file watcher.
+- **No snapshot publication.** Calls through the same HookContext are serialized. Coordinate hooks that share state across different commands. Publish accepted snapshots with `atomic.Pointer[T]` or a mutex, and treat published snapshots as immutable.
+- **No partial reload of a file chain.** Source loading and validation run against the full input set.
 
 ## Which Files Get Watched?
 
@@ -97,12 +97,11 @@ for range fileChanges {
 
 ### Auto-tracked
 
-- Every `configfile:"true"` tagged field (single path or `[]string` overlay chain)
-- `Cmd.ConfigFormat` / `Cmd.ConfigUnmarshal` per-command escape hatches
+- Files loaded through a `configfile:"true"` field (single path or `[]string` overlay chain), including loads using a per-command `ConfigFormat` override.
 
 ### Not auto-tracked
 
-`boa.LoadConfigFile` / `LoadConfigFiles` / `LoadConfigBytes` called from inside a user hook — these are public helpers outside BOA's internal pipeline. Register those explicitly with `ctx.WatchConfigFile(path)` inside the same hook. The registration persists across reloads because the hook re-runs during the replay:
+`boa.LoadConfigFile` / `LoadConfigFiles` / `LoadConfigBytes` called from inside a user hook — these are public helpers outside BOA's internal pipeline. Register those explicitly with `ctx.WatchConfigFile(path)` inside the same hook. The hook re-registers the path in each replay's new context. A successful reload refreshes the original context's watched-file list. A failed reload leaves that list unchanged:
 
 ```go
 PreValidateFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command, args []string) error {
@@ -123,10 +122,12 @@ PreValidateFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command, ar
 | `PreValidateFunc` / `PreValidateFuncCtx` | ✅ |
 | `PreExecuteFunc` / `PreExecuteFuncCtx` | ❌ (no main action to run) |
 | `RunFunc` / `RunFuncCtx` / `RunFuncE` / `RunFuncCtxE` | ❌ (no main action to run) |
-| `CfgStructInit` / `CfgStructPreValidate` interface methods | ✅ |
-| `CfgStructPreExecute` interface methods | ❌ |
+| `CfgStructInit` / `CfgStructPostCreate` / `CfgStructPreValidate` and Ctx variants | ✅ |
+| `CfgStructPreExecute` / `CfgStructPreExecuteCtx` | ❌ |
 
-If you have state-heavy init you don't want re-run on reload, guard with a `sync.Once` or an "already initialized" sentinel inside the hook.
+Separate one-time application setup from configuration hooks. Each reload receives a fresh struct, so a sentinel stored in that struct does not survive replay.
+
+Reload captures parsed flags and positional arguments from the actual invocation, including leaf commands reached through a parent. Changes to `os.Args` do not affect replay. Inherited flags belong to the declaring command's parameters; reload each command's context when both need refreshing. Setup hooks receive the isolated command being rebuilt.
 
 ## Typical Triggers
 

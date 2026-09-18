@@ -16,7 +16,7 @@ func TestDuration_Required(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -38,7 +38,7 @@ func TestDuration_Optional(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -64,7 +64,7 @@ func TestDuration_WithDefault(t *testing.T) {
 
 		wasRun := false
 
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 				wasRun = true
@@ -86,7 +86,7 @@ func TestDuration_WithDefault(t *testing.T) {
 
 		wasRun := false
 
-		CmdT[Params]{
+		Cmd[Params]{
 			Use: "test",
 			RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 				wasRun = true
@@ -126,7 +126,7 @@ func TestDuration_ParseFormats(t *testing.T) {
 		t.Run(tc.input, func(t *testing.T) {
 			wasRun := false
 
-			CmdT[Params]{
+			Cmd[Params]{
 				Use: "test",
 				RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 					wasRun = true
@@ -150,7 +150,7 @@ func TestDuration_Raw(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -172,7 +172,7 @@ func TestDuration_RawWithDefault(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true
@@ -196,7 +196,7 @@ func TestDuration_EnvVar(t *testing.T) {
 
 	wasRun := false
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
 			wasRun = true

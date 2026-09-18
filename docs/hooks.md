@@ -25,7 +25,7 @@ func (c *MyConfig) Init() error {
 
 // With HookContext access
 func (c *MyConfig) InitCtx(ctx *boa.HookContext) error {
-    ctx.GetParam(&c.Host).SetDefault(boa.Default("localhost"))
+    boa.Param(ctx, &c.Host).SetDefault("localhost")
     return nil
 }
 ```
@@ -33,7 +33,7 @@ func (c *MyConfig) InitCtx(ctx *boa.HookContext) error {
 ### Function-based
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "cmd",
     InitFunc: func(params *Params, cmd *cobra.Command) error {
         return nil
@@ -41,10 +41,10 @@ boa.CmdT[Params]{
 }
 
 // With HookContext
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "cmd",
     InitFuncCtx: func(ctx *boa.HookContext, params *Params, cmd *cobra.Command) error {
-        ctx.GetParam(&params.Name).SetShort("n")
+        boa.Param(ctx, &params.Name).SetShort("n")
         return nil
     },
 }
@@ -71,7 +71,7 @@ func (c *MyConfig) PostCreateCtx(ctx *boa.HookContext) error {
 ### Function-based
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "cmd",
     PostCreateFuncCtx: func(ctx *boa.HookContext, params *Params, cmd *cobra.Command) error {
         flag := cmd.Flags().Lookup("my-flag")
@@ -104,7 +104,7 @@ func (c *MyConfig) PreValidateCtx(ctx *boa.HookContext) error {
 ### Function-based
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "cmd",
     PreValidateFunc: func(params *Params, cmd *cobra.Command, args []string) error {
         return nil
@@ -128,7 +128,7 @@ func (c *MyConfig) PreExecute() error {
 ### Function-based
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "cmd",
     PreExecuteFunc: func(params *Params, cmd *cobra.Command, args []string) error {
         return nil
@@ -138,22 +138,20 @@ boa.CmdT[Params]{
 
 ## HookContext
 
-The `HookContext` provides access to parameter mirrors for advanced configuration:
+`HookContext` provides access to the fields registered for the current command:
 
-- `GetParam(fieldPtr any) Param` - Get the Param interface for any field
-- `HasValue(fieldPtr any) bool` - Check if a parameter has a value
-- `AllMirrors() []Param` - Get all auto-generated parameter mirrors
+- `boa.Param(ctx, &params.Field)` returns a type-safe `*boa.Field[T]`.
+- `ctx.HasValue(&params.Field)` reports whether a source supplied a value.
+- `ctx.AllMirrors()` returns `[]boa.Parameter` for bulk inspection or configuration.
 
-### Typed Parameter Access
-
-For type-safe parameter configuration, use `boa.GetParamT[T]()` to get a typed view:
+### Field Access
 
 ```go
 func (c *ServerConfig) InitCtx(ctx *boa.HookContext) error {
-    // Type-safe: SetDefaultT takes int, SetCustomValidatorT takes func(int) error
-    portParam := boa.GetParamT(ctx, &c.Port)
-    portParam.SetDefaultT(8080)
-    portParam.SetCustomValidatorT(func(port int) error {
+    // Type-safe: SetDefault takes int, SetCustomValidator takes func(int) error
+    portParam := boa.Param(ctx, &c.Port)
+    portParam.SetDefault(8080)
+    portParam.SetCustomValidator(func(port int) error {
         if port < 1 || port > 65535 {
             return fmt.Errorf("port must be between 1 and 65535")
         }
@@ -163,12 +161,14 @@ func (c *ServerConfig) InitCtx(ctx *boa.HookContext) error {
 }
 ```
 
-The `ParamT[T]` interface provides both typed and pass-through methods:
+`*boa.Field[T]` embeds `boa.Parameter`, so it combines type-safe operations with general metadata methods:
 
 | Typed Methods | Description |
 |---------------|-------------|
-| `SetDefaultT(T)` | Set default value with type safety |
-| `SetCustomValidatorT(func(T) error)` | Set typed validation function |
+| `SetDefault(T)` | Set default value with type safety |
+| `SetCustomValidator(func(T) error)` | Set typed validation function |
+| `SetMin(T)`, `SetMax(T)` | Set numeric bounds |
+| `SetMinLen(int)`, `SetMaxLen(int)` | Set length bounds on strings, slices, and maps |
 
 | Pass-through Methods | Description |
 |---------------------|-------------|
@@ -180,7 +180,6 @@ The `ParamT[T]` interface provides both typed and pass-through methods:
 | `SetName(string)` | Set flag name |
 | `SetIsEnabledFn(func() bool)` | Dynamic visibility |
 | `SetRequiredFn(func() bool)` | Dynamic required condition |
-| `Param()` | Access underlying untyped Param |
 
 ### Example: Programmatic Configuration
 
@@ -192,16 +191,16 @@ type ServerConfig struct {
 }
 
 func (c *ServerConfig) InitCtx(ctx *boa.HookContext) error {
-    hostParam := ctx.GetParam(&c.Host)
-    hostParam.SetDefault(boa.Default("localhost"))
+    hostParam := boa.Param(ctx, &c.Host)
+    hostParam.SetDefault("localhost")
     hostParam.SetEnv("SERVER_HOST")
 
-    portParam := ctx.GetParam(&c.Port)
-    portParam.SetDefault(boa.Default(8080))
+    portParam := boa.Param(ctx, &c.Port)
+    portParam.SetDefault(8080)
     portParam.SetEnv("SERVER_PORT")
 
-    logParam := ctx.GetParam(&c.LogLevel)
-    logParam.SetDefault(boa.Default("info"))
+    logParam := boa.Param(ctx, &c.LogLevel)
+    logParam.SetDefault("info")
     logParam.SetAlternatives([]string{"debug", "info", "warn", "error"})
     logParam.SetStrictAlts(true)
 
@@ -218,7 +217,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use: "server",
         RunFuncCtx: func(ctx *boa.HookContext, params *Params, cmd *cobra.Command, args []string) {
             if ctx.HasValue(&params.Port) {
@@ -239,7 +238,7 @@ func main() {
 All lifecycle hooks return errors. When using `Run()`, hook errors cause panics. When using `RunE()`, hook errors are returned for programmatic handling.
 
 ```go
-err := boa.CmdT[Params]{
+err := boa.Cmd[Params]{
     Use: "cmd",
     InitFunc: func(p *Params, cmd *cobra.Command) error {
         return fmt.Errorf("init failed")

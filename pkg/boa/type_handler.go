@@ -1,6 +1,7 @@
 package boa
 
 import (
+	"encoding"
 	"encoding/csv"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	"github.com/spf13/pflag"
 )
 
 // typeHandler defines how a specific Go type is handled as a CLI parameter.
@@ -33,6 +35,7 @@ type typeHandler struct {
 	// baseType is the canonical Go type, used by normalizeType().
 	// e.g., for time.Duration this is reflect.TypeOf(time.Duration(0))
 	baseType reflect.Type
+	format   func(reflect.Value) string
 }
 
 // typeHandlerRegistry maps reflect.Type → handler for special types (time.Time, net.IP, etc.)
@@ -45,9 +48,6 @@ var (
 	// Used for []time.Duration, []time.Time, []net.IP, []*url.URL.
 	sliceExactTypeHandlers = map[reflect.Type]*typeHandler{}
 	sliceKindHandlers      = map[reflect.Kind]*typeHandler{}
-
-	// mapTypeHandlers maps the exact map type (e.g., map[string]string) to a handler.
-	mapTypeHandlers = map[reflect.Type]*typeHandler{}
 )
 
 func init() {
@@ -66,7 +66,8 @@ type TypeDef[T any] struct {
 
 // RegisterType registers a custom type for use as a CLI parameter.
 // The type will be stored as a string flag in cobra and converted using
-// the provided Parse/Format functions.
+// the provided Parse/Format functions. Call RegisterType during setup, before
+// constructing commands or decoding config concurrently.
 //
 // Example:
 //
@@ -75,664 +76,210 @@ type TypeDef[T any] struct {
 //	    Format: func(v SemVer) string { return v.String() },
 //	})
 func RegisterType[T any](def TypeDef[T]) {
-	t := reflect.TypeOf((*T)(nil)).Elem()
-	formatFn := def.Format
-	if formatFn == nil {
-		formatFn = func(v T) string { return fmt.Sprintf("%v", v) }
+	if def.Parse == nil {
+		panic("boa: TypeDef.Parse must not be nil")
 	}
+	exactTypeHandlers[reflect.TypeFor[T]()] = stringHandler(def)
+}
 
-	exactTypeHandlers[t] = &typeHandler{
-		baseType: t,
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := ""
-			if defaultVal != nil {
-				v := reflect.ValueOf(defaultVal)
-				if v.Kind() == reflect.Pointer && !v.IsNil() {
-					def = formatFn(v.Elem().Interface().(T))
-				}
-			}
-			return cmd.Flags().StringP(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			v, err := def.Parse(strVal)
-			if err != nil {
-				return nil, fmt.Errorf("invalid value for param %s: %w", name, err)
-			}
-			return &v, nil
-		},
-		convert: func(name string, val any) (any, error) {
-			if strPtr, ok := val.(*string); ok {
-				if *strPtr == "" {
-					var zero T
-					return &zero, nil
-				}
-				v, err := def.Parse(*strPtr)
-				if err != nil {
-					return nil, fmt.Errorf("invalid value for param '%s': %w", name, err)
-				}
-				return &v, nil
-			}
-			return val, nil // already converted
-		},
+func stringHandler[T any](def TypeDef[T]) *typeHandler {
+	return parsedStringHandler(reflect.TypeFor[T](), func(text string) (reflect.Value, error) {
+		value, err := def.Parse(text)
+		return reflect.ValueOf(&value).Elem(), err
+	}, func(value reflect.Value) string {
+		if def.Format != nil {
+			return def.Format(value.Interface().(T))
+		}
+		return fmt.Sprint(value.Interface())
+	})
+}
+
+func parsedStringHandler(t reflect.Type, parse func(string) (reflect.Value, error), format func(reflect.Value) string) *typeHandler {
+	h := &typeHandler{baseType: t, format: format}
+	h.parse = func(name, text string) (any, error) {
+		value, err := parse(text)
+		if err != nil {
+			return nil, fmt.Errorf("invalid value for param %s: %w", name, err)
+		}
+		result := reflect.New(t)
+		result.Elem().Set(value)
+		return result.Interface(), nil
 	}
+	h.bindFlag = func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
+		var text string
+		if defaultVal != nil {
+			text = format(reflect.ValueOf(defaultVal).Elem())
+		}
+		return cmd.Flags().StringP(name, short, text, descr)
+	}
+	h.convert = func(name string, value any) (any, error) {
+		if text, ok := value.(*string); ok {
+			return h.parse(name, *text)
+		}
+		return value, nil
+	}
+	return h
+}
+
+var textUnmarshalerType = reflect.TypeFor[encoding.TextUnmarshaler]()
+
+func textHandler(t reflect.Type) *typeHandler {
+	if t.Kind() == reflect.Pointer || !reflect.PointerTo(t).Implements(textUnmarshalerType) {
+		return nil
+	}
+	return parsedStringHandler(t, func(text string) (reflect.Value, error) {
+		value := reflect.New(t)
+		err := value.Interface().(encoding.TextUnmarshaler).UnmarshalText([]byte(text))
+		return value.Elem(), err
+	}, func(value reflect.Value) string {
+		if marshaler, ok := value.Addr().Interface().(encoding.TextMarshaler); ok {
+			if text, err := marshaler.MarshalText(); err == nil {
+				return string(text)
+			}
+		}
+		return fmt.Sprint(value.Interface())
+	})
 }
 
 func registerBuiltinTypes() {
-	// --- Basic types (by kind) ---
-
-	kindHandlers[reflect.String] = &typeHandler{
-		baseType: reflect.TypeOf(""),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := ""
-			if defaultVal != nil {
-				def = reflect.ValueOf(defaultVal).Elem().Convert(reflect.TypeOf(def)).Interface().(string)
-			}
-			return cmd.Flags().StringP(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			return &strVal, nil
-		},
+	kindHandlers = map[reflect.Kind]*typeHandler{
+		reflect.String:  nativeHandler((*pflag.FlagSet).StringP, parseString),
+		reflect.Bool:    nativeHandler((*pflag.FlagSet).BoolP, strconv.ParseBool),
+		reflect.Int:     nativeHandler((*pflag.FlagSet).IntP, parseSigned[int]),
+		reflect.Int8:    nativeHandler((*pflag.FlagSet).Int8P, parseSigned[int8]),
+		reflect.Int16:   nativeHandler((*pflag.FlagSet).Int16P, parseSigned[int16]),
+		reflect.Int32:   nativeHandler((*pflag.FlagSet).Int32P, parseSigned[int32]),
+		reflect.Int64:   nativeHandler((*pflag.FlagSet).Int64P, parseSigned[int64]),
+		reflect.Uint:    nativeHandler((*pflag.FlagSet).UintP, parseUnsigned[uint]),
+		reflect.Uint8:   nativeHandler((*pflag.FlagSet).Uint8P, parseUnsigned[uint8]),
+		reflect.Uint16:  nativeHandler((*pflag.FlagSet).Uint16P, parseUnsigned[uint16]),
+		reflect.Uint32:  nativeHandler((*pflag.FlagSet).Uint32P, parseUnsigned[uint32]),
+		reflect.Uint64:  nativeHandler((*pflag.FlagSet).Uint64P, parseUnsigned[uint64]),
+		reflect.Float32: nativeHandler((*pflag.FlagSet).Float32P, parseFloat[float32]),
+		reflect.Float64: nativeHandler((*pflag.FlagSet).Float64P, parseFloat[float64]),
 	}
-
-	kindHandlers[reflect.Int] = &typeHandler{
-		baseType: reflect.TypeOf(0),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := 0
-			if defaultVal != nil {
-				def = int(reflect.ValueOf(defaultVal).Elem().Int())
-			}
-			return cmd.Flags().IntP(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			v, err := strconv.Atoi(strVal)
-			if err != nil {
-				return nil, fmt.Errorf("invalid value for param %s: %s", name, err.Error())
-			}
-			return &v, nil
-		},
-	}
-
-	kindHandlers[reflect.Int32] = &typeHandler{
-		baseType: reflect.TypeOf(int32(0)),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := int32(0)
-			if defaultVal != nil {
-				def = int32(reflect.ValueOf(defaultVal).Elem().Int())
-			}
-			return cmd.Flags().Int32P(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			v, err := strconv.ParseInt(strVal, 10, 32)
-			if err != nil {
-				return nil, fmt.Errorf("invalid value for param %s: %s", name, err.Error())
-			}
-			result := int32(v)
-			return &result, nil
-		},
-	}
-
-	kindHandlers[reflect.Int64] = &typeHandler{
-		baseType: reflect.TypeOf(int64(0)),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := int64(0)
-			if defaultVal != nil {
-				def = reflect.ValueOf(defaultVal).Elem().Int()
-			}
-			return cmd.Flags().Int64P(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			v, err := strconv.ParseInt(strVal, 10, 64)
-			if err != nil {
-				return nil, fmt.Errorf("invalid value for param %s: %s", name, err.Error())
-			}
-			return &v, nil
-		},
-	}
-
-	kindHandlers[reflect.Int8] = &typeHandler{
-		baseType: reflect.TypeOf(int8(0)),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := int8(0)
-			if defaultVal != nil {
-				def = int8(reflect.ValueOf(defaultVal).Elem().Int())
-			}
-			return cmd.Flags().Int8P(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			v, err := strconv.ParseInt(strVal, 10, 8)
-			if err != nil {
-				return nil, fmt.Errorf("invalid value for param %s: %s", name, err.Error())
-			}
-			result := int8(v)
-			return &result, nil
-		},
-	}
-
-	kindHandlers[reflect.Int16] = &typeHandler{
-		baseType: reflect.TypeOf(int16(0)),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := int16(0)
-			if defaultVal != nil {
-				def = int16(reflect.ValueOf(defaultVal).Elem().Int())
-			}
-			return cmd.Flags().Int16P(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			v, err := strconv.ParseInt(strVal, 10, 16)
-			if err != nil {
-				return nil, fmt.Errorf("invalid value for param %s: %s", name, err.Error())
-			}
-			result := int16(v)
-			return &result, nil
-		},
-	}
-
-	kindHandlers[reflect.Uint] = &typeHandler{
-		baseType: reflect.TypeOf(uint(0)),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := uint(0)
-			if defaultVal != nil {
-				def = uint(reflect.ValueOf(defaultVal).Elem().Uint())
-			}
-			return cmd.Flags().UintP(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			v, err := strconv.ParseUint(strVal, 10, 0)
-			if err != nil {
-				return nil, fmt.Errorf("invalid value for param %s: %s", name, err.Error())
-			}
-			result := uint(v)
-			return &result, nil
-		},
-	}
-
-	kindHandlers[reflect.Uint8] = &typeHandler{
-		baseType: reflect.TypeOf(uint8(0)),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := uint8(0)
-			if defaultVal != nil {
-				def = uint8(reflect.ValueOf(defaultVal).Elem().Uint())
-			}
-			return cmd.Flags().Uint8P(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			v, err := strconv.ParseUint(strVal, 10, 8)
-			if err != nil {
-				return nil, fmt.Errorf("invalid value for param %s: %s", name, err.Error())
-			}
-			result := uint8(v)
-			return &result, nil
-		},
-	}
-
-	kindHandlers[reflect.Uint16] = &typeHandler{
-		baseType: reflect.TypeOf(uint16(0)),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := uint16(0)
-			if defaultVal != nil {
-				def = uint16(reflect.ValueOf(defaultVal).Elem().Uint())
-			}
-			return cmd.Flags().Uint16P(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			v, err := strconv.ParseUint(strVal, 10, 16)
-			if err != nil {
-				return nil, fmt.Errorf("invalid value for param %s: %s", name, err.Error())
-			}
-			result := uint16(v)
-			return &result, nil
-		},
-	}
-
-	kindHandlers[reflect.Uint32] = &typeHandler{
-		baseType: reflect.TypeOf(uint32(0)),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := uint32(0)
-			if defaultVal != nil {
-				def = uint32(reflect.ValueOf(defaultVal).Elem().Uint())
-			}
-			return cmd.Flags().Uint32P(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			v, err := strconv.ParseUint(strVal, 10, 32)
-			if err != nil {
-				return nil, fmt.Errorf("invalid value for param %s: %s", name, err.Error())
-			}
-			result := uint32(v)
-			return &result, nil
-		},
-	}
-
-	kindHandlers[reflect.Uint64] = &typeHandler{
-		baseType: reflect.TypeOf(uint64(0)),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := uint64(0)
-			if defaultVal != nil {
-				def = reflect.ValueOf(defaultVal).Elem().Uint()
-			}
-			return cmd.Flags().Uint64P(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			v, err := strconv.ParseUint(strVal, 10, 64)
-			if err != nil {
-				return nil, fmt.Errorf("invalid value for param %s: %s", name, err.Error())
-			}
-			return &v, nil
-		},
-	}
-
-	kindHandlers[reflect.Float32] = &typeHandler{
-		baseType: reflect.TypeOf(float32(0)),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := float32(0)
-			if defaultVal != nil {
-				def = float32(reflect.ValueOf(defaultVal).Elem().Float())
-			}
-			return cmd.Flags().Float32P(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			v, err := strconv.ParseFloat(strVal, 32)
-			if err != nil {
-				return nil, fmt.Errorf("invalid value for param %s: %s", name, err.Error())
-			}
-			result := float32(v)
-			return &result, nil
-		},
-	}
-
-	kindHandlers[reflect.Float64] = &typeHandler{
-		baseType: reflect.TypeOf(float64(0)),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := float64(0)
-			if defaultVal != nil {
-				def = reflect.ValueOf(defaultVal).Elem().Float()
-			}
-			return cmd.Flags().Float64P(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			v, err := strconv.ParseFloat(strVal, 64)
-			if err != nil {
-				return nil, fmt.Errorf("invalid value for param %s: %s", name, err.Error())
-			}
-			return &v, nil
-		},
-	}
-
-	kindHandlers[reflect.Bool] = &typeHandler{
-		baseType: reflect.TypeOf(false),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := false
-			if defaultVal != nil {
-				def = reflect.ValueOf(defaultVal).Elem().Bool()
-			}
-			return cmd.Flags().BoolP(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			v, err := strconv.ParseBool(strVal)
-			if err != nil {
-				return nil, fmt.Errorf("invalid value for param %s: %s", name, err.Error())
-			}
-			return &v, nil
-		},
-	}
-
 	// --- Special types (by exact type) ---
 
-	exactTypeHandlers[durationType] = &typeHandler{
-		baseType: durationType,
+	exactTypeHandlers[durationType] = nativeHandler((*pflag.FlagSet).DurationP, time.ParseDuration)
+	exactTypeHandlers[ipType] = nativeHandler((*pflag.FlagSet).IPP, parseIP)
+	exactTypeHandlers[timeType] = stringHandler(TypeDef[time.Time]{Parse: parseTimeString, Format: func(t time.Time) string { return t.Format(time.RFC3339) }})
+	exactTypeHandlers[urlPtrType] = stringHandler(TypeDef[*url.URL]{Parse: func(text string) (*url.URL, error) {
+		if text == "" {
+			return nil, nil
+		}
+		return url.Parse(text)
+	}, Format: func(value *url.URL) string {
+		if value == nil {
+			return ""
+		}
+		return value.String()
+	}})
+
+	sliceExactTypeHandlers[ipType] = nativeSliceHandler((*pflag.FlagSet).IPSliceP, parseIP)
+	sliceExactTypeHandlers[durationType] = nativeSliceHandler((*pflag.FlagSet).DurationSliceP, time.ParseDuration)
+
+	sliceKindHandlers = map[reflect.Kind]*typeHandler{
+		reflect.String:  nativeSliceHandler((*pflag.FlagSet).StringSliceP, parseString),
+		reflect.Bool:    nativeSliceHandler((*pflag.FlagSet).BoolSliceP, strconv.ParseBool),
+		reflect.Int:     nativeSliceHandler((*pflag.FlagSet).IntSliceP, parseSigned[int]),
+		reflect.Int32:   nativeSliceHandler((*pflag.FlagSet).Int32SliceP, parseSigned[int32]),
+		reflect.Int64:   nativeSliceHandler((*pflag.FlagSet).Int64SliceP, parseSigned[int64]),
+		reflect.Uint:    nativeSliceHandler((*pflag.FlagSet).UintSliceP, parseUnsigned[uint]),
+		reflect.Float32: nativeSliceHandler((*pflag.FlagSet).Float32SliceP, parseFloat[float32]),
+		reflect.Float64: nativeSliceHandler((*pflag.FlagSet).Float64SliceP, parseFloat[float64]),
+		reflect.Int8:    makeIntSliceFallbackHandler(reflect.TypeFor[int8](), "int8Slice", parseSigned[int8], formatScalar[int8]),
+		reflect.Int16:   makeIntSliceFallbackHandler(reflect.TypeFor[int16](), "int16Slice", parseSigned[int16], formatScalar[int16]),
+		reflect.Uint8:   makeIntSliceFallbackHandler(reflect.TypeFor[uint8](), "uint8Slice", parseUnsigned[uint8], formatScalar[uint8]),
+		reflect.Uint16:  makeIntSliceFallbackHandler(reflect.TypeFor[uint16](), "uint16Slice", parseUnsigned[uint16], formatScalar[uint16]),
+		reflect.Uint32:  makeIntSliceFallbackHandler(reflect.TypeFor[uint32](), "uint32Slice", parseUnsigned[uint32], formatScalar[uint32]),
+		reflect.Uint64:  makeIntSliceFallbackHandler(reflect.TypeFor[uint64](), "uint64Slice", parseUnsigned[uint64], formatScalar[uint64]),
+	}
+}
+
+// nativeHandler retains pflag's native value types while sharing default and
+// string conversion. Named Go scalar types use the same underlying parser.
+func nativeHandler[T any](bind func(*pflag.FlagSet, string, string, T, string) *T, parse func(string) (T, error)) *typeHandler {
+	return &typeHandler{
+		baseType: reflect.TypeFor[T](),
 		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := time.Duration(0)
+			var def T
 			if defaultVal != nil {
-				def = time.Duration(reflect.ValueOf(defaultVal).Elem().Int())
+				def = reflect.ValueOf(defaultVal).Elem().Convert(reflect.TypeFor[T]()).Interface().(T)
 			}
-			return cmd.Flags().DurationP(name, short, def, descr)
+			return bind(cmd.Flags(), name, short, def, descr)
 		},
-		parse: func(name, strVal string) (any, error) {
-			v, err := time.ParseDuration(strVal)
+		parse: func(name, text string) (any, error) {
+			value, err := parse(text)
 			if err != nil {
-				return nil, fmt.Errorf("invalid value for param %s: %s", name, err.Error())
+				return nil, fmt.Errorf("invalid value for param %s: %w", name, err)
 			}
-			return &v, nil
-		},
-	}
-
-	exactTypeHandlers[timeType] = &typeHandler{
-		baseType: timeType,
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := ""
-			if defaultVal != nil {
-				t := reflect.ValueOf(defaultVal).Elem().Interface().(time.Time)
-				def = t.Format(time.RFC3339)
-			}
-			return cmd.Flags().StringP(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			v, err := parseTimeString(strVal)
-			if err != nil {
-				return nil, fmt.Errorf("invalid value for param %s: %s", name, err.Error())
-			}
-			return &v, nil
-		},
-		convert: func(name string, val any) (any, error) {
-			if strPtr, ok := val.(*string); ok {
-				v, err := parseTimeString(*strPtr)
-				if err != nil {
-					return nil, fmt.Errorf("invalid value for param '%s': %s", name, err.Error())
-				}
-				return &v, nil
-			}
-			return val, nil // already a *time.Time (e.g., from struct literal)
-		},
-	}
-
-	exactTypeHandlers[ipType] = &typeHandler{
-		baseType: ipType,
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			var def net.IP
-			if defaultVal != nil {
-				def = reflect.ValueOf(defaultVal).Elem().Interface().(net.IP)
-			}
-			return cmd.Flags().IPP(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			v := net.ParseIP(strVal)
-			if v == nil {
-				return nil, fmt.Errorf("invalid IP address for param %s: %s", name, strVal)
-			}
-			return &v, nil
-		},
-	}
-
-	exactTypeHandlers[urlPtrType] = &typeHandler{
-		baseType: urlPtrType,
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := ""
-			if defaultVal != nil {
-				defVal := reflect.ValueOf(defaultVal).Elem()
-				if !defVal.IsNil() {
-					def = defVal.Interface().(*url.URL).String()
-				}
-			}
-			return cmd.Flags().StringP(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			if strVal == "" {
-				return (*url.URL)(nil), nil
-			}
-			v, err := url.Parse(strVal)
-			if err != nil {
-				return nil, fmt.Errorf("invalid URL for param %s: %s", name, err.Error())
-			}
-			return &v, nil
-		},
-		convert: func(name string, val any) (any, error) {
-			if strPtr, ok := val.(*string); ok {
-				v, err := url.Parse(*strPtr)
-				if err != nil {
-					return nil, fmt.Errorf("invalid value for param '%s': %s", name, err.Error())
-				}
-				return &v, nil
-			}
-			return val, nil // already converted
-		},
-	}
-
-	// --- Slice types (by element type) ---
-
-	// []net.IP
-	sliceExactTypeHandlers[ipType] = &typeHandler{
-		baseType: reflect.SliceOf(ipType),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			var def []net.IP
-			if defaultVal != nil {
-				def = reflect.ValueOf(defaultVal).Elem().Interface().([]net.IP)
-			}
-			return cmd.Flags().IPSliceP(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			return parseSliceWith(strVal, func(s string) (net.IP, error) {
-				v := net.ParseIP(s)
-				if v == nil {
-					return nil, fmt.Errorf("invalid IP for param %s: %s", name, s)
-				}
-				return v, nil
-			})
-		},
-	}
-
-	// []time.Duration
-	sliceExactTypeHandlers[durationType] = &typeHandler{
-		baseType: reflect.SliceOf(durationType),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			var def []time.Duration
-			if defaultVal != nil {
-				defVal := reflect.ValueOf(defaultVal).Elem()
-				if defVal.Kind() == reflect.Slice {
-					def = defVal.Interface().([]time.Duration)
-				}
-			}
-			return cmd.Flags().DurationSliceP(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			return parseSliceWith(strVal, func(s string) (time.Duration, error) {
-				return time.ParseDuration(s)
-			})
-		},
-	}
-
-	// []time.Time — stored as []string, converted later
-	sliceExactTypeHandlers[timeType] = &typeHandler{
-		baseType: reflect.SliceOf(timeType),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			var def []string
-			if defaultVal != nil {
-				defVal := reflect.ValueOf(defaultVal).Elem()
-				if defVal.Kind() == reflect.Slice && defVal.Type().Elem() == timeType {
-					times := defVal.Interface().([]time.Time)
-					def = make([]string, len(times))
-					for i, t := range times {
-						def[i] = t.Format(time.RFC3339)
-					}
-				}
-			}
-			return cmd.Flags().StringSliceP(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			return parseSliceWith(strVal, func(s string) (time.Time, error) {
-				return parseTimeString(s)
-			})
-		},
-		convert: func(name string, val any) (any, error) {
-			if strSlice, ok := val.(*[]string); ok && strSlice != nil {
-				times := make([]time.Time, len(*strSlice))
-				for i, s := range *strSlice {
-					t, err := parseTimeString(s)
-					if err != nil {
-						return nil, fmt.Errorf("invalid value for param '%s' at index %d: %s", name, i, err.Error())
-					}
-					times[i] = t
-				}
-				return &times, nil
-			}
-			return val, nil
-		},
-	}
-
-	// []*url.URL — stored as []string, converted later
-	sliceExactTypeHandlers[urlPtrType] = &typeHandler{
-		baseType: reflect.SliceOf(urlPtrType),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			var def []string
-			if defaultVal != nil {
-				defVal := reflect.ValueOf(defaultVal).Elem()
-				if defVal.Kind() == reflect.Slice && defVal.Type().Elem() == urlPtrType {
-					urls := defVal.Interface().([]*url.URL)
-					def = make([]string, len(urls))
-					for i, u := range urls {
-						if u != nil {
-							def[i] = u.String()
-						}
-					}
-				}
-			}
-			return cmd.Flags().StringSliceP(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			return parseSliceWith(strVal, func(s string) (*url.URL, error) {
-				return url.Parse(s)
-			})
-		},
-		convert: func(name string, val any) (any, error) {
-			if strSlice, ok := val.(*[]string); ok && strSlice != nil {
-				urls := make([]*url.URL, len(*strSlice))
-				for i, s := range *strSlice {
-					u, err := url.Parse(s)
-					if err != nil {
-						return nil, fmt.Errorf("invalid value for param '%s' at index %d: %s", name, i, err.Error())
-					}
-					urls[i] = u
-				}
-				return &urls, nil
-			}
-			return val, nil
-		},
-	}
-
-	// --- Basic slice types (by element kind) ---
-
-	sliceKindHandlers[reflect.String] = &typeHandler{
-		baseType: reflect.SliceOf(reflect.TypeOf("")),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			return cmd.Flags().StringSliceP(name, short, toTypedSlice[string](derefSliceDefault(defaultVal)), descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			return parseSliceWith(strVal, func(s string) (string, error) { return s, nil })
-		},
-	}
-
-	sliceKindHandlers[reflect.Int] = &typeHandler{
-		baseType: reflect.SliceOf(reflect.TypeOf(0)),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			return cmd.Flags().IntSliceP(name, short, toTypedSlice[int](derefSliceDefault(defaultVal)), descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			return parseSliceWith(strVal, func(s string) (int, error) { return strconv.Atoi(s) })
-		},
-	}
-
-	sliceKindHandlers[reflect.Int32] = &typeHandler{
-		baseType: reflect.SliceOf(reflect.TypeOf(int32(0))),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			return cmd.Flags().Int32SliceP(name, short, toTypedSlice[int32](derefSliceDefault(defaultVal)), descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			return parseSliceWith(strVal, func(s string) (int32, error) {
-				v, err := strconv.ParseInt(s, 10, 32)
-				return int32(v), err
-			})
-		},
-	}
-
-	sliceKindHandlers[reflect.Int64] = &typeHandler{
-		baseType: reflect.SliceOf(reflect.TypeOf(int64(0))),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			return cmd.Flags().Int64SliceP(name, short, toTypedSlice[int64](derefSliceDefault(defaultVal)), descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			return parseSliceWith(strVal, func(s string) (int64, error) {
-				return strconv.ParseInt(s, 10, 64)
-			})
-		},
-	}
-
-	sliceKindHandlers[reflect.Uint] = &typeHandler{
-		baseType: reflect.SliceOf(reflect.TypeOf(uint(0))),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			return cmd.Flags().UintSliceP(name, short, toTypedSlice[uint](derefSliceDefault(defaultVal)), descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			return parseSliceWith(strVal, func(s string) (uint, error) {
-				v, err := strconv.ParseUint(s, 10, 0)
-				return uint(v), err
-			})
-		},
-	}
-
-	// pflag has no native Uint8/Uint16/Uint32/Uint64/Int8/Int16 slice flags.
-	// For these, register a typed pflag.Value via Var() — outward shape matches
-	// Int32SliceP / Int64SliceP (proper element type in --help, no string round-trip).
-	sliceKindHandlers[reflect.Int8] = makeIntSliceFallbackHandler(reflect.TypeOf(int8(0)), "int8Slice",
-		func(s string) (int8, error) { v, err := strconv.ParseInt(s, 10, 8); return int8(v), err },
-		func(v int8) string { return strconv.FormatInt(int64(v), 10) })
-
-	sliceKindHandlers[reflect.Int16] = makeIntSliceFallbackHandler(reflect.TypeOf(int16(0)), "int16Slice",
-		func(s string) (int16, error) { v, err := strconv.ParseInt(s, 10, 16); return int16(v), err },
-		func(v int16) string { return strconv.FormatInt(int64(v), 10) })
-
-	sliceKindHandlers[reflect.Uint8] = makeIntSliceFallbackHandler(reflect.TypeOf(uint8(0)), "uint8Slice",
-		func(s string) (uint8, error) { v, err := strconv.ParseUint(s, 10, 8); return uint8(v), err },
-		func(v uint8) string { return strconv.FormatUint(uint64(v), 10) })
-
-	sliceKindHandlers[reflect.Uint16] = makeIntSliceFallbackHandler(reflect.TypeOf(uint16(0)), "uint16Slice",
-		func(s string) (uint16, error) { v, err := strconv.ParseUint(s, 10, 16); return uint16(v), err },
-		func(v uint16) string { return strconv.FormatUint(uint64(v), 10) })
-
-	sliceKindHandlers[reflect.Uint32] = makeIntSliceFallbackHandler(reflect.TypeOf(uint32(0)), "uint32Slice",
-		func(s string) (uint32, error) { v, err := strconv.ParseUint(s, 10, 32); return uint32(v), err },
-		func(v uint32) string { return strconv.FormatUint(uint64(v), 10) })
-
-	sliceKindHandlers[reflect.Uint64] = makeIntSliceFallbackHandler(reflect.TypeOf(uint64(0)), "uint64Slice",
-		func(s string) (uint64, error) { return strconv.ParseUint(s, 10, 64) },
-		func(v uint64) string { return strconv.FormatUint(v, 10) })
-
-	sliceKindHandlers[reflect.Float32] = &typeHandler{
-		baseType: reflect.SliceOf(reflect.TypeOf(float32(0))),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			return cmd.Flags().Float32SliceP(name, short, toTypedSlice[float32](derefSliceDefault(defaultVal)), descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			return parseSliceWith(strVal, func(s string) (float32, error) {
-				v, err := strconv.ParseFloat(s, 32)
-				return float32(v), err
-			})
-		},
-	}
-
-	sliceKindHandlers[reflect.Float64] = &typeHandler{
-		baseType: reflect.SliceOf(reflect.TypeOf(float64(0))),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			return cmd.Flags().Float64SliceP(name, short, toTypedSlice[float64](derefSliceDefault(defaultVal)), descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			return parseSliceWith(strVal, func(s string) (float64, error) {
-				return strconv.ParseFloat(s, 64)
-			})
-		},
-	}
-
-	sliceKindHandlers[reflect.Bool] = &typeHandler{
-		baseType: reflect.SliceOf(reflect.TypeOf(false)),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			return cmd.Flags().BoolSliceP(name, short, toTypedSlice[bool](derefSliceDefault(defaultVal)), descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			return parseSliceWith(strVal, func(s string) (bool, error) { return strconv.ParseBool(s) })
+			return new(value), nil
 		},
 	}
 }
 
-// lookupHandler finds the appropriate handler for a type.
-// Returns the handler and whether the type is a slice.
-func lookupHandler(t reflect.Type) (*typeHandler, bool) {
-	// Exact type match first (special types like time.Duration, time.Time, net.IP, *url.URL)
-	if h, ok := exactTypeHandlers[t]; ok {
-		return h, false
+func nativeSliceHandler[T any](bind func(*pflag.FlagSet, string, string, []T, string) *[]T, parse func(string) (T, error)) *typeHandler {
+	return &typeHandler{
+		baseType: reflect.TypeFor[[]T](),
+		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
+			return bind(cmd.Flags(), name, short, toTypedSlice[T](derefSliceDefault(defaultVal)), descr)
+		},
+		parse: func(name, text string) (any, error) { return parseSliceWith(text, parse) },
 	}
-	// Kind-based match for basic types
-	if h, ok := kindHandlers[t.Kind()]; ok {
-		return h, false
+}
+
+func parseString(s string) (string, error) { return s, nil }
+func formatScalar[T any](v T) string       { return fmt.Sprint(v) }
+func parseSigned[T ~int | ~int8 | ~int16 | ~int32 | ~int64](s string) (T, error) {
+	v, err := strconv.ParseInt(s, 10, reflect.TypeFor[T]().Bits())
+	return T(v), err
+}
+func parseUnsigned[T ~uint | ~uint8 | ~uint16 | ~uint32 | ~uint64](s string) (T, error) {
+	v, err := strconv.ParseUint(s, 10, reflect.TypeFor[T]().Bits())
+	return T(v), err
+}
+func parseFloat[T ~float32 | ~float64](s string) (T, error) {
+	v, err := strconv.ParseFloat(s, reflect.TypeFor[T]().Bits())
+	return T(v), err
+}
+
+func parseIP(text string) (net.IP, error) {
+	ip := net.ParseIP(text)
+	if ip == nil {
+		return nil, fmt.Errorf("invalid IP address: %s", text)
 	}
-	return nil, false
+	return ip, nil
+}
+
+// lookupHandler resolves scalar types; registered exact types take precedence.
+func lookupHandler(t reflect.Type) *typeHandler {
+	if h := exactTypeHandlers[t]; h != nil {
+		return h
+	}
+	if h := textHandler(t); h != nil {
+		return h
+	}
+	return kindHandlers[t.Kind()]
+}
+
+// resolveHandler is the shared dispatch for flags, env, defaults, and validation.
+func resolveHandler(t reflect.Type) *typeHandler {
+	if h := lookupHandler(t); h != nil {
+		return h
+	}
+	switch t.Kind() {
+	case reflect.Map:
+		if h := lookupMapHandler(t); h != nil {
+			return h
+		}
+		return jsonFallbackHandler(t)
+	case reflect.Slice:
+		if h := lookupSliceHandler(t.Elem()); h != nil {
+			return h
+		}
+		return jsonFallbackHandler(t)
+	}
+	return nil
 }
 
 // lookupSliceHandler finds the handler for a slice type based on its element type.
@@ -741,6 +288,9 @@ func lookupSliceHandler(elemType reflect.Type) *typeHandler {
 	if h, ok := sliceExactTypeHandlers[elemType]; ok {
 		return h
 	}
+	if h := lookupHandler(elemType); h != nil && h.format != nil {
+		return parsedSliceHandler(h)
+	}
 	// Kind-based match
 	if h, ok := sliceKindHandlers[elemType.Kind()]; ok {
 		return h
@@ -748,48 +298,60 @@ func lookupSliceHandler(elemType reflect.Type) *typeHandler {
 	return nil
 }
 
+// parsedSliceHandler shares one element codec for custom scalars, text values,
+// time.Time, and URLs. pflag owns CSV/repeated-flag semantics.
+func parsedSliceHandler(element *typeHandler) *typeHandler {
+	t := reflect.SliceOf(element.baseType)
+	parse := func(name string, items []string) (any, error) {
+		values := reflect.MakeSlice(t, 0, len(items))
+		for _, text := range items {
+			value, err := element.parse(name, text)
+			if err != nil {
+				return nil, err
+			}
+			values = reflect.Append(values, reflect.ValueOf(value).Elem())
+		}
+		ptr := reflect.New(t)
+		ptr.Elem().Set(values)
+		return ptr.Interface(), nil
+	}
+	return &typeHandler{
+		baseType: t,
+		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
+			var items []string
+			if defaultVal != nil {
+				values := reflect.ValueOf(defaultVal).Elem()
+				for i := 0; i < values.Len(); i++ {
+					items = append(items, element.format(values.Index(i)))
+				}
+			}
+			return cmd.Flags().StringSliceP(name, short, items, descr)
+		},
+		parse: func(name, text string) (any, error) {
+			items, err := parseSliceWith(text, parseString)
+			if err != nil {
+				return nil, err
+			}
+			return parse(name, *items)
+		},
+		convert: func(name string, value any) (any, error) {
+			if items, ok := value.(*[]string); ok {
+				return parse(name, *items)
+			}
+			return value, nil
+		},
+	}
+}
+
 // jsonFallbackHandler creates a handler for any type that uses StringP for cobra binding
 // and json.Unmarshal for parsing. This handles nested slices, complex maps, and any
 // other type that Go's JSON decoder can handle.
 func jsonFallbackHandler(t reflect.Type) *typeHandler {
-	return &typeHandler{
-		baseType: t,
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := ""
-			if defaultVal != nil {
-				// Marshal the default to JSON for display
-				v := reflect.ValueOf(defaultVal)
-				if v.Kind() == reflect.Pointer && !v.IsNil() {
-					b, err := json.Marshal(v.Elem().Interface())
-					if err == nil {
-						def = string(b)
-					}
-				}
-			}
-			return cmd.Flags().StringP(name, short, def, descr)
-		},
-		parse: func(name, strVal string) (any, error) {
-			ptr := reflect.New(t)
-			if err := json.Unmarshal([]byte(strVal), ptr.Interface()); err != nil {
-				return nil, fmt.Errorf("invalid JSON for param %s: %w", name, err)
-			}
-			return ptr.Interface(), nil
-		},
-		convert: func(name string, val any) (any, error) {
-			// val is *string from StringP — unmarshal it
-			if strPtr, ok := val.(*string); ok {
-				if *strPtr == "" {
-					return val, nil // no conversion needed for empty default
-				}
-				ptr := reflect.New(t)
-				if err := json.Unmarshal([]byte(*strPtr), ptr.Interface()); err != nil {
-					return nil, fmt.Errorf("invalid JSON for param '%s': %w", name, err)
-				}
-				return ptr.Interface(), nil
-			}
-			return val, nil // already converted
-		},
-	}
+	return parsedStringHandler(t, func(text string) (reflect.Value, error) {
+		value := reflect.New(t)
+		err := UnmarshalJSON([]byte(text), value.Interface())
+		return value.Elem(), err
+	}, func(value reflect.Value) string { data, _ := json.Marshal(value.Interface()); return string(data) })
 }
 
 // lookupMapHandler dynamically builds a handler for map[string]V types by composing
@@ -801,15 +363,10 @@ func lookupMapHandler(t reflect.Type) *typeHandler {
 		return nil // only map[string]V is supported
 	}
 
-	// Check cache first
-	if h, ok := mapTypeHandlers[t]; ok {
-		return h
-	}
-
 	valType := normalizeType(t.Elem())
 
 	// Find the scalar handler for the value type
-	valHandler, _ := lookupHandler(valType)
+	valHandler := lookupHandler(valType)
 	if valHandler == nil {
 		return nil
 	}
@@ -840,8 +397,6 @@ func lookupMapHandler(t reflect.Type) *typeHandler {
 		}
 	}
 
-	// Cache it
-	mapTypeHandlers[t] = h
 	return h
 }
 
@@ -1081,7 +636,11 @@ func (v *reflectArrayValue) GetSlice() []string {
 	slice := v.value.Elem()
 	parts := make([]string, slice.Len())
 	for i := range parts {
-		parts[i] = fmt.Sprint(slice.Index(i).Interface())
+		if format := v.elemHandler.format; format != nil {
+			parts[i] = format(slice.Index(i))
+		} else {
+			parts[i] = fmt.Sprint(slice.Index(i).Interface())
+		}
 	}
 	return parts
 }
@@ -1095,7 +654,7 @@ func bindArrayFlag(cmd *cobra.Command, name, short, descr string, elemType refle
 		return cmd.Flags().StringArrayP(name, short, toTypedSlice[string](derefSliceDefault(defaultVal)), descr), nil
 	}
 
-	elemHandler, _ := lookupHandler(elemType)
+	elemHandler := lookupHandler(elemType)
 	if elemHandler == nil {
 		return nil, fmt.Errorf("collection mode %q is not supported for slice param %s with element type %s", CollectionArray, name, elemType)
 	}

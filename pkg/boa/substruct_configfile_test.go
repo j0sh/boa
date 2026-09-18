@@ -77,8 +77,8 @@ func TestMixedConfigFormats_JSONRoot_INISubstruct(t *testing.T) {
 		Port       int    `descr:"port" default:"5432"`
 	}
 	type Params struct {
-		ConfigFile string   `configfile:"true" optional:"true"`
-		Name       string   `descr:"app name" default:"unnamed"`
+		ConfigFile string `configfile:"true" optional:"true"`
+		Name       string `descr:"app name" default:"unnamed"`
 		DB         DBConfig
 	}
 
@@ -99,7 +99,7 @@ func TestMixedConfigFormats_JSONRoot_INISubstruct(t *testing.T) {
 
 	var gotName, gotHost string
 	var gotPort int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -135,7 +135,7 @@ func TestMixedConfigFormats_INIOnly(t *testing.T) {
 		Debug      bool   `descr:"debug" default:"false" optional:"true"`
 	}
 	type Params struct {
-		Name string   `descr:"name"`
+		Name string `descr:"name"`
 		DB   DBConfig
 	}
 
@@ -147,7 +147,7 @@ func TestMixedConfigFormats_INIOnly(t *testing.T) {
 	var gotHost string
 	var gotPort int
 	var gotDebug bool
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -179,7 +179,7 @@ func TestSubStructConfigFile_Basic(t *testing.T) {
 		Port       int    `descr:"port" default:"5432"`
 	}
 	type Params struct {
-		Name string   `descr:"app name"`
+		Name string `descr:"app name"`
 		DB   DBConfig
 	}
 
@@ -193,7 +193,7 @@ func TestSubStructConfigFile_Basic(t *testing.T) {
 
 	var gotHost string
 	var gotPort int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -222,8 +222,8 @@ func TestSubStructConfigFile_RootOverridesInner(t *testing.T) {
 		Port       int    `descr:"port" default:"5432"`
 	}
 	type Params struct {
-		ConfigFile string   `configfile:"true" optional:"true"`
-		Name       string   `descr:"app name" default:"unnamed"`
+		ConfigFile string `configfile:"true" optional:"true"`
+		Name       string `descr:"app name" default:"unnamed"`
 		DB         DBConfig
 	}
 
@@ -247,7 +247,7 @@ func TestSubStructConfigFile_RootOverridesInner(t *testing.T) {
 
 	var gotName, gotHost string
 	var gotPort int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -279,7 +279,7 @@ func TestSubStructConfigFile_CLIOverridesBothConfigs(t *testing.T) {
 		Port       int    `descr:"port" default:"5432"`
 	}
 	type Params struct {
-		ConfigFile string   `configfile:"true" optional:"true"`
+		ConfigFile string `configfile:"true" optional:"true"`
 		DB         DBConfig
 	}
 
@@ -295,7 +295,7 @@ func TestSubStructConfigFile_CLIOverridesBothConfigs(t *testing.T) {
 
 	var gotHost string
 	var gotPort int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -349,7 +349,7 @@ func TestEmbeddedExternalStruct_ConfigFileViaWrapper(t *testing.T) {
 
 	var gotHost string
 	var gotPort int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use: "test",
 		ParamEnrich: ParamEnricherCombine(
 			ParamEnricherName,
@@ -358,8 +358,8 @@ func TestEmbeddedExternalStruct_ConfigFileViaWrapper(t *testing.T) {
 		InitFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command) error {
 			// Descriptions / defaults for the external struct's fields come from
 			// the programmatic API since we can't add tags to ExternalDBConfig.
-			GetParamT(ctx, &p.Host).SetDefaultT("localhost")
-			GetParamT(ctx, &p.Port).SetDefaultT(5432)
+			Param(ctx, &p.Host).SetDefault("localhost")
+			Param(ctx, &p.Port).SetDefault(5432)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -381,7 +381,7 @@ func TestEmbeddedExternalStruct_ConfigFileViaWrapper(t *testing.T) {
 
 func TestEmbeddedExternalStruct_InlineWrapper(t *testing.T) {
 	// Ultra-lightweight variant: define the wrapper struct inline at the
-	// CmdT call site. No named type needed — the anonymous struct literal
+	// Cmd call site. No named type needed — the anonymous struct literal
 	// still carries the configfile tag on its own field and embeds the
 	// external struct, so it's the same pattern in one fewer declaration.
 	cfgData, _ := json.Marshal(map[string]any{
@@ -394,7 +394,7 @@ func TestEmbeddedExternalStruct_InlineWrapper(t *testing.T) {
 
 	var gotHost string
 	var gotPort int
-	err := (CmdT[struct {
+	err := (Cmd[struct {
 		ExternalDBConfig
 		ConfigFile string `configfile:"true" optional:"true"`
 	}]{
@@ -404,8 +404,8 @@ func TestEmbeddedExternalStruct_InlineWrapper(t *testing.T) {
 			ExternalDBConfig
 			ConfigFile string `configfile:"true" optional:"true"`
 		}, cmd *cobra.Command) error {
-			GetParamT(ctx, &p.Host).SetDefaultT("localhost")
-			GetParamT(ctx, &p.Port).SetDefaultT(5432)
+			Param(ctx, &p.Host).SetDefault("localhost")
+			Param(ctx, &p.Port).SetDefault(5432)
 			return nil
 		},
 		RunFunc: func(p *struct {
@@ -448,13 +448,13 @@ func TestProgrammaticSetConfigFile(t *testing.T) {
 
 	var gotHost string
 	var gotPort int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &p.ConfigFile).SetConfigFile(true)
-			GetParamT(ctx, &p.Host).SetDefaultT("localhost")
-			GetParamT(ctx, &p.Port).SetDefaultT(5432)
+			Param(ctx, &p.ConfigFile).SetConfigFile(true)
+			Param(ctx, &p.Host).SetDefault("localhost")
+			Param(ctx, &p.Port).SetDefault(5432)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -482,11 +482,11 @@ func TestProgrammaticSetConfigFile_NonStringRejected(t *testing.T) {
 		Host       string
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &p.ConfigFile).SetConfigFile(true)
+			Param(ctx, &p.ConfigFile).SetConfigFile(true)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
@@ -512,7 +512,7 @@ func TestUnexportedFieldAutoSkipped(t *testing.T) {
 		secret string //nolint:unused // intentionally unexported to exercise the skip path
 	}
 
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
@@ -538,12 +538,12 @@ func TestEmbeddedExternalStruct_CLIOverridesConfigFile(t *testing.T) {
 
 	var gotHost string
 	var gotPort int
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command) error {
-			GetParamT(ctx, &p.Host).SetDefaultT("localhost")
-			GetParamT(ctx, &p.Port).SetDefaultT(5432)
+			Param(ctx, &p.Host).SetDefault("localhost")
+			Param(ctx, &p.Port).SetDefault(5432)
 			return nil
 		},
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -571,7 +571,7 @@ func TestSubStructConfigFile_InnerOnly(t *testing.T) {
 		Port       int    `descr:"port" default:"5432"`
 	}
 	type Params struct {
-		Name string   `descr:"name"`
+		Name string `descr:"name"`
 		DB   DBConfig
 	}
 
@@ -581,7 +581,7 @@ func TestSubStructConfigFile_InnerOnly(t *testing.T) {
 	_ = os.WriteFile(cfgPath, cfgData, 0644)
 
 	var gotHost string
-	err := (CmdT[Params]{
+	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {

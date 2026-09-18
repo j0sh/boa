@@ -7,25 +7,25 @@ import (
 	"github.com/spf13/cobra"
 )
 
-type ParamTTestConfig struct {
+type FieldTestConfig struct {
 	Name string `descr:"User name" optional:"true"`
 	Port int    `descr:"Port number" default:"8080"`
 }
 
-func TestGetParamT_SetDefaultT(t *testing.T) {
-	config := ParamTTestConfig{}
+func TestParam_SetDefault(t *testing.T) {
+	config := FieldTestConfig{}
 	ran := false
 
-	err := CmdT[ParamTTestConfig]{
+	err := Cmd[FieldTestConfig]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
-		InitFuncCtx: func(ctx *HookContext, params *ParamTTestConfig, cmd *cobra.Command) error {
-			nameParam := GetParamT(ctx, &params.Name)
-			nameParam.SetDefaultT("default-name")
+		InitFuncCtx: func(ctx *HookContext, params *FieldTestConfig, cmd *cobra.Command) error {
+			nameParam := Param(ctx, &params.Name)
+			nameParam.SetDefault("default-name")
 			return nil
 		},
-		RunFunc: func(params *ParamTTestConfig, cmd *cobra.Command, args []string) {
+		RunFunc: func(params *FieldTestConfig, cmd *cobra.Command, args []string) {
 			ran = true
 			if params.Name != "default-name" {
 				t.Errorf("Expected Name to be 'default-name', got '%s'", params.Name)
@@ -42,20 +42,20 @@ func TestGetParamT_SetDefaultT(t *testing.T) {
 	}
 }
 
-func TestGetParamT_SetDefaultT_OverriddenByCLI(t *testing.T) {
-	config := ParamTTestConfig{}
+func TestParam_SetDefault_OverriddenByCLI(t *testing.T) {
+	config := FieldTestConfig{}
 	ran := false
 
-	err := CmdT[ParamTTestConfig]{
+	err := Cmd[FieldTestConfig]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
-		InitFuncCtx: func(ctx *HookContext, params *ParamTTestConfig, cmd *cobra.Command) error {
-			nameParam := GetParamT(ctx, &params.Name)
-			nameParam.SetDefaultT("default-name")
+		InitFuncCtx: func(ctx *HookContext, params *FieldTestConfig, cmd *cobra.Command) error {
+			nameParam := Param(ctx, &params.Name)
+			nameParam.SetDefault("default-name")
 			return nil
 		},
-		RunFunc: func(params *ParamTTestConfig, cmd *cobra.Command, args []string) {
+		RunFunc: func(params *FieldTestConfig, cmd *cobra.Command, args []string) {
 			ran = true
 			if params.Name != "cli-name" {
 				t.Errorf("Expected Name to be 'cli-name', got '%s'", params.Name)
@@ -72,17 +72,17 @@ func TestGetParamT_SetDefaultT_OverriddenByCLI(t *testing.T) {
 	}
 }
 
-func TestGetParamT_SetCustomValidatorT_Valid(t *testing.T) {
-	config := ParamTTestConfig{}
+func TestParam_SetCustomValidator_Valid(t *testing.T) {
+	config := FieldTestConfig{}
 	ran := false
 
-	err := CmdT[ParamTTestConfig]{
+	err := Cmd[FieldTestConfig]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
-		InitFuncCtx: func(ctx *HookContext, params *ParamTTestConfig, cmd *cobra.Command) error {
-			portParam := GetParamT(ctx, &params.Port)
-			portParam.SetCustomValidatorT(func(port int) error {
+		InitFuncCtx: func(ctx *HookContext, params *FieldTestConfig, cmd *cobra.Command) error {
+			portParam := Param(ctx, &params.Port)
+			portParam.SetCustomValidator(func(port int) error {
 				if port < 1 || port > 65535 {
 					return fmt.Errorf("port must be between 1 and 65535")
 				}
@@ -90,7 +90,7 @@ func TestGetParamT_SetCustomValidatorT_Valid(t *testing.T) {
 			})
 			return nil
 		},
-		RunFunc: func(params *ParamTTestConfig, cmd *cobra.Command, args []string) {
+		RunFunc: func(params *FieldTestConfig, cmd *cobra.Command, args []string) {
 			ran = true
 			if params.Port != 443 {
 				t.Errorf("Expected Port to be 443, got %d", params.Port)
@@ -107,16 +107,16 @@ func TestGetParamT_SetCustomValidatorT_Valid(t *testing.T) {
 	}
 }
 
-func TestGetParamT_SetCustomValidatorT_Invalid(t *testing.T) {
-	config := ParamTTestConfig{}
+func TestParam_SetCustomValidator_Invalid(t *testing.T) {
+	config := FieldTestConfig{}
 
-	err := CmdT[ParamTTestConfig]{
+	err := Cmd[FieldTestConfig]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
-		InitFuncCtx: func(ctx *HookContext, params *ParamTTestConfig, cmd *cobra.Command) error {
-			portParam := GetParamT(ctx, &params.Port)
-			portParam.SetCustomValidatorT(func(port int) error {
+		InitFuncCtx: func(ctx *HookContext, params *FieldTestConfig, cmd *cobra.Command) error {
+			portParam := Param(ctx, &params.Port)
+			portParam.SetCustomValidator(func(port int) error {
 				if port < 1 || port > 65535 {
 					return fmt.Errorf("port must be between 1 and 65535")
 				}
@@ -124,7 +124,7 @@ func TestGetParamT_SetCustomValidatorT_Invalid(t *testing.T) {
 			})
 			return nil
 		},
-		RunFunc: func(params *ParamTTestConfig, cmd *cobra.Command, args []string) {
+		RunFunc: func(params *FieldTestConfig, cmd *cobra.Command, args []string) {
 			t.Error("RunFunc should not have been called")
 		},
 		RawArgs: []string{"--port", "99999"},
@@ -135,17 +135,17 @@ func TestGetParamT_SetCustomValidatorT_Invalid(t *testing.T) {
 	}
 }
 
-func TestGetParamT_SetCustomValidatorT_String(t *testing.T) {
-	config := ParamTTestConfig{}
+func TestParam_SetCustomValidator_String(t *testing.T) {
+	config := FieldTestConfig{}
 
-	err := CmdT[ParamTTestConfig]{
+	err := Cmd[FieldTestConfig]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
-		InitFuncCtx: func(ctx *HookContext, params *ParamTTestConfig, cmd *cobra.Command) error {
-			nameParam := GetParamT(ctx, &params.Name)
-			nameParam.SetDefaultT("x") // too short
-			nameParam.SetCustomValidatorT(func(name string) error {
+		InitFuncCtx: func(ctx *HookContext, params *FieldTestConfig, cmd *cobra.Command) error {
+			nameParam := Param(ctx, &params.Name)
+			nameParam.SetDefault("x") // too short
+			nameParam.SetCustomValidator(func(name string) error {
 				if len(name) < 3 {
 					return fmt.Errorf("name must be at least 3 characters")
 				}
@@ -153,7 +153,7 @@ func TestGetParamT_SetCustomValidatorT_String(t *testing.T) {
 			})
 			return nil
 		},
-		RunFunc: func(params *ParamTTestConfig, cmd *cobra.Command, args []string) {
+		RunFunc: func(params *FieldTestConfig, cmd *cobra.Command, args []string) {
 			t.Error("RunFunc should not have been called")
 		},
 		RawArgs: []string{},
@@ -164,30 +164,30 @@ func TestGetParamT_SetCustomValidatorT_String(t *testing.T) {
 	}
 }
 
-func TestGetParamT_Param_ReturnsUnderlying(t *testing.T) {
-	config := ParamTTestConfig{}
+func TestField_EmbedsParameter(t *testing.T) {
+	config := FieldTestConfig{}
 	ran := false
 
-	err := CmdT[ParamTTestConfig]{
+	err := Cmd[FieldTestConfig]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
-		InitFuncCtx: func(ctx *HookContext, params *ParamTTestConfig, cmd *cobra.Command) error {
-			nameParam := GetParamT(ctx, &params.Name)
-			underlying := nameParam.Param()
+		InitFuncCtx: func(ctx *HookContext, params *FieldTestConfig, cmd *cobra.Command) error {
+			nameParam := Param(ctx, &params.Name)
+			underlying := nameParam.Parameter
 			if underlying == nil {
-				t.Error("Expected underlying Param, got nil")
+				t.Error("Expected underlying Parameter, got nil")
 			}
 			return nil
 		},
-		PostCreateFuncCtx: func(ctx *HookContext, params *ParamTTestConfig, cmd *cobra.Command) error {
-			nameParam := GetParamT(ctx, &params.Name)
-			if nameParam.Param().GetName() != "name" {
-				t.Errorf("Expected name 'name', got '%s'", nameParam.Param().GetName())
+		PostCreateFuncCtx: func(ctx *HookContext, params *FieldTestConfig, cmd *cobra.Command) error {
+			nameParam := Param(ctx, &params.Name)
+			if nameParam.GetName() != "name" {
+				t.Errorf("Expected name 'name', got '%s'", nameParam.GetName())
 			}
 			return nil
 		},
-		RunFunc: func(params *ParamTTestConfig, cmd *cobra.Command, args []string) {
+		RunFunc: func(params *FieldTestConfig, cmd *cobra.Command, args []string) {
 			ran = true
 		},
 		RawArgs: []string{"--name", "test"},
@@ -201,18 +201,18 @@ func TestGetParamT_Param_ReturnsUnderlying(t *testing.T) {
 	}
 }
 
-func TestGetParamT_CombinedValidatorAndDefault(t *testing.T) {
-	config := ParamTTestConfig{}
+func TestParam_CombinedValidatorAndDefault(t *testing.T) {
+	config := FieldTestConfig{}
 	ran := false
 
-	err := CmdT[ParamTTestConfig]{
+	err := Cmd[FieldTestConfig]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
-		InitFuncCtx: func(ctx *HookContext, params *ParamTTestConfig, cmd *cobra.Command) error {
-			nameParam := GetParamT(ctx, &params.Name)
-			nameParam.SetDefaultT("validname")
-			nameParam.SetCustomValidatorT(func(name string) error {
+		InitFuncCtx: func(ctx *HookContext, params *FieldTestConfig, cmd *cobra.Command) error {
+			nameParam := Param(ctx, &params.Name)
+			nameParam.SetDefault("validname")
+			nameParam.SetCustomValidator(func(name string) error {
 				if len(name) < 3 {
 					return fmt.Errorf("name must be at least 3 characters")
 				}
@@ -220,7 +220,7 @@ func TestGetParamT_CombinedValidatorAndDefault(t *testing.T) {
 			})
 			return nil
 		},
-		RunFunc: func(params *ParamTTestConfig, cmd *cobra.Command, args []string) {
+		RunFunc: func(params *FieldTestConfig, cmd *cobra.Command, args []string) {
 			ran = true
 			if params.Name != "validname" {
 				t.Errorf("Expected Name to be 'validname', got '%s'", params.Name)
@@ -237,20 +237,20 @@ func TestGetParamT_CombinedValidatorAndDefault(t *testing.T) {
 	}
 }
 
-func TestGetParamT_SetAlternatives_Valid(t *testing.T) {
-	config := ParamTTestConfig{}
+func TestParam_SetAlternatives_Valid(t *testing.T) {
+	config := FieldTestConfig{}
 	ran := false
 
-	err := CmdT[ParamTTestConfig]{
+	err := Cmd[FieldTestConfig]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
-		InitFuncCtx: func(ctx *HookContext, params *ParamTTestConfig, cmd *cobra.Command) error {
-			nameParam := GetParamT(ctx, &params.Name)
+		InitFuncCtx: func(ctx *HookContext, params *FieldTestConfig, cmd *cobra.Command) error {
+			nameParam := Param(ctx, &params.Name)
 			nameParam.SetAlternatives([]string{"alice", "bob", "charlie"})
 			return nil
 		},
-		RunFunc: func(params *ParamTTestConfig, cmd *cobra.Command, args []string) {
+		RunFunc: func(params *FieldTestConfig, cmd *cobra.Command, args []string) {
 			ran = true
 			if params.Name != "bob" {
 				t.Errorf("Expected Name to be 'bob', got '%s'", params.Name)
@@ -267,19 +267,19 @@ func TestGetParamT_SetAlternatives_Valid(t *testing.T) {
 	}
 }
 
-func TestGetParamT_SetAlternatives_Invalid(t *testing.T) {
-	config := ParamTTestConfig{}
+func TestParam_SetAlternatives_Invalid(t *testing.T) {
+	config := FieldTestConfig{}
 
-	err := CmdT[ParamTTestConfig]{
+	err := Cmd[FieldTestConfig]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
-		InitFuncCtx: func(ctx *HookContext, params *ParamTTestConfig, cmd *cobra.Command) error {
-			nameParam := GetParamT(ctx, &params.Name)
+		InitFuncCtx: func(ctx *HookContext, params *FieldTestConfig, cmd *cobra.Command) error {
+			nameParam := Param(ctx, &params.Name)
 			nameParam.SetAlternatives([]string{"alice", "bob", "charlie"})
 			return nil
 		},
-		RunFunc: func(params *ParamTTestConfig, cmd *cobra.Command, args []string) {
+		RunFunc: func(params *FieldTestConfig, cmd *cobra.Command, args []string) {
 			t.Error("RunFunc should not have been called")
 		},
 		RawArgs: []string{"--name", "invalid"},
@@ -290,21 +290,21 @@ func TestGetParamT_SetAlternatives_Invalid(t *testing.T) {
 	}
 }
 
-func TestGetParamT_SetStrictAlts_False(t *testing.T) {
-	config := ParamTTestConfig{}
+func TestParam_SetStrictAlts_False(t *testing.T) {
+	config := FieldTestConfig{}
 	ran := false
 
-	err := CmdT[ParamTTestConfig]{
+	err := Cmd[FieldTestConfig]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
-		InitFuncCtx: func(ctx *HookContext, params *ParamTTestConfig, cmd *cobra.Command) error {
-			nameParam := GetParamT(ctx, &params.Name)
+		InitFuncCtx: func(ctx *HookContext, params *FieldTestConfig, cmd *cobra.Command) error {
+			nameParam := Param(ctx, &params.Name)
 			nameParam.SetAlternatives([]string{"alice", "bob", "charlie"})
 			nameParam.SetStrictAlts(false)
 			return nil
 		},
-		RunFunc: func(params *ParamTTestConfig, cmd *cobra.Command, args []string) {
+		RunFunc: func(params *FieldTestConfig, cmd *cobra.Command, args []string) {
 			ran = true
 			if params.Name != "custom" {
 				t.Errorf("Expected Name to be 'custom', got '%s'", params.Name)
@@ -321,7 +321,7 @@ func TestGetParamT_SetStrictAlts_False(t *testing.T) {
 	}
 }
 
-func TestGetParamT_SetRequiredFn(t *testing.T) {
+func TestParam_SetRequiredFn(t *testing.T) {
 	type ConditionalConfig struct {
 		Mode     string `descr:"Mode" default:"simple"`
 		Advanced string `descr:"Advanced option" optional:"true"`
@@ -329,12 +329,12 @@ func TestGetParamT_SetRequiredFn(t *testing.T) {
 
 	config := ConditionalConfig{}
 
-	err := CmdT[ConditionalConfig]{
+	err := Cmd[ConditionalConfig]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *ConditionalConfig, cmd *cobra.Command) error {
-			advParam := GetParamT(ctx, &params.Advanced)
+			advParam := Param(ctx, &params.Advanced)
 			advParam.SetRequiredFn(func() bool {
 				return params.Mode == "advanced"
 			})
@@ -351,7 +351,7 @@ func TestGetParamT_SetRequiredFn(t *testing.T) {
 	}
 }
 
-func TestGetParamT_SetRequiredFn_NotRequired(t *testing.T) {
+func TestParam_SetRequiredFn_NotRequired(t *testing.T) {
 	type ConditionalConfig struct {
 		Mode     string `descr:"Mode" default:"simple"`
 		Advanced string `descr:"Advanced option" optional:"true"`
@@ -360,12 +360,12 @@ func TestGetParamT_SetRequiredFn_NotRequired(t *testing.T) {
 	config := ConditionalConfig{}
 	ran := false
 
-	err := CmdT[ConditionalConfig]{
+	err := Cmd[ConditionalConfig]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *ConditionalConfig, cmd *cobra.Command) error {
-			advParam := GetParamT(ctx, &params.Advanced)
+			advParam := Param(ctx, &params.Advanced)
 			advParam.SetRequiredFn(func() bool {
 				return params.Mode == "advanced"
 			})
@@ -385,7 +385,7 @@ func TestGetParamT_SetRequiredFn_NotRequired(t *testing.T) {
 	}
 }
 
-func TestGetParamT_SetIsEnabledFn(t *testing.T) {
+func TestParam_SetIsEnabledFn(t *testing.T) {
 	type FeatureConfig struct {
 		Feature bool   `descr:"Enable feature" default:"false"`
 		Setting string `descr:"Feature setting" optional:"true"`
@@ -394,12 +394,12 @@ func TestGetParamT_SetIsEnabledFn(t *testing.T) {
 	config := FeatureConfig{}
 	ran := false
 
-	err := CmdT[FeatureConfig]{
+	err := Cmd[FeatureConfig]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
 		InitFuncCtx: func(ctx *HookContext, params *FeatureConfig, cmd *cobra.Command) error {
-			settingParam := GetParamT(ctx, &params.Setting)
+			settingParam := Param(ctx, &params.Setting)
 			settingParam.SetIsEnabledFn(func() bool {
 				return params.Feature
 			})
@@ -419,19 +419,19 @@ func TestGetParamT_SetIsEnabledFn(t *testing.T) {
 	}
 }
 
-func TestGetParamT_SetName(t *testing.T) {
+func TestParam_SetName(t *testing.T) {
 	type SingleFieldConfig struct {
 		Name string `descr:"User name" optional:"true"`
 	}
 	config := SingleFieldConfig{}
 	ran := false
 
-	err := CmdT[SingleFieldConfig]{
+	err := Cmd[SingleFieldConfig]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherNone,
 		InitFuncCtx: func(ctx *HookContext, params *SingleFieldConfig, cmd *cobra.Command) error {
-			nameParam := GetParamT(ctx, &params.Name)
+			nameParam := Param(ctx, &params.Name)
 			nameParam.SetName("custom-name")
 			return nil
 		},
@@ -452,20 +452,20 @@ func TestGetParamT_SetName(t *testing.T) {
 	}
 }
 
-func TestGetParamT_SetShort(t *testing.T) {
-	config := ParamTTestConfig{}
+func TestParam_SetShort(t *testing.T) {
+	config := FieldTestConfig{}
 	ran := false
 
-	err := CmdT[ParamTTestConfig]{
+	err := Cmd[FieldTestConfig]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
-		InitFuncCtx: func(ctx *HookContext, params *ParamTTestConfig, cmd *cobra.Command) error {
-			nameParam := GetParamT(ctx, &params.Name)
+		InitFuncCtx: func(ctx *HookContext, params *FieldTestConfig, cmd *cobra.Command) error {
+			nameParam := Param(ctx, &params.Name)
 			nameParam.SetShort("x")
 			return nil
 		},
-		RunFunc: func(params *ParamTTestConfig, cmd *cobra.Command, args []string) {
+		RunFunc: func(params *FieldTestConfig, cmd *cobra.Command, args []string) {
 			ran = true
 			if params.Name != "short-value" {
 				t.Errorf("Expected Name to be 'short-value', got '%s'", params.Name)
@@ -482,22 +482,22 @@ func TestGetParamT_SetShort(t *testing.T) {
 	}
 }
 
-func TestGetParamT_SetEnv(t *testing.T) {
-	config := ParamTTestConfig{}
+func TestParam_SetEnv(t *testing.T) {
+	config := FieldTestConfig{}
 	ran := false
 
 	t.Setenv("CUSTOM_NAME_VAR", "env-value")
 
-	err := CmdT[ParamTTestConfig]{
+	err := Cmd[FieldTestConfig]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
-		InitFuncCtx: func(ctx *HookContext, params *ParamTTestConfig, cmd *cobra.Command) error {
-			nameParam := GetParamT(ctx, &params.Name)
+		InitFuncCtx: func(ctx *HookContext, params *FieldTestConfig, cmd *cobra.Command) error {
+			nameParam := Param(ctx, &params.Name)
 			nameParam.SetEnv("CUSTOM_NAME_VAR")
 			return nil
 		},
-		RunFunc: func(params *ParamTTestConfig, cmd *cobra.Command, args []string) {
+		RunFunc: func(params *FieldTestConfig, cmd *cobra.Command, args []string) {
 			ran = true
 			if params.Name != "env-value" {
 				t.Errorf("Expected Name to be 'env-value', got '%s'", params.Name)
@@ -514,21 +514,21 @@ func TestGetParamT_SetEnv(t *testing.T) {
 	}
 }
 
-func TestGetParamT_SetAlternativesFunc(t *testing.T) {
-	config := ParamTTestConfig{}
+func TestParam_SetAlternativesFunc(t *testing.T) {
+	config := FieldTestConfig{}
 
-	cmd := CmdT[ParamTTestConfig]{
+	cmd := Cmd[FieldTestConfig]{
 		Use:         "test",
 		Params:      &config,
 		ParamEnrich: ParamEnricherName,
-		InitFuncCtx: func(ctx *HookContext, params *ParamTTestConfig, cmd *cobra.Command) error {
-			nameParam := GetParamT(ctx, &params.Name)
+		InitFuncCtx: func(ctx *HookContext, params *FieldTestConfig, cmd *cobra.Command) error {
+			nameParam := Param(ctx, &params.Name)
 			nameParam.SetAlternativesFunc(func(cmd *cobra.Command, args []string, toComplete string) []string {
 				return []string{"suggestion1", "suggestion2"}
 			})
 			return nil
 		},
-		RunFunc: func(params *ParamTTestConfig, cmd *cobra.Command, args []string) {},
+		RunFunc: func(params *FieldTestConfig, cmd *cobra.Command, args []string) {},
 	}.ToCobra()
 
 	flag := cmd.Flags().Lookup("name")

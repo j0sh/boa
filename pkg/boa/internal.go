@@ -8,12 +8,12 @@ import (
 	"net"
 	"net/url"
 	"os"
-	"path/filepath"
 	"reflect"
 	"regexp"
 	"slices"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 	"unicode"
 	"unsafe"
@@ -57,10 +57,6 @@ func NewUserInputError(err error) error {
 func NewUserInputErrorf(format string, args ...any) error {
 	return &UserInputError{Err: fmt.Errorf(format, args...)}
 }
-
-// internal aliases for backwards compatibility within the package
-var newUserInputError = NewUserInputError
-var newUserInputErrorf = NewUserInputErrorf
 
 // IsUserInputError checks if an error is (or wraps) a UserInputError
 // or is one of pflag's known validation error types
@@ -117,13 +113,16 @@ func Execute(cmd *cobra.Command) error {
 func wrapArgsValidator(validator cobra.PositionalArgs) cobra.PositionalArgs {
 	return func(cmd *cobra.Command, args []string) error {
 		if err := validator(cmd, args); err != nil {
-			return newUserInputError(err)
+			return NewUserInputError(err)
 		}
 		return nil
 	}
 }
 
-type Param interface {
+// Parameter exposes the metadata and runtime controls shared by every command
+// field. Most callers should use Param for a type-safe *Field[T]; Parameter is
+// useful when iterating HookContext.AllMirrors or writing a ParamEnricher.
+type Parameter interface {
 	HasValue() bool
 	GetShort() string
 	GetName() string
@@ -135,16 +134,56 @@ type Param interface {
 	SetShort(string)
 	SetName(string)
 	SetAlternatives([]string)
+	IsRequired() bool
+	SetCustomValidator(func(any) error)
+	IsEnabled() bool
+	GetAlternatives() []string
+	GetAlternativesFunc() func(cmd *cobra.Command, args []string, toComplete string) []string
+	SetAlternativesFunc(func(cmd *cobra.Command, args []string, toComplete string) []string)
+	GetIsEnabledFn() func() bool
+	SetIsEnabledFn(func() bool)
+	SetRequiredFn(func() bool)
+	GetRequiredFn() func() bool
+	SetStrictAlts(bool)
+	GetStrictAlts() bool
+	IsNoFlag() bool
+	SetNoFlag(bool)
+	IsNoEnv() bool
+	SetNoEnv(bool)
+	IsIgnored() bool
+	SetIgnored(bool)
+	IsConfigFile() bool
+	SetConfigFile(bool)
+	GetDescription() string
+	SetDescription(string)
+	IsPositional() bool
+	SetPositional(bool)
+	IsPersistent() bool
+	SetPersistent(bool)
+	GetMin() any
+	SetMin(any)
+	ClearMin()
+	GetMax() any
+	SetMax(any)
+	ClearMax()
+	GetPattern() string
+	SetPattern(string)
+	SetRequired(bool)
+	GetCollection() CollectionMode
+	SetCollection(CollectionMode)
+}
+
+// parameter is BOA's internal extension of the public field API.
+type parameter interface {
+	Parameter
 	defaultValuePtr() any
 	getDescr() string
-	IsRequired() bool
 	valuePtrF() any
 	parentCmd() *cobra.Command
 	wasSetOnCli() bool
 	wasSetByEnv() bool
 	wasSetByInject() bool
 	customValidatorOfPtr() func(any) error
-	SetCustomValidator(func(any) error)
 	hasDefaultValue() bool
 	defaultValueStr() string
 	setParentCmd(cmd *cobra.Command)
@@ -157,100 +196,11 @@ type Param interface {
 	setPositional(bool)
 	isPersistent() bool
 	setPersistent(bool)
-	setDescription(descr string)
-	IsEnabled() bool
-	GetAlternatives() []string
-	GetAlternativesFunc() func(cmd *cobra.Command, args []string, toComplete string) []string
-	SetAlternativesFunc(func(cmd *cobra.Command, args []string, toComplete string) []string)
-	GetIsEnabledFn() func() bool
-	SetIsEnabledFn(func() bool)
-	SetRequiredFn(func() bool)
-	GetRequiredFn() func() bool
-	SetStrictAlts(bool)
-	GetStrictAlts() bool
-
-	// --- Exported parity for struct-tag-only features ---
-	// These mirror struct tags so anything configurable by tag is also
-	// configurable programmatically (e.g. for params built from third-party
-	// structs you can't add tags to).
-
-	// IsNoFlag reports whether CLI flag registration is suppressed for this
-	// parameter (still reads env vars and config files). Mirrors `boa:"noflag"`.
-	IsNoFlag() bool
-	// SetNoFlag toggles CLI flag suppression. Must be called before cobra
-	// flag binding (e.g. inside InitFunc / InitFuncCtx) to take effect.
-	SetNoFlag(bool)
-
-	// IsNoEnv reports whether env var reading is suppressed for this
-	// parameter (CLI flags and config files still apply). Mirrors `boa:"noenv"`.
-	IsNoEnv() bool
-	// SetNoEnv toggles env var suppression.
-	SetNoEnv(bool)
-
-	// IsIgnored reports whether the parameter is fully ignored by boa
-	// (no CLI flag, no env reading, no validation). Config files can still
-	// populate the underlying field via the unmarshaler.
-	IsIgnored() bool
-	// SetIgnored marks the parameter as ignored. Must be called before
-	// cobra flag binding and env parsing.
-	SetIgnored(bool)
-
-	// IsConfigFile reports whether this string parameter is the auto-loaded
-	// config-file path for its enclosing struct. Mirrors `configfile:"true"`.
-	IsConfigFile() bool
-	// SetConfigFile marks the parameter as the config-file path for its
-	// enclosing struct. The underlying field must be a string. Must be
-	// called before cobra flag binding (i.e. from InitFunc / InitFuncCtx)
-	// to take effect — the configfile registry is built at the end of the
-	// init phase, right after these hooks run.
-	SetConfigFile(bool)
-
-	// GetDescription / SetDescription expose the help/descr text.
-	GetDescription() string
-	SetDescription(string)
-
-	// IsPositional / SetPositional mirror `positional:"true"`.
-	IsPositional() bool
-	SetPositional(bool)
-
-	// IsPersistent / SetPersistent mirror `persistent:"true"`. Persistent
-	// flags are inherited by descendant commands.
-	IsPersistent() bool
-	SetPersistent(bool)
-
-	// GetMin / SetMin / ClearMin / GetMax / SetMax / ClearMax / GetPattern /
-	// SetPattern mirror the validation tags. GetMin / GetMax return the bound
-	// as a typed pointer matching the field kind, or nil when no bound is set:
-	//   - signed int field   → *int64
-	//   - unsigned int field → *uint64
-	//   - float field        → *float64
-	//   - string/slice/map   → *int (length bound)
-	// SetMin / SetMax accept any numeric value; it's coerced to match the
-	// field kind. ClearMin / ClearMax remove a previously set bound.
-	GetMin() any
-	SetMin(any)
-	ClearMin()
-	GetMax() any
-	SetMax(any)
-	ClearMax()
-	GetPattern() string
-	SetPattern(string)
-
-	// SetRequired is a convenience that fixes the parameter as required or
-	// optional regardless of the original tag. Equivalent to
-	// SetRequiredFn(func() bool { return val }).
-	SetRequired(bool)
-
-	// GetCollection / SetCollection control how repeated slice flags consume
-	// command-line values. CollectionSlice is the backwards-compatible CSV
-	// mode; CollectionArray appends one opaque scalar per flag occurrence.
-	// Environment, config-file, default, and positional parsing are unaffected.
-	GetCollection() CollectionMode
-	SetCollection(CollectionMode)
+	setDescription(string)
 }
 
 // CollectionMode controls the command-line occurrence semantics of slice
-// flags. The zero value is CollectionSlice for backwards compatibility.
+// flags. The zero value is CollectionSlice.
 type CollectionMode string
 
 const (
@@ -260,8 +210,7 @@ const (
 
 // configFileEntry tracks a configfile:"true" field and the struct it should load into.
 type configFileEntry struct {
-	mirror     Param     // the string / []string param holding the file path(s)
-	target     any       // pointer to the struct to unmarshal into
+	mirror     parameter // the string / []string param holding the file path(s)
 	targetPath fieldPath // path from root to the target struct (empty for root)
 }
 
@@ -270,7 +219,7 @@ type configFileEntry struct {
 // at most one path; a []string-typed mirror yields the slice verbatim (empty
 // entries are the caller's responsibility to skip). Any other type indicates
 // a bug — the traversal-time guard should have rejected it already.
-func configFilePathsFromMirror(mirror Param) []string {
+func configFilePathsFromMirror(mirror parameter) []string {
 	ptr := mirror.valuePtrF()
 	switch v := ptr.(type) {
 	case *string:
@@ -327,8 +276,7 @@ func (p fieldPath) hasSubtreePrefix(prefix fieldPath) bool {
 // After all value sources are applied (CLI, env, config), the pointer is nil'd back
 // if none of its fields were explicitly set.
 type preallocatedPtrInfo struct {
-	ptrField reflect.Value // the pointer field in the parent struct (e.g., *DBConfig)
-	path     fieldPath     // path from root to this pointer field
+	path fieldPath // path from root to this pointer field
 }
 
 type processingContext struct {
@@ -339,19 +287,19 @@ type processingContext struct {
 	// mirrorByPath is the authoritative mirror store, keyed by field-index path.
 	// Paths are stable under pointer-substruct reassignment and support efficient
 	// subtree queries via string-prefix matching.
-	mirrorByPath map[fieldPath]Param
+	mirrorByPath map[fieldPath]parameter
 	// pathOrder preserves traverse insertion order for operations that need
 	// deterministic iteration (e.g., syncMirrors reads raw → mirror → raw in
 	// the order fields were discovered).
 	pathOrder []fieldPath
 	// addrToPath is a non-authoritative reverse index built during traverse.
-	// Its sole purpose is to support HookContext.GetParam(&params.Field),
+	// Its sole purpose is to support boa.Param(ctx, &params.Field),
 	// where users pass a Go field pointer and expect a mirror back. When the
 	// root parameters struct is reassigned mid-flight, this cache can be
 	// invalidated and rebuilt — mirrorByPath remains correct regardless.
 	addrToPath map[unsafe.Pointer]fieldPath
 	// walkFallbackCount / cacheRebuildCount are instrumentation counters for
-	// tests that need to assert whether a GetParam call hit the fast path or
+	// tests that need to assert whether a Param call hit the fast path or
 	// fell through to the slower fallback walk / cache rebuild. Incremented
 	// unconditionally — cheap, zero-cost for production code.
 	walkFallbackCount int
@@ -365,11 +313,11 @@ type processingContext struct {
 	// ConfigPresentPtrs tracks preallocated struct pointers that were explicitly
 	// mentioned in a config file (even if no child fields were set, e.g., "DB": {}).
 	// These survive cleanup regardless of whether individual fields were set.
-	ConfigPresentPtrs map[uintptr]bool
+	ConfigPresentPtrs map[fieldPath]bool
 
 	// LoadedConfigFiles records every config file path the pipeline actually
 	// read during this run — both from configfile:"true" tagged fields and
-	// from Cmd.ConfigFormat / ConfigUnmarshal escape hatches. Populated
+	// from a Cmd.ConfigFormat override. Populated
 	// inside the PreRunE wrapper as files are loaded; cleared at the start
 	// of every reload. Exposed to users via HookContext.WatchedConfigFiles
 	// so the live-reload watcher knows which paths to listen on.
@@ -389,11 +337,10 @@ type processingContext struct {
 	// them too.
 	ExtraWatchedConfigFiles []string
 
-	// reloadFactory mirrors Cmd.reloadFactory for in-pipeline access. It
-	// is populated from b.reloadFactory at the top of toCobraBaseImpl so
-	// HookContext.reloadAny / boa.Reload can invoke it without knowing
-	// about the outer Cmd.
+	// reloadFactory replays the captured invocation against fresh parameters.
 	reloadFactory func() (any, error)
+	reloadMu      sync.Mutex
+	watchMu       sync.RWMutex
 }
 
 // preallocateStructPtrs walks the struct tree and allocates any nil struct pointer fields,
@@ -403,39 +350,52 @@ type processingContext struct {
 //
 // path is the declared-index path from the root to the struct being walked, using
 // reflect.StructField.Index numbering. Ignored fields retain their slot.
-func preallocateStructPtrs(ctx *processingContext, structPtr any, path []int) {
-	val := reflect.ValueOf(structPtr).Elem()
-	typ := val.Type()
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
-		if isBoaIgnored(field) {
-			continue
+func preallocateStructPtrs(ctx *processingContext, structPtr any, path []int) error {
+	visiting := map[reflect.Type]bool{}
+	var walk func(reflect.Value, []int) error
+	walk = func(ptr reflect.Value, path []int) error {
+		if !ptr.IsValid() || ptr.Kind() != reflect.Pointer || ptr.IsNil() || ptr.Type().Elem().Kind() != reflect.Struct {
+			return fmt.Errorf("expected non-nil pointer to struct")
 		}
-		childPath := append(append([]int(nil), path...), i)
-		// Recurse into non-pointer structs (they're always present)
-		if field.Type.Kind() == reflect.Struct && !isSupportedType(field.Type) {
-			preallocateStructPtrs(ctx, val.Field(i).Addr().Interface(), childPath)
-			continue
+		value := ptr.Elem()
+		t := value.Type()
+		if visiting[t] {
+			return fmt.Errorf("recursive parameter group %s at %s: mark the recursive field boa:\"ignore\" or register a scalar parser", t, joinPath(path))
 		}
-		// Preallocate nil struct pointer fields
-		if field.Type.Kind() == reflect.Pointer && field.Type.Elem().Kind() == reflect.Struct && !isSupportedType(field.Type) {
-			fieldVal := val.Field(i)
-			if fieldVal.IsNil() {
-				fieldVal.Set(reflect.New(field.Type.Elem()))
-				// Recurse into the newly allocated struct (inner pointers first)
-				preallocateStructPtrs(ctx, fieldVal.Interface(), childPath)
-				// Append after recursion so innermost entries come first
-				ctx.PreallocatedPtrs = append(ctx.PreallocatedPtrs, preallocatedPtrInfo{
-					ptrField: fieldVal,
-					path:     joinPath(childPath),
-				})
-			} else {
-				// Already non-nil (user pre-initialized) — still recurse for nested nil ptrs
-				preallocateStructPtrs(ctx, fieldVal.Interface(), childPath)
+		visiting[t] = true
+		defer delete(visiting, t)
+		for i := 0; i < t.NumField(); i++ {
+			field := t.Field(i)
+			if isBoaIgnored(field) || isSupportedType(field.Type) {
+				continue
 			}
-			continue
+			current := value.Field(i)
+			childPath := append(slices.Clone(path), i)
+			allocated := false
+			switch current.Kind() {
+			case reflect.Struct:
+				current = current.Addr()
+			case reflect.Pointer:
+				if current.Type().Elem().Kind() != reflect.Struct {
+					continue
+				}
+				if current.IsNil() {
+					current.Set(reflect.New(current.Type().Elem()))
+					allocated = true
+				}
+			default:
+				continue
+			}
+			if err := walk(current, childPath); err != nil {
+				return err
+			}
+			if allocated {
+				ctx.PreallocatedPtrs = append(ctx.PreallocatedPtrs, preallocatedPtrInfo{path: joinPath(childPath)})
+			}
 		}
+		return nil
 	}
+	return walk(reflect.ValueOf(structPtr), path)
 }
 
 // cleanupPreallocatedPtrs nils back any preallocated struct pointers whose fields
@@ -443,16 +403,17 @@ func preallocateStructPtrs(ctx *processingContext, structPtr any, path []int) {
 // first so that nested struct pointers are cleaned before their parents.
 func cleanupPreallocatedPtrs(ctx *processingContext) {
 	for _, info := range ctx.PreallocatedPtrs {
-		if info.ptrField.IsNil() {
+		field, ok := ctx.resolveFieldValue(info.path)
+		if !ok || field.IsNil() {
 			// Already cleaned up (e.g., parent was nil'd in a previous iteration)
 			continue
 		}
 
-		structPtr := info.ptrField.Interface()
+		structPtr := field.Interface()
 		anySet := false
 
 		// Check if this struct was explicitly mentioned in a config file
-		if ctx.ConfigPresentPtrs[reflect.ValueOf(structPtr).Pointer()] {
+		if ctx.ConfigPresentPtrs[info.path] {
 			anySet = true
 		}
 
@@ -480,7 +441,7 @@ func cleanupPreallocatedPtrs(ctx *processingContext) {
 			// Remove mirrors for all fields within this subtree via path-prefix purge
 			removeMirrorsForSubtree(ctx, info.path)
 			// Nil the pointer
-			info.ptrField.Set(reflect.Zero(info.ptrField.Type()))
+			field.Set(reflect.Zero(field.Type()))
 		}
 	}
 }
@@ -691,7 +652,7 @@ func markConfigKeysPresentInStruct(ctx *processingContext, structPtr any, keys m
 			// The config mentioned this struct — mark it as present so the
 			// pointer survives cleanup, even if the object is empty `{}`.
 			// Individual fields only get setByConfig if they appear as keys.
-			markStructPtrPresentByConfig(ctx, fieldVal.Interface())
+			markStructPtrPresentByConfig(ctx, joinPath(childPath))
 			if subMap := asKeyMap(rawVal); len(subMap) > 0 {
 				markConfigKeysPresentInStruct(ctx, fieldVal.Interface(), subMap, childPath)
 			}
@@ -718,15 +679,16 @@ func markConfigKeysPresentInStruct(ctx *processingContext, structPtr any, keys m
 	}
 }
 
-// snapshotPreallocatedStructs takes a deep copy of each preallocated struct's value.
+// snapshotPreallocatedStructs takes a shallow copy of each preallocated struct's value.
 // Used as fallback for non-JSON config formats where key-presence detection can't work.
 func snapshotPreallocatedStructs(ctx *processingContext) []reflect.Value {
 	snapshots := make([]reflect.Value, len(ctx.PreallocatedPtrs))
 	for i, info := range ctx.PreallocatedPtrs {
-		if info.ptrField.IsNil() {
+		field, ok := ctx.resolveFieldValue(info.path)
+		if !ok || field.IsNil() {
 			continue
 		}
-		orig := info.ptrField.Elem()
+		orig := field.Elem()
 		cp := reflect.New(orig.Type()).Elem()
 		cp.Set(orig)
 		snapshots[i] = cp
@@ -752,15 +714,16 @@ func markConfigChangedStructs(ctx *processingContext, snapshots []reflect.Value,
 		return
 	}
 	for i, info := range ctx.PreallocatedPtrs {
-		if info.ptrField.IsNil() || !snapshots[i].IsValid() {
+		field, ok := ctx.resolveFieldValue(info.path)
+		if !ok || field.IsNil() || !snapshots[i].IsValid() {
 			continue
 		}
 		if !pathWithinAny(info.path, fallbackRoots) {
 			continue
 		}
-		current := info.ptrField.Elem()
+		current := field.Elem()
 		if !reflect.DeepEqual(current.Interface(), snapshots[i].Interface()) {
-			markAllMirrorsInSubtree(ctx, info.ptrField.Interface(), splitPath(info.path))
+			markAllMirrorsInSubtree(ctx, field.Interface(), splitPath(info.path))
 		}
 	}
 }
@@ -776,12 +739,11 @@ func pathWithinAny(child fieldPath, roots []fieldPath) bool {
 // explicitly mentioned in a config file. This ensures the pointer survives
 // cleanup even if no individual child fields were set (e.g., "DB": {}).
 // Individual field HasValue is not affected — only cleanup is.
-func markStructPtrPresentByConfig(ctx *processingContext, structPtr any) {
-	addr := reflect.ValueOf(structPtr).Pointer()
+func markStructPtrPresentByConfig(ctx *processingContext, path fieldPath) {
 	if ctx.ConfigPresentPtrs == nil {
-		ctx.ConfigPresentPtrs = make(map[uintptr]bool)
+		ctx.ConfigPresentPtrs = make(map[fieldPath]bool)
 	}
-	ctx.ConfigPresentPtrs[addr] = true
+	ctx.ConfigPresentPtrs[path] = true
 }
 
 // markAllMirrorsInSubtree marks every mirror within the given subtree as set by config.
@@ -898,7 +860,7 @@ func removeMirrorsForSubtree(ctx *processingContext, prefix fieldPath) {
 
 func parseEnv(ctx *processingContext, structPtr any) error {
 
-	err := traverse(ctx, structPtr, func(param Param, _ string, _ reflect.StructTag) error {
+	err := traverse(ctx, structPtr, func(param parameter, _ string, _ reflect.StructTag) error {
 
 		if !param.IsEnabled() {
 			return nil
@@ -918,12 +880,12 @@ func parseEnv(ctx *processingContext, structPtr any) error {
 
 		return nil
 	}, nil)
-	return newUserInputError(err)
+	return NewUserInputError(err)
 }
 
 func validate(ctx *processingContext, structPtr any) error {
 
-	err := traverse(ctx, structPtr, func(param Param, _ string, _ reflect.StructTag) error {
+	err := traverse(ctx, structPtr, func(param parameter, _ string, _ reflect.StructTag) error {
 
 		if !param.IsEnabled() {
 			return nil
@@ -942,60 +904,20 @@ func validate(ctx *processingContext, structPtr any) error {
 			envHint = fmt.Sprintf(" (env: %s)", param.GetEnv())
 		}
 
-		if param.IsRequired() && !HasValue(param) {
+		if param.IsRequired() && !param.HasValue() {
 			return fmt.Errorf("missing required param '%s'%s", param.GetName(), envHint)
 		}
 
 		// Post-parse conversion for types stored as strings in cobra (time.Time, *url.URL, JSON fallback, etc.)
-		if HasValue(param) {
-			converted := false
-			if handler, _ := lookupHandler(param.GetType()); handler != nil && handler.convert != nil {
-				res, err := handler.convert(param.GetName(), param.valuePtrF())
+		if param.HasValue() {
+			if h := handlerFor(param); h != nil && h.convert != nil {
+				value, err := h.convert(param.GetName(), param.valuePtrF())
 				if err != nil {
 					return err
 				}
-				param.setValuePtr(res)
-				converted = true
-			} else if param.GetKind() == reflect.Map {
-				if mapHandler := lookupMapHandler(param.GetType()); mapHandler != nil && mapHandler.convert != nil {
-					res, err := mapHandler.convert(param.GetName(), param.valuePtrF())
-					if err != nil {
-						return err
-					}
-					param.setValuePtr(res)
-					converted = true
-				}
-			} else if param.GetKind() == reflect.Slice {
-				if sliceHandler := lookupSliceHandler(param.GetType().Elem()); sliceHandler != nil && sliceHandler.convert != nil {
-					res, err := sliceHandler.convert(param.GetName(), param.valuePtrF())
-					if err != nil {
-						return err
-					}
-					param.setValuePtr(res)
-					converted = true
-				}
+				param.setValuePtr(value)
 			}
 
-			// JSON fallback conversion: if value is still a *string but the target type
-			// is a complex type (map, nested slice, etc.) without a native handler, try JSON unmarshal
-			if !converted {
-				needsJsonFallback := false
-				if param.GetKind() == reflect.Map {
-					needsJsonFallback = lookupMapHandler(param.GetType()) == nil
-				} else if param.GetKind() == reflect.Slice && lookupSliceHandler(param.GetType().Elem()) == nil {
-					needsJsonFallback = true
-				}
-				if needsJsonFallback {
-					if strPtr, ok := param.valuePtrF().(*string); ok && strPtr != nil && *strPtr != "" {
-						fallback := jsonFallbackHandler(param.GetType())
-						res, err := fallback.convert(param.GetName(), param.valuePtrF())
-						if err != nil {
-							return err
-						}
-						param.setValuePtr(res)
-					}
-				}
-			}
 			if alts := param.GetAlternatives(); alts != nil && param.GetStrictAlts() {
 
 				ptrVal := param.valuePtrF()
@@ -1035,7 +957,7 @@ func validate(ctx *processingContext, structPtr any) error {
 
 		return nil
 	}, nil)
-	return newUserInputError(err)
+	return NewUserInputError(err)
 }
 
 // parseBoundTag parses a `min:"..."` or `max:"..."` tag value against the
@@ -1161,17 +1083,17 @@ func ptrToAnyToString(ptr any) string {
 	return fmt.Sprintf("%v", elem.Interface())
 }
 
-func doParsePositional(f Param, strVal string) error {
+func doParsePositional(f parameter, strVal string) error {
 	if strVal == "" && f.IsRequired() {
 		if f.hasDefaultValue() || f.wasSetByEnv() {
 			return nil
 		} else {
-			return newUserInputErrorf("empty positional arg: %s", f.GetName())
+			return NewUserInputErrorf("empty positional arg: %s", f.GetName())
 		}
 	}
 
 	if err := readFrom(f, strVal); err != nil {
-		return newUserInputError(err)
+		return NewUserInputError(err)
 	}
 
 	f.markSetPositionally()
@@ -1187,12 +1109,11 @@ func toTypedSlice[T any](slice any) []T {
 	if typed, ok := slice.([]T); ok {
 		return typed
 	}
-	// Handle type aliases by converting via reflection
+	// Convert named primitive types through their underlying representation.
 	sliceVal := reflect.ValueOf(slice)
 	if sliceVal.Kind() == reflect.Slice {
 		result := make([]T, sliceVal.Len())
-		var zero T
-		targetElemType := reflect.TypeOf(zero)
+		targetElemType := reflect.TypeFor[T]()
 		for i := 0; i < sliceVal.Len(); i++ {
 			elem := sliceVal.Index(i)
 			if elem.Type().ConvertibleTo(targetElemType) {
@@ -1207,7 +1128,7 @@ func toTypedSlice[T any](slice any) []T {
 	return slice.([]T)
 }
 
-func connect(f Param, cmd *cobra.Command, posArgs []Param, ctx *processingContext) error {
+func connect(f parameter, cmd *cobra.Command, posArgs []parameter, ctx *processingContext) error {
 	collection := f.GetCollection()
 	if collection != CollectionSlice && collection != CollectionArray {
 		return fmt.Errorf("invalid collection mode %q for param %s", collection, f.GetName())
@@ -1278,16 +1199,8 @@ func connect(f Param, cmd *cobra.Command, posArgs []Param, ctx *processingContex
 		descr = fmt.Sprintf("%s (%s)", descr, strings.Join(extraInfos, ", "))
 	}
 
-	if f.hasDefaultValue() {
-		if f.GetKind() == reflect.Bool {
-			// cobra doesn't show if the default is false. So we must do it ourselves
-			if f.defaultValueStr() == "false" {
-				descr = fmt.Sprintf("%s (default false)", descr)
-			}
-		} else if f.defaultValueStr() == "" {
-			// cobra doesn't show explicitly empty defaults. So we must do it ourselves
-			descr = fmt.Sprintf("%s (default \"\")", descr)
-		}
+	if f.hasDefaultValue() && f.GetKind() != reflect.Bool && f.defaultValueStr() == "" {
+		descr = fmt.Sprintf("%s (default \"\")", descr)
 	}
 
 	if f.parentCmd() != nil {
@@ -1346,7 +1259,7 @@ func connect(f Param, cmd *cobra.Command, posArgs []Param, ctx *processingContex
 						f.setValuePtr(f.defaultValuePtr())
 						return nil
 					} else {
-						return newUserInputErrorf("missing positional arg '%s'", f.GetName())
+						return NewUserInputErrorf("missing positional arg '%s'", f.GetName())
 					}
 				} else {
 					return nil
@@ -1364,133 +1277,51 @@ func connect(f Param, cmd *cobra.Command, posArgs []Param, ctx *processingContex
 		return nil // no need to attach cobra flags
 	}
 
-	// Must happen last, because the flags must have been created
 	defer func() {
-		if f.GetAlternatives() != nil {
-			err := cmd.RegisterFlagCompletionFunc(f.GetName(), func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-				return f.GetAlternatives(), cobra.ShellCompDirectiveDefault
-			})
-			if err != nil {
-				panic(fmt.Errorf("failed to register static flag completion func for flag '%s': %v", f.GetName(), err))
-			}
+		if f.GetAlternatives() == nil && f.GetAlternativesFunc() == nil {
+			return
 		}
-		if f.GetAlternativesFunc() != nil {
-			err := cmd.RegisterFlagCompletionFunc(f.GetName(), func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
-				// Sync cobra's parsed flag values into raw struct fields before calling
-				// the user's completion function. Without this, raw fields (plain string,
-				// int, etc.) are zero during completion because PreRunE (which normally
-				// calls syncMirrors) is never executed for shell completion.
-				syncMirrors(ctx)
-				return f.GetAlternativesFunc()(cmd, args, toComplete), cobra.ShellCompDirectiveDefault
-			})
-			if err != nil {
-				panic(fmt.Errorf("failed to register dynamic flag completion func for flag '%s': %v", f.GetName(), err))
+		err := cmd.RegisterFlagCompletionFunc(f.GetName(), func(cmd *cobra.Command, args []string, toComplete string) ([]string, cobra.ShellCompDirective) {
+			syncMirrors(ctx)
+			if dynamic := f.GetAlternativesFunc(); dynamic != nil {
+				return dynamic(cmd, args, toComplete), cobra.ShellCompDirectiveNoFileComp
 			}
+			return f.GetAlternatives(), cobra.ShellCompDirectiveNoFileComp
+		})
+		if err != nil {
+			panic(fmt.Errorf("completion for %s: %w", f.GetName(), err))
 		}
 	}()
 
-	// Type handlers bind through cobra.Command.Flags(). For a persistent
-	// parameter, bind on a temporary command and transfer the resulting flag
-	// to the declaring command's PersistentFlags set. The flag's Value retains
-	// the same typed pointer returned by the handler.
-	bindFlag := func(handler *typeHandler, defaultVal any) {
-		bindingCmd := cmd
-		if f.isPersistent() {
-			bindingCmd = &cobra.Command{}
-		}
-		valuePtr := handler.bindFlag(bindingCmd, f.GetName(), f.GetShort(), descr, defaultVal)
-		if f.isPersistent() {
-			cmd.PersistentFlags().AddFlag(bindingCmd.Flags().Lookup(f.GetName()))
-		}
-		f.setValuePtr(valuePtr)
+	h := handlerFor(f)
+	if h == nil {
+		return fmt.Errorf("unsupported param type: %s", f.GetType())
 	}
-
-	// Look up type handler for scalar types (including net.IP which is []byte but treated as scalar)
-	if handler, _ := lookupHandler(f.GetType()); handler != nil {
-		var defVal any
-		if f.hasDefaultValue() {
-			defVal = f.defaultValuePtr()
-		}
-		bindFlag(handler, defVal)
-		return nil
+	var def any
+	if f.hasDefaultValue() {
+		def = f.defaultValuePtr()
 	}
-
-	// Map types — try native handler first, then JSON fallback
-	if f.GetKind() == reflect.Map {
-		mapHandler := lookupMapHandler(f.GetType())
-		if mapHandler == nil {
-			mapHandler = jsonFallbackHandler(f.GetType())
-		}
-		var defVal any
-		if f.hasDefaultValue() {
-			defVal = f.defaultValuePtr()
-		}
-		bindFlag(mapHandler, defVal)
-		return nil
+	bindingCmd := cmd
+	if f.isPersistent() {
+		bindingCmd = &cobra.Command{}
 	}
-
-	// Slice types — try native handler first, then JSON fallback
-	if f.GetKind() == reflect.Slice {
-		elemType := f.GetType().Elem()
-		sliceHandler := lookupSliceHandler(elemType)
-
-		if sliceHandler != nil {
-			var defVal any
-			if f.hasDefaultValue() {
-				defValRef := reflect.ValueOf(f.defaultValuePtr()).Elem()
-				// If default was parsed from string tag, it might need parsing into the proper slice type
-				if defValRef.Kind() != reflect.Slice {
-					parsed, err := sliceHandler.parse(f.GetName(), f.defaultValueStr())
-					if err != nil {
-						return fmt.Errorf("default value for slice param '%s' is invalid: %s", f.GetName(), err.Error())
-					}
-					f.SetDefault(parsed)
-				}
-				defVal = f.defaultValuePtr()
-			}
-			switch f.GetCollection() {
-			case "", CollectionSlice:
-				bindFlag(sliceHandler, defVal)
-			case CollectionArray:
-				bindingCmd := cmd
-				if f.isPersistent() {
-					bindingCmd = &cobra.Command{}
-				}
-				valuePtr, err := bindArrayFlag(bindingCmd, f.GetName(), f.GetShort(), descr, f.GetType().Elem(), defVal)
-				if err != nil {
-					return err
-				}
-				if f.isPersistent() {
-					cmd.PersistentFlags().AddFlag(bindingCmd.Flags().Lookup(f.GetName()))
-				}
-				f.setValuePtr(valuePtr)
-			default:
-				return fmt.Errorf("invalid collection mode %q for param %s", f.GetCollection(), f.GetName())
-			}
-			return nil
+	if f.GetCollection() == CollectionArray {
+		value, err := bindArrayFlag(bindingCmd, f.GetName(), f.GetShort(), descr, f.GetType().Elem(), def)
+		if err != nil {
+			return err
 		}
-
-		// JSON fallback for complex slice types (nested slices, etc.)
-		if f.GetCollection() == CollectionArray {
-			return fmt.Errorf("collection mode %q is not supported for slice param %s with element type %s", CollectionArray, f.GetName(), elemType)
-		}
-		fallback := jsonFallbackHandler(f.GetType())
-		var defVal any
-		if f.hasDefaultValue() {
-			defVal = f.defaultValuePtr()
-		}
-		bindFlag(fallback, defVal)
-		return nil
+		f.setValuePtr(value)
+	} else {
+		f.setValuePtr(h.bindFlag(bindingCmd, f.GetName(), f.GetShort(), descr, def))
 	}
-
-	if f.GetKind() == reflect.Array {
-		return fmt.Errorf("unsupported param type (Array): %s: ", f.GetKind().String())
+	if f.isPersistent() {
+		cmd.PersistentFlags().AddFlag(bindingCmd.Flags().Lookup(f.GetName()))
 	}
+	return nil
 
-	return fmt.Errorf("unsupported param type: %s", f.GetKind().String())
 }
 
-func readEnv(f Param) error {
+func readEnv(f parameter) error {
 	if f.GetEnv() == "" {
 		return nil
 	}
@@ -1513,9 +1344,9 @@ func readEnv(f Param) error {
 	return nil
 }
 
-func readFrom(f Param, strVal string) error {
+func readFrom(f parameter, strVal string) error {
 
-	ptr, err := parsePtr(f.GetName(), f.GetType(), f.GetKind(), strVal)
+	ptr, err := handlerFor(f).parse(f.GetName(), strVal)
 	if err != nil {
 		return err
 	}
@@ -1540,41 +1371,6 @@ func parseTimeString(s string) (time.Time, error) {
 		}
 	}
 	return time.Time{}, fmt.Errorf("unable to parse time: %s", s)
-}
-
-func parsePtr(
-	name string,
-	tpe reflect.Type,
-	kind reflect.Kind,
-	strVal string,
-) (any, error) {
-	// Scalar types — look up by exact type first, then by kind
-	if handler, _ := lookupHandler(tpe); handler != nil {
-		return handler.parse(name, strVal)
-	}
-
-	// Map types — native handler or JSON fallback
-	if kind == reflect.Map {
-		if mapHandler := lookupMapHandler(tpe); mapHandler != nil {
-			return mapHandler.parse(name, strVal)
-		}
-		return jsonFallbackHandler(tpe).parse(name, strVal)
-	}
-
-	// Slice types — native handler or JSON fallback
-	if kind == reflect.Slice {
-		elemType := tpe.Elem()
-		if sliceHandler := lookupSliceHandler(elemType); sliceHandler != nil {
-			return sliceHandler.parse(name, strVal)
-		}
-		return jsonFallbackHandler(tpe).parse(name, strVal)
-	}
-
-	if kind == reflect.Array {
-		return nil, fmt.Errorf("arrays not supported param type. Use a slice instead: %s", kind.String())
-	}
-
-	return nil, fmt.Errorf("unsupported param type: %s", kind.String())
 }
 
 func camelToKebabCase(in string) string {
@@ -1649,7 +1445,7 @@ func positionalSkipError(name, skipKind string) error {
 // isBoaIgnored reports whether a field should be skipped entirely by boa
 // traversal — no mirror, no preallocation, no CLI / env / config wiring.
 // Triggered by either:
-//   - `boa:"ignore"` (aliases: `ignored`, `-`) — explicit user opt-out, or
+//   - `boa:"ignore"` — explicit user opt-out, or
 //   - an unexported field — reflect cannot take the address of unexported
 //     fields without unsafe games, and by Go convention they are private
 //     implementation state owned by the declaring package. Embedding an
@@ -1658,30 +1454,25 @@ func positionalSkipError(name, skipKind string) error {
 //     in preallocateStructPtrs with `reflect.Value.Interface: cannot return
 //     value obtained from unexported field`.
 //
-// `boa:"configonly"` is deliberately NOT ignored: it produces a mirror and
-// runs validation, but is suppressed from CLI and env (see the enrichment
-// loop where it is translated to SetNoFlag+SetNoEnv).
+// `boa:"configonly"` produces a mirror and runs validation, but is suppressed
+// from CLI and env (see the enrichment loop where it is translated to
+// SetNoFlag+SetNoEnv).
 func isBoaIgnored(field reflect.StructField) bool {
 	if !field.IsExported() {
 		return true
 	}
 	boaTags := getBoaTags(field)
-	return slices.Contains(boaTags, "ignore") ||
-		slices.Contains(boaTags, "ignored") ||
-		slices.Contains(boaTags, "-")
+	return slices.Contains(boaTags, "ignore")
 }
 
-// traverse is the public-facing entrypoint; it walks from the root params struct
-// starting with an empty path. It accepts variadic prefix strings for backward
-// compatibility with existing call sites that sometimes preload a name prefix.
+// traverse walks from the root parameters struct with an empty field-name prefix.
 func traverse(
 	ctx *processingContext,
 	structPtr any,
-	fParam func(param Param, paramFieldName string, tags reflect.StructTag) error,
+	fParam func(param parameter, paramFieldName string, tags reflect.StructTag) error,
 	fStruct func(structPtr any) error,
-	prefixParts ...string,
 ) error {
-	return traverseAt(ctx, structPtr, nil, fParam, fStruct, prefixParts...)
+	return traverseAt(ctx, structPtr, nil, fParam, fStruct, "")
 }
 
 // traverseAt walks the struct tree while carrying the declared-index path from
@@ -1693,12 +1484,10 @@ func traverseAt(
 	ctx *processingContext,
 	structPtr any,
 	path []int,
-	fParam func(param Param, paramFieldName string, tags reflect.StructTag) error,
+	fParam func(param parameter, paramFieldName string, tags reflect.StructTag) error,
 	fStruct func(structPtr any) error,
-	prefixParts ...string,
+	prefix string,
 ) error {
-	prefix := strings.Join(prefixParts, "")
-
 	if reflect.TypeOf(structPtr).Kind() != reflect.Pointer {
 		return fmt.Errorf("expected pointer to struct")
 	}
@@ -1737,7 +1526,7 @@ func traverseAt(
 
 		fieldAddr := rootValue.Field(i).Addr()
 		// check if field is a param
-		param, isParam := fieldAddr.Interface().(Param)
+		param, isParam := fieldAddr.Interface().(parameter)
 		prefixedName := prefix + field.Name
 		if isParam {
 			if fParam != nil {
@@ -1795,7 +1584,7 @@ func traverseAt(
 					}
 					ctx.pathOrder = append(ctx.pathOrder, pathKey)
 					ctx.mirrorByPath[pathKey] = param
-					// Maintain the reverse address index for HookContext.GetParam(&field).
+					// Maintain the reverse address index for boa.Param(ctx, &field).
 					// This is a non-authoritative cache — mirrorByPath is the source of truth.
 					if ctx.addrToPath != nil {
 						ctx.addrToPath[fieldAddr.UnsafePointer()] = pathKey
@@ -1812,7 +1601,7 @@ func traverseAt(
 				continue
 			}
 
-			slog.Warn(fmt.Sprintf("field %s is not a type that is interpretable as a boa.Param. It will be ignored", field.Name))
+			slog.Warn(fmt.Sprintf("field %s is not a type that is interpretable as a boa.Parameter. It will be ignored", field.Name))
 			continue // not a param
 		}
 	}
@@ -1874,7 +1663,7 @@ type commandFlagRef struct {
 // Explicit shorts and non-persistent auto shorts take precedence; any conflict
 // involving explicit persistent shorts is reported later by
 // validateTreeShorthands.
-func resolvePersistentAutoShorthands(cmd *cobra.Command, params []Param) {
+func resolvePersistentAutoShorthands(cmd *cobra.Command, params []parameter) {
 	used := make(map[string]bool)
 
 	var collectCommandFlags func(*cobra.Command)
@@ -2016,7 +1805,7 @@ func validateTreeShorthands(root *cobra.Command) error {
 // but does NOT set the Run/RunE function. Returns both the command and the processing context
 // so callers can set up the appropriate run function with access to the context.
 // Returns an error if any setup/initialization fails.
-func (b Cmd) toCobraBase() (*cobra.Command, *processingContext, error) {
+func (b command) toCobraBase() (*cobra.Command, *processingContext, error) {
 	cmd := &cobra.Command{
 		Use:           b.Use,
 		Short:         b.Short,
@@ -2034,17 +1823,18 @@ func (b Cmd) toCobraBase() (*cobra.Command, *processingContext, error) {
 	ctx := &processingContext{
 		Context:       context.Background(), // prepare to override later?
 		rootStructPtr: b.Params,
-		mirrorByPath:  map[fieldPath]Param{},
+		mirrorByPath:  map[fieldPath]parameter{},
 		pathOrder:     []fieldPath{},
 		addrToPath:    map[unsafe.Pointer]fieldPath{},
-		reloadFactory: b.reloadFactory,
 	}
 
 	// Preallocate nil struct pointer fields so traverse can discover their children.
 	// This must happen before the first traverse and before init hooks so users can
 	// access fields like &params.DB.Port in InitFunc/InitFuncCtx.
 	if b.Params != nil {
-		preallocateStructPtrs(ctx, b.Params, nil)
+		if err := preallocateStructPtrs(ctx, b.Params, nil); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	// build mirrors
@@ -2059,14 +1849,14 @@ func (b Cmd) toCobraBase() (*cobra.Command, *processingContext, error) {
 	// if b.params or any inner struct implements CfgStructInit, call it
 	if b.Params != nil {
 		err := traverse(ctx, b.Params, nil, func(innerParams any) error {
-			if toInit, ok := b.Params.(CfgStructInit); ok {
+			if toInit, ok := innerParams.(CfgStructInit); ok {
 				err := toInit.Init()
 				if err != nil {
 					return fmt.Errorf("error in CfgStructInit.Init(): %w", err)
 				}
 			}
 			// context-aware interface
-			if toInitCtx, ok := b.Params.(CfgStructInitCtx); ok {
+			if toInitCtx, ok := innerParams.(CfgStructInitCtx); ok {
 				hookCtx := newHookContext(ctx)
 				err := toInitCtx.InitCtx(hookCtx)
 				if err != nil {
@@ -2123,223 +1913,14 @@ func (b Cmd) toCobraBase() (*cobra.Command, *processingContext, error) {
 		}
 	}
 
-	var positional []Param
+	var positional []parameter
 	hasPersistentParams := false
 
 	if b.Params != nil {
 
-		// look in tags for info about positional args
-		currentStructPtr := b.Params
-		err := traverse(ctx, b.Params, func(param Param, _ string, tags reflect.StructTag) error {
-			if tags.Get("positional") == "true" || tags.Get("pos") == "true" {
-				param.setPositional(true)
-			}
-			if persistent, ok := tags.Lookup("persistent"); ok {
-				switch persistent {
-				case "true":
-					param.setPersistent(true)
-				case "false":
-					param.setPersistent(false)
-				default:
-					return fmt.Errorf("invalid persistent value for param %s: %s", param.GetName(), persistent)
-				}
-			}
-			if param.getDescr() == "" {
-				if descr, ok := tags.Lookup("help"); ok {
-					param.setDescription(descr)
-				} else if descr, ok := tags.Lookup("desc"); ok {
-					param.setDescription(descr)
-				} else if descr, ok := tags.Lookup("descr"); ok {
-					param.setDescription(descr)
-				} else if descr, ok := tags.Lookup("description"); ok {
-					param.setDescription(descr)
-				}
-			}
-			if param.GetEnv() == "" {
-				if env, ok := tags.Lookup("env"); ok {
-					// Apply struct prefix to explicit env tags
-					if pm, ok2 := param.(*paramMeta); ok2 && pm.envPrefix != "" {
-						param.SetEnv(pm.envPrefix + env)
-					} else {
-						param.SetEnv(env)
-					}
-				}
-			}
-			if param.GetShort() == "" {
-				if shrt, ok := tags.Lookup("short"); ok {
-					param.SetShort(shrt)
-				}
-			}
-			if param.GetName() == "" {
-				if name, ok := tags.Lookup("name"); ok {
-					// Apply struct prefix to explicit name tags
-					if pm, ok2 := param.(*paramMeta); ok2 && pm.flagPrefix != "" {
-						param.SetName(pm.flagPrefix + name)
-					} else {
-						param.SetName(name)
-					}
-				} else if name, ok := tags.Lookup("long"); ok {
-					if pm, ok2 := param.(*paramMeta); ok2 && pm.flagPrefix != "" {
-						param.SetName(pm.flagPrefix + name)
-					} else {
-						param.SetName(name)
-					}
-				}
-			}
-
-			setAlts := func(alts string) {
-				strVal := strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(alts), "["), "]")
-				elements := strings.Split(strVal, ",")
-				for i, element := range elements {
-					elements[i] = strings.TrimSpace(element)
-				}
-				// Remove empty
-				nonEmpty := make([]string, 0)
-				for _, element := range elements {
-					if element != "" {
-						nonEmpty = append(nonEmpty, element)
-					}
-				}
-				param.SetAlternatives(nonEmpty)
-			}
-
-			if alts, ok := tags.Lookup("alts"); ok {
-				setAlts(alts)
-			}
-			if alts, ok := tags.Lookup("alternatives"); ok {
-				setAlts(alts)
-			}
-
-			if strictAlts, ok := tags.Lookup("strict-alts"); ok {
-				param.SetStrictAlts(strictAlts == "true")
-			}
-			if strictAlts, ok := tags.Lookup("strict"); ok {
-				param.SetStrictAlts(strictAlts == "true")
-			}
-
-			if collection, ok := tags.Lookup("collection"); ok {
-				mode := CollectionMode(strings.TrimSpace(collection))
-				switch mode {
-				case CollectionSlice, CollectionArray:
-					if param.GetKind() != reflect.Slice {
-						return fmt.Errorf("collection on param %s: only slice fields support collection modes", param.GetName())
-					}
-					param.SetCollection(mode)
-				default:
-					return fmt.Errorf("invalid collection mode %q for param %s (expected %q or %q)", collection, param.GetName(), CollectionSlice, CollectionArray)
-				}
-			}
-
-			if !param.hasDefaultValue() {
-				// Default values are used for injection. So we can't just overwrite them
-				if defaultPtr, ok := tags.Lookup("default"); ok {
-					ptr, err := parsePtr(param.GetName(), param.GetType(), param.GetKind(), defaultPtr)
-					if err != nil {
-						return fmt.Errorf("invalid default value for param %s: %s", param.GetName(), err.Error())
-					}
-					param.SetDefault(ptr)
-				}
-			}
-
-			// Parse min/max/pattern validation tags
-			if pm, ok := param.(*paramMeta); ok {
-				if minStr, ok := tags.Lookup("min"); ok {
-					ptr, err := parseBoundTag(pm.boundKind(), minStr)
-					if err != nil {
-						return fmt.Errorf("invalid min value for param %s: %s", param.GetName(), err.Error())
-					}
-					if ptr != nil {
-						pm.minVal = ptr
-					}
-				}
-				if maxStr, ok := tags.Lookup("max"); ok {
-					ptr, err := parseBoundTag(pm.boundKind(), maxStr)
-					if err != nil {
-						return fmt.Errorf("invalid max value for param %s: %s", param.GetName(), err.Error())
-					}
-					if ptr != nil {
-						pm.maxVal = ptr
-					}
-				}
-				if pat, ok := tags.Lookup("pattern"); ok {
-					pm.pattern = pat
-				}
-			}
-
-			// Detect `boa` directives that suppress individual input channels
-			// without fully ignoring the param:
-			//   - noflag / nocli → skip CLI flag, keep env + config + validation
-			//   - noenv          → skip env var reading, keep CLI + config + validation
-			//   - configonly     → shorthand for noflag + noenv, config-file only,
-			//                      but mirror + validation are preserved. (The tag
-			//                      used to alias `ignore` and skip traversal entirely;
-			//                      the current form is strictly more useful since the
-			//                      field can still participate in min/max/pattern and
-			//                      custom validators.)
-			// These are orthogonal and can be combined.
-			for _, t := range strings.Split(tags.Get("boa"), ",") {
-				switch strings.TrimSpace(t) {
-				case "noflag", "nocli":
-					param.SetNoFlag(true)
-				case "noenv":
-					param.SetNoEnv(true)
-				case "configonly":
-					param.SetNoFlag(true)
-					param.SetNoEnv(true)
-				}
-			}
-			// A positional arg that's been hidden from cobra via noflag or
-			// ignored can never consume argv, so catch the combo here as
-			// well — the connect-time check is a safety net for the
-			// programmatic path (where these flags can flip after enrichment).
-			if param.isPositional() && (param.IsNoFlag() || param.IsIgnored()) {
-				skipKind := "ignore"
-				if param.IsNoFlag() {
-					skipKind = "noflag"
-				}
-				return positionalSkipError(param.GetName(), skipKind)
-			}
-
-			// Detect configfile — either from the tag or a programmatic
-			// SetConfigFile(true) call made during InitFunc / InitFuncCtx.
-			// The tag is normalized onto the flag first so downstream checks
-			// only need to read param.IsConfigFile().
-			if cfgTag, ok := tags.Lookup("configfile"); ok && cfgTag == "true" {
-				param.SetConfigFile(true)
-			}
-			if param.IsConfigFile() {
-				// Accept either `string` (single config file) or `[]string`
-				// (overlay chain: later paths override earlier at the key
-				// level). Any other type is a programmer error.
-				pt := param.GetType()
-				isString := pt.Kind() == reflect.String
-				isStringSlice := pt.Kind() == reflect.Slice && pt.Elem().Kind() == reflect.String
-				if !isString && !isStringSlice {
-					return fmt.Errorf("configfile on param %s: must be a string or []string field", param.GetName())
-				}
-				// The target struct path is the parent of the configfile param's own path.
-				// Read it directly from paramMeta.pathKey (stashed during traverse) —
-				// no scan over pathOrder needed.
-				var targetPath fieldPath
-				if pm, ok := param.(*paramMeta); ok {
-					if idx := strings.LastIndex(string(pm.pathKey), "."); idx >= 0 {
-						targetPath = pm.pathKey[:idx]
-					}
-					// If there's no dot, the configfile field lives at the root
-					// and its target path is the empty fieldPath — already set.
-				}
-				ctx.ConfigFiles = append(ctx.ConfigFiles, configFileEntry{
-					mirror:     param,
-					target:     currentStructPtr,
-					targetPath: targetPath,
-				})
-			}
-
-			return nil
-		}, func(structPtr any) error {
-			currentStructPtr = structPtr
-			return nil
-		})
+		err := traverse(ctx, b.Params, func(param parameter, _ string, tags reflect.StructTag) error {
+			return ctx.applyTags(param, tags)
+		}, nil)
 
 		if err != nil {
 			return nil, nil, fmt.Errorf("error parsing tags: %w", err)
@@ -2348,13 +1929,15 @@ func (b Cmd) toCobraBase() (*cobra.Command, *processingContext, error) {
 		if b.ParamEnrich == nil {
 			b.ParamEnrich = ParamEnricherDefault
 		}
-		processed := make([]Param, 0)
-		err = traverse(ctx, b.Params, func(param Param, paramFieldName string, _ reflect.StructTag) error {
-			err := b.ParamEnrich(processed, param, paramFieldName)
+		processed := make([]parameter, 0)
+		publicProcessed := make([]Parameter, 0)
+		err = traverse(ctx, b.Params, func(param parameter, paramFieldName string, _ reflect.StructTag) error {
+			err := b.ParamEnrich(publicProcessed, param, paramFieldName)
 			if err != nil {
 				return err
 			}
 			processed = append(processed, param)
+			publicProcessed = append(publicProcessed, param)
 			return nil
 		}, nil)
 		if err != nil {
@@ -2408,7 +1991,7 @@ func (b Cmd) toCobraBase() (*cobra.Command, *processingContext, error) {
 
 		syncMirrors(ctx)
 
-		err = traverse(ctx, b.Params, func(param Param, _ string, tags reflect.StructTag) error {
+		err = traverse(ctx, b.Params, func(param parameter, _ string, tags reflect.StructTag) error {
 			err := connect(param, cmd, positional, ctx)
 			if err != nil {
 				return err
@@ -2416,6 +1999,10 @@ func (b Cmd) toCobraBase() (*cobra.Command, *processingContext, error) {
 
 			return nil
 		}, nil)
+
+		if err != nil {
+			return nil, nil, fmt.Errorf("error connecting params: %w", err)
+		}
 
 		// if b.Params implements CfgStructPostCreate, call it
 		if postCreate, ok := b.Params.(CfgStructPostCreate); ok {
@@ -2442,9 +2029,6 @@ func (b Cmd) toCobraBase() (*cobra.Command, *processingContext, error) {
 				return nil, nil, fmt.Errorf("error in PostCreateFuncCtx: %w", err)
 			}
 		}
-		if err != nil {
-			return nil, nil, fmt.Errorf("error connecting params: %s", err.Error())
-		}
 	}
 
 	// Build ValidArgsFunction from per-positional-param Alternatives/AlternativesFunc
@@ -2466,10 +2050,10 @@ func (b Cmd) toCobraBase() (*cobra.Command, *processingContext, error) {
 				if posIdx < len(positional) {
 					p := positional[posIdx]
 					if p.GetAlternativesFunc() != nil {
-						return p.GetAlternativesFunc()(cmd, args, toComplete), cobra.ShellCompDirectiveDefault
+						return p.GetAlternativesFunc()(cmd, args, toComplete), cobra.ShellCompDirectiveNoFileComp
 					}
 					if p.GetAlternatives() != nil {
-						return p.GetAlternatives(), cobra.ShellCompDirectiveDefault
+						return p.GetAlternatives(), cobra.ShellCompDirectiveNoFileComp
 					}
 				}
 				if userValidArgsFunc != nil {
@@ -2480,231 +2064,11 @@ func (b Cmd) toCobraBase() (*cobra.Command, *processingContext, error) {
 		}
 	}
 
-	// now wrap the run function of the command to validate the flags
 	paramPipeline := func(cmd *cobra.Command, args []string) error {
-		if b.Params != nil {
-
-			// Reset the live-reload path registries at the top of every
-			// pipeline run so a reload sees a fresh list that reflects
-			// only what this run actually loaded.
-			ctx.LoadedConfigFiles = ctx.LoadedConfigFiles[:0]
-			ctx.ExtraWatchedConfigFiles = ctx.ExtraWatchedConfigFiles[:0]
-
-			// Must read env values before running any prevalidate code
-			if err := parseEnv(ctx, b.Params); err != nil {
-				return err
-			}
-
-			syncMirrors(ctx)
-
-			// Snapshot preallocated structs before config loading. Used as fallback
-			// for non-JSON formats where key-presence detection can't work.
-			var preConfigSnapshots []reflect.Value
-			if len(ctx.PreallocatedPtrs) > 0 {
-				preConfigSnapshots = snapshotPreallocatedStructs(ctx)
-			}
-
-			// Auto-load config files tagged with configfile:"true".
-			// Substruct configs load first, root config loads last (root overrides inner).
-			// Priority: CLI > env > root config > substruct config > defaults
-			//
-			// We collect (target, rawData) pairs so that after loading we can probe
-			// the raw bytes for key presence — this lets us detect config-file writes
-			// even when the value equals Go's zero value or the field's default.
-			type configLoadResult struct {
-				target     any
-				targetPath fieldPath
-				rawData    []byte
-				format     ConfigFormat
-				// ext is the file extension (dot-prefixed) we loaded from,
-				// or "" for a programmatic load. Used later to drive
-				// format-aware field-tag resolution in the key-presence
-				// walker via structTagForExt.
-				ext string
-			}
-			var configResults []configLoadResult
-
-			// Resolve the per-command override once. ConfigFormat takes
-			// precedence over the legacy ConfigUnmarshal; if neither is set,
-			// loadConfigFileInto falls back to the extension-registered format.
-			cmdOverride := b.ConfigFormat
-			if cmdOverride.Unmarshal == nil && b.ConfigUnmarshal != nil {
-				cmdOverride = ConfigFormat{Unmarshal: b.ConfigUnmarshal}
-			}
-
-			if len(ctx.ConfigFiles) > 0 {
-				// Separate root and substruct entries
-				var subEntries, rootEntries []configFileEntry
-				for _, entry := range ctx.ConfigFiles {
-					if entry.target == b.Params {
-						rootEntries = append(rootEntries, entry)
-					} else {
-						subEntries = append(subEntries, entry)
-					}
-				}
-				loadEntry := func(entry configFileEntry) error {
-					if !entry.mirror.HasValue() {
-						return nil
-					}
-					// String fields load one file; []string fields load a
-					// left-to-right overlay chain where each file's keys
-					// cascade into the target struct. Later files overlay
-					// earlier at the key level — missing keys leave the
-					// previous value alone because json.Unmarshal only
-					// writes fields that appear in the input.
-					paths := configFilePathsFromMirror(entry.mirror)
-					for _, filePath := range paths {
-						if filePath == "" {
-							continue
-						}
-						rawData, effective, err := loadConfigFileInto(filePath, entry.target, cmdOverride)
-						if err != nil {
-							return NewUserInputError(fmt.Errorf("configfile %s: %w", entry.mirror.GetName(), err))
-						}
-						configResults = append(configResults, configLoadResult{
-							target:     entry.target,
-							targetPath: entry.targetPath,
-							rawData:    rawData,
-							format:     effective,
-							ext:        filepath.Ext(filePath),
-						})
-						// Record the path so HookContext.WatchedConfigFiles
-						// can hand it to a live-reload watcher. Reset at
-						// the top of PreRunE above so a reload sees a
-						// fresh list.
-						ctx.LoadedConfigFiles = append(ctx.LoadedConfigFiles, filePath)
-					}
-					return nil
-				}
-				// Load substruct configs first
-				for _, entry := range subEntries {
-					if err := loadEntry(entry); err != nil {
-						return err
-					}
-				}
-				// Then load root config (overrides substruct values)
-				for _, entry := range rootEntries {
-					if err := loadEntry(entry); err != nil {
-						return err
-					}
-				}
-				syncMirrors(ctx)
-			}
-
-			// Probe raw config data for key presence to detect which preallocated
-			// struct pointers were mentioned in config files. This detects writes
-			// even when the value equals Go's zero value or the field's default.
-			// Formats whose ConfigFormat has no KeyTree (or whose KeyTree errors
-			// out) fall back to snapshot comparison — but only for the subtree
-			// of that particular load, so a failing sub-load can't corrupt the
-			// precision of sibling loads whose KeyTree succeeded.
-			var fallbackRoots []fieldPath
-			for _, cr := range configResults {
-				if !markConfigKeysPresent(ctx, cr.target, cr.targetPath, cr.rawData, cr.format, cr.ext) {
-					fallbackRoots = append(fallbackRoots, cr.targetPath)
-				}
-			}
-			if len(fallbackRoots) > 0 && preConfigSnapshots != nil {
-				markConfigChangedStructs(ctx, preConfigSnapshots, fallbackRoots)
-			}
-
-			// Clean up preallocated struct pointers that had no fields set.
-			// This must happen after all value sources (CLI, env, config) and before
-			// validation, so that required-field checks don't fire for unused struct groups.
-			if len(ctx.PreallocatedPtrs) > 0 {
-				cleanupPreallocatedPtrs(ctx)
-			}
-
-			// if b.params or any inner struct implements CfgStructPreValidate, call it
-			err := traverse(ctx, b.Params, nil, func(innerParams any) error {
-				if s, ok := innerParams.(CfgStructPreValidate); ok {
-					err := s.PreValidate()
-					if err != nil {
-						return fmt.Errorf("error in PreValidate: %w", err)
-					}
-				}
-				// context-aware interface
-				if s, ok := innerParams.(CfgStructPreValidateCtx); ok {
-					hookCtx := newHookContext(ctx)
-					err := s.PreValidateCtx(hookCtx)
-					if err != nil {
-						return fmt.Errorf("error in PreValidateCtx: %w", err)
-					}
-				}
-				return nil
-			})
-			if err != nil {
-				return err
-			}
-
-			// if we have a custom pre-execute function, call it
-			if b.PreValidateFunc != nil {
-				err := b.PreValidateFunc(b.Params, cmd, args)
-				if err != nil {
-					return fmt.Errorf("error in PreValidateFunc: %w", err)
-				}
-			}
-
-			// if we have a context-aware pre-validate function, call it
-			if b.PreValidateFuncCtx != nil {
-				hookCtx := newHookContext(ctx)
-				err := b.PreValidateFuncCtx(hookCtx, b.Params, cmd, args)
-				if err != nil {
-					return fmt.Errorf("error in PreValidateFuncCtx: %w", err)
-				}
-			}
-
-			syncMirrors(ctx)
-
-			if err = validate(ctx, b.Params); err != nil {
-				return err
-			}
-
-			// Sync mirrors again after validation to copy converted values (e.g., *url.URL from string)
-			syncMirrors(ctx)
-
-			// if b.params or any inner struct implements CfgStructPreExecute, call it
-			err = traverse(ctx, b.Params, nil, func(innerParams any) error {
-				if preExecute, ok := innerParams.(CfgStructPreExecute); ok {
-					err := preExecute.PreExecute()
-					if err != nil {
-						return fmt.Errorf("error in PreExecute: %w", err)
-					}
-				}
-				// context-aware interface
-				if preExecuteCtx, ok := innerParams.(CfgStructPreExecuteCtx); ok {
-					hookCtx := newHookContext(ctx)
-					err := preExecuteCtx.PreExecuteCtx(hookCtx)
-					if err != nil {
-						return fmt.Errorf("error in PreExecuteCtx: %w", err)
-					}
-				}
-				return nil
-			})
-			if err != nil {
-				return err
-			}
-
-			// if we have a custom pre-execute function, call it
-			if b.PreExecuteFunc != nil {
-				err := b.PreExecuteFunc(b.Params, cmd, args)
-				if err != nil {
-					return fmt.Errorf("error in PreExecuteFunc: %w", err)
-				}
-			}
-
-			// if we have a context-aware pre-execute function, call it
-			if b.PreExecuteFuncCtx != nil {
-				hookCtx := newHookContext(ctx)
-				err := b.PreExecuteFuncCtx(hookCtx, b.Params, cmd, args)
-				if err != nil {
-					return fmt.Errorf("error in PreExecuteFuncCtx: %w", err)
-				}
-			}
-
-		}
-		return nil
+		b.prepareReload(ctx, cmd, args)
+		return b.loadAndValidate(ctx, cmd, args)
 	}
+
 	if hasPersistentParams {
 		cmd.PersistentPreRunE = paramPipeline
 		prependPersistentPipelineToDescendants(cmd, paramPipeline)
@@ -2719,7 +2083,7 @@ func (b Cmd) toCobraBase() (*cobra.Command, *processingContext, error) {
 }
 
 // validateRunFuncs checks that at most one run function is set and returns an error if more than one is configured.
-func (b Cmd) validateRunFuncs() error {
+func (b command) validateRunFuncs() error {
 	runFuncCount := 0
 	if b.RunFunc != nil {
 		runFuncCount++
@@ -2739,116 +2103,50 @@ func (b Cmd) validateRunFuncs() error {
 	return nil
 }
 
-// toCobraImpl converts a Cmd to a cobra.Command.
-// Always uses cmd.RunE internally so errors flow back through Execute() to runImpl().
-func (b Cmd) toCobraImpl() *cobra.Command {
-	if err := b.validateRunFuncs(); err != nil {
-		panic(err)
-	}
-	cmd, ctx, err := b.toCobraBase()
+// toCobraImpl is the panic-on-setup-error facade over the shared constructor.
+func (b command) toCobraImpl() *cobra.Command {
+	cmd, err := b.buildCommand(true)
 	if err != nil {
 		panic(err)
 	}
-
-	// Always use RunE so errors flow back through Execute() to runImpl()
-	// This ensures consistent error handling (UserInputError -> exit(1), others -> panic)
-	if b.RunFunc != nil {
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
-			b.RunFunc(cmd, args)
-			return nil
-		}
-	} else if b.RunFuncCtx != nil {
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
-			hookCtx := newHookContext(ctx)
-			b.RunFuncCtx(hookCtx, cmd, args)
-			return nil
-		}
-	} else if b.RunFuncE != nil {
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
-			err := b.RunFuncE(cmd, args)
-			if err != nil && !IsUserInputError(err) {
-				return &runFuncError{Err: err}
-			}
-			return err
-		}
-	} else if b.RunFuncCtxE != nil {
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
-			hookCtx := newHookContext(ctx)
-			err := b.RunFuncCtxE(hookCtx, cmd, args)
-			if err != nil && !IsUserInputError(err) {
-				return &runFuncError{Err: err}
-			}
-			return err
-		}
-	} else if len(b.SubCmds) > 0 {
-		// No RunFunc but has subcommands. Make the command runnable so cobra
-		// rejects unknown subcommands with an error instead of silently showing help.
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
-			return cmd.Help()
-		}
-		if b.Args == nil {
-			cmd.Args = wrapArgsValidator(func(cmd *cobra.Command, args []string) error {
-				if len(args) > 0 {
-					return fmt.Errorf("unknown command %q for %q", args[0], cmd.CommandPath())
-				}
-				return nil
-			})
-		}
-	}
-
 	return cmd
 }
 
-// toCobraImplE converts a Cmd to a cobra.Command using cmd.RunE (returns error).
-// Returns (*cobra.Command, error) to propagate setup errors.
-func (b Cmd) toCobraImplE() (*cobra.Command, error) {
+func (b command) toCobraImplE() (*cobra.Command, error) { return b.buildCommand(false) }
+
+func (b command) buildCommand(wrapActionErrors bool) (*cobra.Command, error) {
 	if err := b.validateRunFuncs(); err != nil {
-		panic(err) // API misuse - should be caught during development
+		panic(err)
 	}
 	cmd, ctx, err := b.toCobraBase()
 	if err != nil {
 		return nil, err
 	}
-
-	// Set the RunE function based on which variant is configured
-	if b.RunFuncE != nil {
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
-			return b.RunFuncE(cmd, args)
-		}
-	} else if b.RunFuncCtxE != nil {
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
-			hookCtx := newHookContext(ctx)
-			return b.RunFuncCtxE(hookCtx, cmd, args)
-		}
-	} else if b.RunFunc != nil {
-		// Wrap non-E variant to return nil (no error)
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
-			b.RunFunc(cmd, args)
-			return nil
-		}
-	} else if b.RunFuncCtx != nil {
-		// Wrap non-E variant to return nil (no error)
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
-			hookCtx := newHookContext(ctx)
-			b.RunFuncCtx(hookCtx, cmd, args)
-			return nil
-		}
-	} else if len(b.SubCmds) > 0 {
-		// No RunFunc but has subcommands. Make the command runnable so cobra
-		// rejects unknown subcommands with an error instead of silently showing help.
-		cmd.RunE = func(cmd *cobra.Command, args []string) error {
-			return cmd.Help()
-		}
-		if b.Args == nil {
-			cmd.Args = wrapArgsValidator(func(cmd *cobra.Command, args []string) error {
-				if len(args) > 0 {
-					return fmt.Errorf("unknown command %q for %q", args[0], cmd.CommandPath())
-				}
-				return nil
-			})
+	var action func(*cobra.Command, []string) error
+	switch {
+	case b.validateOnly:
+		action = func(*cobra.Command, []string) error { return nil }
+	case b.RunFuncE != nil:
+		action = b.RunFuncE
+	case b.RunFuncCtxE != nil:
+		action = func(c *cobra.Command, args []string) error { return b.RunFuncCtxE(newHookContext(ctx), c, args) }
+	case b.RunFunc != nil:
+		action = func(c *cobra.Command, args []string) error { b.RunFunc(c, args); return nil }
+	case b.RunFuncCtx != nil:
+		action = func(c *cobra.Command, args []string) error { b.RunFuncCtx(newHookContext(ctx), c, args); return nil }
+	case len(b.SubCmds) > 0 && b.Args == nil:
+		// A command group delegates unknown-command errors and suggestions to Cobra.
+		cmd.Args = nil
+	}
+	if action != nil {
+		cmd.RunE = func(c *cobra.Command, args []string) error {
+			err := action(c, args)
+			if wrapActionErrors && err != nil && !IsUserInputError(err) {
+				return &runFuncError{Err: err}
+			}
+			return err
 		}
 	}
-
 	return cmd, nil
 }
 
@@ -2916,9 +2214,10 @@ func (ctx *processingContext) findPathByAddr(addr unsafe.Pointer) (fieldPath, bo
 }
 
 // reinterpretAs returns the raw field value viewed as the target type, without
-// copying. This supports type aliases (e.g., a MyString field seen as string) by
-// taking the field's address and reconstructing a Value at the same memory with
-// the target type. If the types already match, the input is returned unchanged.
+// copying. This supports named primitive types (for example, a MyString field
+// represented internally as string) by taking the field's address and
+// reconstructing a Value at the same memory with the target type. If the types
+// already match, the input is returned unchanged.
 //
 // This is the one legitimate use of unsafe in the sync path — cobra's flag system
 // only knows underlying types, so mirror storage and mirror → raw writes must go
@@ -2956,13 +2255,13 @@ func syncMirrors(ctx *processingContext) {
 		// Check if this is a pointer field (e.g., *string, *int)
 		pm, isParamMeta := mirror.(*paramMeta)
 		if isParamMeta && pm.isPointer {
-			// Reinterpret as pointer-to-underlying-type so type aliases round-trip
+			// Reinterpret as a pointer to the underlying type so named types round-trip.
 			ptrView := reinterpretAs(rawFieldVal, reflect.PointerTo(mirror.GetType()))
 			syncPointerField(ptrView, mirror)
 			continue
 		}
 
-		// Reinterpret as the underlying type (matters for type aliases)
+		// Reinterpret as the underlying type (matters for named primitives).
 		underlying := reinterpretAs(rawFieldVal, mirror.GetType())
 
 		if !mirror.wasSetOnCli() && !mirror.wasSetByEnv() && !underlying.IsZero() {
@@ -2991,7 +2290,7 @@ func syncMirrors(ctx *processingContext) {
 // syncPointerField handles bidirectional sync for pointer fields like *string, *int.
 // rawFieldVal is the *string field value itself (an addressable reflect.Value of
 // pointer kind). The mirror stores the element type (string).
-func syncPointerField(rawFieldVal reflect.Value, mirror Param) {
+func syncPointerField(rawFieldVal reflect.Value, mirror parameter) {
 	// Raw → Mirror: if the user's pointer is non-nil, inject the pointed-to value
 	if !mirror.wasSetOnCli() && !mirror.wasSetByEnv() && !rawFieldVal.IsNil() {
 		// rawFieldVal.Interface() is *string — same type cobra uses
@@ -3047,11 +2346,7 @@ func runImpl(cmd *cobra.Command, handler resultHandler) {
 
 func isSupportedType(t reflect.Type) bool {
 	// Exact type match (time.Time, time.Duration, net.IP, *url.URL)
-	if _, ok := exactTypeHandlers[t]; ok {
-		return true
-	}
-	// Kind-based match (string, int, bool, float, etc.)
-	if _, ok := kindHandlers[t.Kind()]; ok {
+	if lookupHandler(t) != nil {
 		return true
 	}
 	// Map types — all map[string]V types are supported (native pflag or JSON fallback)
@@ -3064,17 +2359,18 @@ func isSupportedType(t reflect.Type) bool {
 	}
 	// Pointer-to-supported-type (e.g., *string, *int, *bool)
 	if t.Kind() == reflect.Pointer {
-		return isSupportedType(t.Elem())
+		return t.Elem().Kind() != reflect.Pointer && isSupportedType(t.Elem())
 	}
 	return false
 }
 
-// normalizeType converts type aliases to their base types for cobra compatibility.
+// normalizeType converts named primitive types to their underlying types for
+// Cobra binding.
 // For example, `type MyString string` returns reflect.TypeOf("") (string).
 // Special types (time.Time, time.Duration, net.IP, *url.URL) are returned as-is.
 func normalizeType(t reflect.Type) reflect.Type {
 	// Exact-match handlers have their own baseType (special types stay as-is)
-	if handler, ok := exactTypeHandlers[t]; ok {
+	if handler := lookupHandler(t); handler != nil {
 		return handler.baseType
 	}
 
@@ -3093,27 +2389,20 @@ func normalizeType(t reflect.Type) reflect.Type {
 		return t
 	}
 
-	// Kind-based handlers provide the baseType for basic types + aliases
-	if handler, ok := kindHandlers[t.Kind()]; ok {
-		return handler.baseType
-	}
-
 	return t
 }
 
-func newParam(field *reflect.StructField, t reflect.Type) Param {
+func newParam(field *reflect.StructField, t reflect.Type) parameter {
 	// Determine if this is a pointer-to-value field (e.g., *string, *int)
-	// Note: *url.URL is NOT treated as a pointer field — it's a specific supported type
-	isPtr := t.Kind() == reflect.Pointer && t != urlPtrType
+	// Exact registered pointer types own their pointer semantics.
+	isPtr := t.Kind() == reflect.Pointer && exactTypeHandlers[t] == nil
 	valueType := t
 	if isPtr {
 		valueType = t.Elem()
 	}
 
-	// Normalize type aliases to their base types for cobra compatibility.
-	// e.g., `type MyString string` → store as string, since cobra's StringP returns *string.
-	// This matches the old required[T] behavior where newParam always created required[string]{},
-	// required[int]{}, etc. regardless of whether the field was a type alias.
+	// Normalize named primitive types because Cobra binds to pointers of the
+	// underlying built-in type (for example, *string rather than *MyString).
 	valueType = normalizeType(valueType)
 
 	// Pointer, map, and nested slice fields default to optional (nil = not set)
@@ -3126,44 +2415,12 @@ func newParam(field *reflect.StructField, t reflect.Type) Param {
 		isRequired = false
 	}
 
-	if requiredTag, ok := field.Tag.Lookup("required"); ok {
-		switch requiredTag {
-		case "true":
-			isRequired = true
-		case "false":
-			isRequired = false
-		default:
-			panic(fmt.Errorf("invalid value for field %s's required tag: %s", field.Name, requiredTag))
-		}
-	}
-	if requiredTag, ok := field.Tag.Lookup("req"); ok {
-		switch requiredTag {
-		case "true":
-			isRequired = true
-		case "false":
-			isRequired = false
-		default:
-			panic(fmt.Errorf("invalid value for field %s's required tag: %s", field.Name, requiredTag))
-		}
-	}
-	if optionalTag, ok := field.Tag.Lookup("optional"); ok {
-		switch optionalTag {
-		case "true":
-			isRequired = false
-		case "false":
-			isRequired = true
-		default:
-			panic(fmt.Errorf("invalid value for field %s's optional tag: %s", field.Name, optionalTag))
-		}
-	}
-	if optionalTag, ok := field.Tag.Lookup("opt"); ok {
-		switch optionalTag {
-		case "true":
-			isRequired = false
-		case "false":
-			isRequired = true
-		default:
-			panic(fmt.Errorf("invalid value for field %s's optional tag: %s", field.Name, optionalTag))
+	for _, key := range []string{"required", "optional"} {
+		if value, ok := field.Tag.Lookup(key); ok {
+			if value != "true" && value != "false" {
+				panic(fmt.Errorf("invalid value for field %s's %s tag: %s", field.Name, key, value))
+			}
+			isRequired = (value == "true") == (key == "required")
 		}
 	}
 
@@ -3178,3 +2435,10 @@ var timeType = reflect.TypeOf(time.Time{})
 var durationType = reflect.TypeOf(time.Duration(0))
 var ipType = reflect.TypeOf(net.IP{})
 var urlPtrType = reflect.TypeOf((*url.URL)(nil))
+
+func handlerFor(param parameter) *typeHandler {
+	if meta, ok := param.(*paramMeta); ok {
+		return meta.typeHandler()
+	}
+	return resolveHandler(param.GetType())
+}

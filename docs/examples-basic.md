@@ -20,7 +20,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "hello",
         Short: "Say hello",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -58,7 +58,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "server",
         Short: "Start a server",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -100,7 +100,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "app",
         Short: "Demo pointer fields",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -170,7 +170,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "deploy",
         Short: "Deploy the application",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -221,7 +221,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "copy",
         Short: "Copy a file",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -281,7 +281,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "greet",
         Short: "Greet people",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -321,7 +321,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "server",
         Short: "Start the server",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -351,11 +351,11 @@ Tags: [web api]
 Set defaults dynamically in an `InitFuncCtx` hook:
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "server",
     InitFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command) error {
-        ctx.GetParam(&p.Port).SetDefault(boa.Default(8080))
-        ctx.GetParam(&p.Host).SetDefault(boa.Default("localhost"))
+        boa.Param(ctx, &p.Port).SetDefault(8080)
+        boa.Param(ctx, &p.Host).SetDefault("localhost")
         return nil
     },
     RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -385,7 +385,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "greet",
         Short: "Greet someone",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -425,7 +425,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "server",
         Short: "Start the server",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -466,7 +466,7 @@ Flags:
 Instead of tagging each field, use `ParamEnricherEnv` to auto-derive env var names from flag names:
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "server",
     ParamEnrich: boa.ParamEnricherCombine(
         boa.ParamEnricherDefault,
@@ -484,7 +484,7 @@ boa.CmdT[Params]{
 Add a prefix to all auto-generated env var names:
 
 ```go
-boa.CmdT[Params]{
+boa.Cmd[Params]{
     Use: "server",
     ParamEnrich: boa.ParamEnricherCombine(
         boa.ParamEnricherDefault,
@@ -516,7 +516,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "demo",
         Short: "Demo slice flags",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -556,7 +556,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "export",
         Short: "Export data",
         RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
@@ -599,7 +599,7 @@ type Params struct {
 }
 
 func main() {
-    boa.CmdT[Params]{
+    boa.Cmd[Params]{
         Use:   "server",
         Short: "Start server",
         RunFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command, args []string) {

@@ -37,13 +37,13 @@ func TestReload_PicksUpConfigFileEdits(t *testing.T) {
 	cfgPath := writeReloadFile(t, dir, "cfg.json", `{"Host":"initial","Region":"us"}`)
 
 	var (
-		firstHost   string
-		firstRegion string
-		secondHost  string
+		firstHost    string
+		firstRegion  string
+		secondHost   string
 		secondRegion string
 	)
 
-	CmdT[reloadTestParams]{
+	Cmd[reloadTestParams]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *reloadTestParams, cmd *cobra.Command, args []string) {
 			firstHost = p.Host
@@ -91,7 +91,7 @@ func TestReload_CLIStillWinsAfterReload(t *testing.T) {
 		secondHost string
 	)
 
-	CmdT[reloadTestParams]{
+	Cmd[reloadTestParams]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *reloadTestParams, cmd *cobra.Command, args []string) {
 			firstHost = p.Host // "from-cli" should win at startup
@@ -123,7 +123,7 @@ func TestReload_DefaultsArePinned(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := writeReloadFile(t, dir, "cfg.json", `{"Host":"h"}`)
 
-	CmdT[reloadTestParams]{
+	Cmd[reloadTestParams]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *reloadTestParams, cmd *cobra.Command, args []string) {
 			if p.Port != 8080 {
@@ -150,7 +150,7 @@ func TestReload_ValidationFailureLeavesOldStateIntact(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := writeReloadFile(t, dir, "cfg.json", `{"Port":3000}`)
 
-	CmdT[StrictParams]{
+	Cmd[StrictParams]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *StrictParams, cmd *cobra.Command, args []string) {
 			if p.Port != 3000 {
@@ -183,7 +183,7 @@ func TestReload_MalformedFileReturnsErrorAndPreservesOldState(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := writeReloadFile(t, dir, "cfg.json", `{"Host":"good","Region":"us"}`)
 
-	CmdT[reloadTestParams]{
+	Cmd[reloadTestParams]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *reloadTestParams, cmd *cobra.Command, args []string) {
 			if p.Host != "good" {
@@ -217,7 +217,7 @@ func TestReload_MissingFileDuringReloadReturnsError(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := writeReloadFile(t, dir, "cfg.json", `{"Host":"h"}`)
 
-	CmdT[reloadTestParams]{
+	Cmd[reloadTestParams]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *reloadTestParams, cmd *cobra.Command, args []string) {
 			if err := os.Remove(cfgPath); err != nil {
@@ -245,7 +245,7 @@ func TestReload_MultiFileOverlay(t *testing.T) {
 	base := writeReloadFile(t, dir, "base.json", `{"Host":"base","Port":80,"Region":"us"}`)
 	local := writeReloadFile(t, dir, "local.json", `{"Port":8080}`)
 
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			if p.Host != "base" || p.Port != 8080 || p.Region != "us" {
@@ -284,7 +284,7 @@ func TestWatchedConfigFiles_AutoTracksConfigfileTag(t *testing.T) {
 	cfgPath := writeReloadFile(t, dir, "cfg.json", `{"Host":"h"}`)
 
 	var watched []string
-	CmdT[reloadTestParams]{
+	Cmd[reloadTestParams]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *reloadTestParams, cmd *cobra.Command, args []string) {
 			watched = ctx.WatchedConfigFiles()
@@ -306,7 +306,7 @@ func TestWatchedConfigFiles_IncludesMultiFileChain(t *testing.T) {
 	local := writeReloadFile(t, dir, "local.json", `{"Host":"b"}`)
 
 	var watched []string
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			watched = ctx.WatchedConfigFiles()
@@ -329,7 +329,7 @@ func TestWatchedConfigFiles_ExtraRegistrationFromHook(t *testing.T) {
 	extra := writeReloadFile(t, dir, "extra.json", `{"Host":"from-hook"}`)
 
 	var watched []string
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		PreValidateFunc: func(p *Params, cmd *cobra.Command, args []string) error {
 			return LoadConfigFile(extra, p, nil)
@@ -348,7 +348,7 @@ func TestWatchedConfigFiles_ExtraRegistrationFromHook(t *testing.T) {
 
 func TestWatchedConfigFiles_EmptyRegistrationIgnored(t *testing.T) {
 	var watched []string
-	CmdT[reloadTestParams]{
+	Cmd[reloadTestParams]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *reloadTestParams, cmd *cobra.Command, args []string) {
 			ctx.WatchConfigFile("")
@@ -368,7 +368,7 @@ func TestReload_FreshAllocationPerCall(t *testing.T) {
 	dir := t.TempDir()
 	cfgPath := writeReloadFile(t, dir, "cfg.json", `{"Host":"a"}`)
 
-	CmdT[reloadTestParams]{
+	Cmd[reloadTestParams]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *reloadTestParams, cmd *cobra.Command, args []string) {
 			first, err := Reload[reloadTestParams](ctx)
@@ -398,7 +398,7 @@ func TestReload_AtomicSwapPattern(t *testing.T) {
 
 	var active atomic.Pointer[reloadTestParams]
 
-	CmdT[reloadTestParams]{
+	Cmd[reloadTestParams]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *reloadTestParams, cmd *cobra.Command, args []string) {
 			active.Store(p)
@@ -426,16 +426,14 @@ func TestReload_AtomicSwapPattern(t *testing.T) {
 // --- Error messaging ---
 
 func TestReload_ClearErrorWhenFactoryMissing(t *testing.T) {
-	// Build a HookContext without the reload factory (i.e. one constructed
-	// directly via Cmd, not CmdT[T]). This exercises the "no factory" error
-	// path so users don't get a cryptic nil-pointer panic.
+	// Build an incomplete HookContext to exercise the defensive error path.
 	ctx := &HookContext{ctx: &processingContext{}}
 	_, err := Reload[reloadTestParams](ctx)
 	if err == nil {
 		t.Fatal("expected error when reloadFactory is nil")
 	}
-	if !strings.Contains(err.Error(), "no reload factory") {
-		t.Errorf("expected 'no reload factory' error, got: %v", err)
+	if !strings.Contains(err.Error(), "unavailable") {
+		t.Errorf("expected unavailable error, got: %v", err)
 	}
 }
 
@@ -447,7 +445,7 @@ func TestReload_SequentialReloadsSeeProgressiveEdits(t *testing.T) {
 	cfgPath := writeReloadFile(t, dir, "cfg.json", `{"Host":"v0"}`)
 
 	var seen []string
-	CmdT[reloadTestParams]{
+	Cmd[reloadTestParams]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *reloadTestParams, cmd *cobra.Command, args []string) {
 			seen = append(seen, p.Host)
@@ -489,7 +487,7 @@ func TestWatchedConfigFiles_ExtraRegistrationSurvivesReload(t *testing.T) {
 		firstWatched  []string
 		secondWatched []string
 	)
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		PreValidateFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) error {
 			if err := LoadConfigFile(extra, p, nil); err != nil {
@@ -535,7 +533,7 @@ func TestReload_TypeMismatchProducesClearError(t *testing.T) {
 	}
 
 	var reloadErr error
-	CmdT[Params]{
+	Cmd[Params]{
 		Use: "test",
 		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
 			// Ask for the wrong type.

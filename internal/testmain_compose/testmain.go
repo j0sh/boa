@@ -32,7 +32,7 @@ func main() {
 		File24 string
 	}
 
-	var params struct {
+	type paramsT struct {
 		Base Base1
 		Base2
 		Base3
@@ -41,13 +41,14 @@ func main() {
 		FB   string    `optional:"true"`
 		Time time.Time `optional:"true"`
 	}
+	var params paramsT
 
-	if err := (boa.Cmd{
+	if err := (boa.Cmd[paramsT]{
 		Use:    "hello-world",
 		Short:  "a generic cli tool",
 		Long:   `A generic cli tool that has a longer description. See the README.MD for more information`,
 		Params: &params,
-		RunFunc: func(cmd *cobra.Command, args []string) {
+		RunFunc: func(_ *paramsT, cmd *cobra.Command, args []string) {
 			fmt.Printf(
 				"Hello world from subcommand1 with params: %s, %d, %s, %s, %q, %v\n",
 				params.Base.Foo,  // string
