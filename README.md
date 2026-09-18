@@ -1,21 +1,19 @@
 # BOA
 
-[![CI Status](https://github.com/GiGurra/boa/actions/workflows/ci.yml/badge.svg)](https://github.com/GiGurra/boa/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/GiGurra/boa)](https://goreportcard.com/report/github.com/GiGurra/boa)
-[![Docs](https://img.shields.io/badge/docs-gigurra.github.io%2Fboa-blue)](https://gigurra.github.io/boa/)
+[![CI Status](https://github.com/j0sh/boa/actions/workflows/ci.yml/badge.svg)](https://github.com/j0sh/boa/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/j0sh/boa)](https://goreportcard.com/report/github.com/j0sh/boa)
+[![Docs](https://img.shields.io/badge/docs-j0sh.github.io%2Fboa-blue)](https://j0sh.github.io/boa/)
 
-Like if [kong](https://github.com/alecthomas/kong) and [urfave/cli](https://github.com/urfave/cli) had a baby and made it [cobra](https://github.com/spf13/cobra) compatible.
+BOA is a declarative CLI framework for Go built on [Cobra](https://github.com/spf13/cobra). It is based on [gigurra/boa](https://github.com/gigurra/boa).
 
-Self-documenting CLIs from Go structs. Define your parameters once and get flags, env vars, validation, config file loading, and help text — all generated automatically. The result is a CLI that's easy to write, easy for humans to use, and easy for LLMs to invoke — because the full parameter schema is right there in `--help`.
+Define CLI parameters with Go structs. BOA uses them to generate flags, environment variable bindings, validation, config file loading, and help text, while preserving full Cobra interoperability.
 
-Built on top of [cobra](https://github.com/spf13/cobra), not replacing it. Full cobra interop when you need it.
-
-**[Full Documentation](https://gigurra.github.io/boa/)**
+**[Full Documentation](https://j0sh.github.io/boa/)**
 
 ## Quick Start
 
 ```bash
-go get github.com/GiGurra/boa@latest
+go get github.com/j0sh/boa@latest
 ```
 
 ```go
@@ -226,7 +224,7 @@ if err != nil {
 active.Store(fresh) // active is an atomic.Pointer[Params]
 ```
 
-Supply your own trigger, such as SIGHUP, fsnotify, or an admin endpoint. Hooks run again and can have side effects. See [Live Config Reload](https://gigurra.github.io/boa/live-reload/) for a complete example, hook behavior, and current limitations.
+Supply your own trigger, such as SIGHUP, fsnotify, or an admin endpoint. Hooks run again and can have side effects. See [Live Config Reload](https://j0sh.github.io/boa/live-reload/) for a complete example, hook behavior, and current limitations.
 </details>
 
 <details>
@@ -467,13 +465,13 @@ boa.Cmd[Params]{
 
 ## Further Reading
 
-- [Getting Started](https://gigurra.github.io/boa/getting-started/) — all parameter types, subcommands, config files
-- [Struct Tags](https://gigurra.github.io/boa/struct-tags/) — complete tag reference with auto-prefixing
-- [Bring Someone Else's Config](https://gigurra.github.io/boa/bring-someone-elses-config/) — wire up third-party / tag-less structs programmatically
-- [Validation](https://gigurra.github.io/boa/validation/) — required/optional, alternatives, conditional requirements
-- [Lifecycle Hooks](https://gigurra.github.io/boa/hooks/) — customize behavior at each stage
-- [Enrichers](https://gigurra.github.io/boa/enrichers/) — auto-derive flag names, env vars, short flags
-- [Error Handling](https://gigurra.github.io/boa/error-handling/) — Run() vs RunE() and error propagation
-- [Advanced](https://gigurra.github.io/boa/advanced/) — custom types, config format registry, viper-like discovery
-- [Live Config Reload](https://gigurra.github.io/boa/live-reload/) — re-read config without restart via `boa.Reload[T](ctx)`
-- [Cobra Interop](https://gigurra.github.io/boa/cobra-interop/) — access cobra primitives, migrate incrementally
+- [Getting Started](https://j0sh.github.io/boa/getting-started/) — all parameter types, subcommands, config files
+- [Struct Tags](https://j0sh.github.io/boa/struct-tags/) — complete tag reference with auto-prefixing
+- [Bring Someone Else's Config](https://j0sh.github.io/boa/bring-someone-elses-config/) — wire up third-party / tag-less structs programmatically
+- [Validation](https://j0sh.github.io/boa/validation/) — required/optional, alternatives, conditional requirements
+- [Lifecycle Hooks](https://j0sh.github.io/boa/hooks/) — customize behavior at each stage
+- [Enrichers](https://j0sh.github.io/boa/enrichers/) — auto-derive flag names, env vars, short flags
+- [Error Handling](https://j0sh.github.io/boa/error-handling/) — Run() vs RunE() and error propagation
+- [Advanced](https://j0sh.github.io/boa/advanced/) — custom types, config format registry, viper-like discovery
+- [Live Config Reload](https://j0sh.github.io/boa/live-reload/) — re-read config without restart via `boa.Reload[T](ctx)`
+- [Cobra Interop](https://j0sh.github.io/boa/cobra-interop/) — access cobra primitives, migrate incrementally

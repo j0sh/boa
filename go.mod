@@ -1,4 +1,4 @@
-module github.com/GiGurra/boa
+module github.com/j0sh/boa
 
 go 1.27.0
 

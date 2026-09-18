@@ -263,7 +263,7 @@ type Params struct {
 Optional subpackage for automatic config file discovery:
 
 ```go
-import "github.com/GiGurra/boa/pkg/boaviper"
+import "github.com/j0sh/boa/pkg/boaviper"
 
 boa.Cmd[Params]{
     Use:      "myapp",

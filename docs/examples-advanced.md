@@ -15,7 +15,7 @@ import (
     "fmt"
     "strconv"
     "strings"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -90,7 +90,7 @@ package main
 import (
     "fmt"
     "strings"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -179,7 +179,7 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -256,7 +256,7 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -325,7 +325,7 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -413,7 +413,7 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -484,7 +484,7 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -618,7 +618,7 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -729,7 +729,7 @@ package main
 import (
     "fmt"
     "net"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -796,7 +796,7 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -905,7 +905,7 @@ import (
     "fmt"
     "os"
     "path/filepath"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -961,7 +961,7 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 

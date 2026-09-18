@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/GiGurra/boa/internal/test_common"
+	"github.com/j0sh/boa/internal/test_common"
 	"testing"
 )
 

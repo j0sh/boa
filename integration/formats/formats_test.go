@@ -7,7 +7,7 @@ import (
 	"time"
 
 	burnttoml "github.com/BurntSushi/toml"
-	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/j0sh/boa/pkg/boa"
 	"github.com/pelletier/go-toml/v2"
 	"gopkg.in/yaml.v3"
 )

@@ -17,7 +17,7 @@ package main
 import (
     "fmt"
 
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
     "github.com/third/party/httpserver"
 )
@@ -103,7 +103,7 @@ import (
     "path/filepath"
     "strings"
 
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
     "github.com/third/party/dbconfig"
 )

@@ -2,8 +2,8 @@
 
 **Declarative Go CLI Framework built on Cobra**
 
-[![CI Status](https://github.com/GiGurra/boa/actions/workflows/ci.yml/badge.svg)](https://github.com/GiGurra/boa/actions/workflows/ci.yml)
-[![Go Report Card](https://goreportcard.com/badge/github.com/GiGurra/boa)](https://goreportcard.com/report/github.com/GiGurra/boa)
+[![CI Status](https://github.com/j0sh/boa/actions/workflows/ci.yml/badge.svg)](https://github.com/j0sh/boa/actions/workflows/ci.yml)
+[![Go Report Card](https://goreportcard.com/badge/github.com/j0sh/boa)](https://goreportcard.com/report/github.com/j0sh/boa)
 
 BOA adds a declarative layer on top of [cobra](https://github.com/spf13/cobra), making CLI creation as simple as defining a struct.
 
@@ -14,7 +14,7 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -78,7 +78,7 @@ HOST=ci.local myapp                      # env var wins over config file
 ## Installation
 
 ```bash
-go get github.com/GiGurra/boa@latest
+go get github.com/j0sh/boa@latest
 ```
 
 ## Features

@@ -2,7 +2,7 @@ package main
 
 import (
 	"fmt"
-	"github.com/GiGurra/boa/pkg/boa"
+	"github.com/j0sh/boa/pkg/boa"
 	"github.com/spf13/cobra"
 )
 

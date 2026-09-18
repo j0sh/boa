@@ -14,7 +14,7 @@ import (
     "sync/atomic"
     "syscall"
 
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 

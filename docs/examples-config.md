@@ -11,7 +11,7 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -79,7 +79,7 @@ package main
 import (
     "fmt"
     "os"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -136,7 +136,7 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -260,7 +260,7 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
     "gopkg.in/yaml.v3"
 )
@@ -305,7 +305,7 @@ $ ./server --config-file /etc/myapp/overrides.yml
 
 BOA picks the parser per-call from `filepath.Ext(filePath)`, so there is no global "current format" and no rebuild required to switch.
 
-> A complete runnable template — using a trivial dep-free "KV" format so the example doesn't drag a YAML/TOML dependency into this repo — lives at [`internal/example_custom_config_format`](https://github.com/GiGurra/boa/tree/main/internal/example_custom_config_format). Its tests load **both** a `.json` file and a `.kv` file through the same `main()`, proving the multi-format-per-binary story end-to-end. Swap the KV functions for `yaml.Unmarshal` + a yaml-backed `KeyTree` and you have the YAML example verbatim.
+> A complete runnable template — using a trivial dep-free "KV" format so the example doesn't drag a YAML/TOML dependency into this repo — lives at [`internal/example_custom_config_format`](https://github.com/j0sh/boa/tree/main/internal/example_custom_config_format). Its tests load **both** a `.json` file and a `.kv` file through the same `main()`, proving the multi-format-per-binary story end-to-end. Swap the KV functions for `yaml.Unmarshal` + a yaml-backed `KeyTree` and you have the YAML example verbatim.
 
 ### Why Key-Presence Detection Matters
 
@@ -355,7 +355,7 @@ boa.Cmd[Params]{
 
 Reach for the verbose `boa.ConfigFormat{Unmarshal: ..., KeyTree: ...}` literal (and `RegisterConfigFormatFull`) only when your parser **cannot** decode into `map[string]any` — for example, a custom format whose unmarshaler only knows how to populate specific struct types. In that case you have to hand-write the `KeyTree` yourself because `UniversalConfigFormat` would fail at parse time.
 
-The runnable example at [`internal/example_custom_config_format`](https://github.com/GiGurra/boa/tree/main/internal/example_custom_config_format) shows exactly this case: a tiny KV format whose `kvUnmarshal` only populates structs, so it registers via `RegisterConfigFormatFull` with a hand-written `kvKeyTree`. If you're using a mainstream library like `yaml.v3`, you'll never write code that looks like that — `RegisterConfigFormat(".yaml", yaml.Unmarshal)` is all you need.
+The runnable example at [`internal/example_custom_config_format`](https://github.com/j0sh/boa/tree/main/internal/example_custom_config_format) shows exactly this case: a tiny KV format whose `kvUnmarshal` only populates structs, so it registers via `RegisterConfigFormatFull` with a hand-written `kvKeyTree`. If you're using a mainstream library like `yaml.v3`, you'll never write code that looks like that — `RegisterConfigFormat(".yaml", yaml.Unmarshal)` is all you need.
 
 > `KeyTree` can return nested maps as either `map[string]any` (yaml.v3, json) or `map[any]any` (yaml.v2) — BOA coerces transparently.
 
@@ -395,7 +395,7 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -493,8 +493,8 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
-    "github.com/GiGurra/boa/pkg/boaviper"
+    "github.com/j0sh/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boaviper"
     "github.com/spf13/cobra"
 )
 
@@ -566,8 +566,8 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
-    "github.com/GiGurra/boa/pkg/boaviper"
+    "github.com/j0sh/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boaviper"
     "github.com/spf13/cobra"
 )
 
@@ -615,7 +615,7 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -731,7 +731,7 @@ import (
     _ "embed"
     "fmt"
 
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
     "gopkg.in/yaml.v3"
 )
@@ -794,7 +794,7 @@ Source-aware dump is the useful one for most production apps: because defaults c
 package main
 
 import (
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
     "gopkg.in/yaml.v3"
 )
@@ -871,7 +871,7 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
     "gopkg.in/yaml.v3"
 )

@@ -3,7 +3,7 @@
 ## Installation
 
 ```bash
-go get github.com/GiGurra/boa@latest
+go get github.com/j0sh/boa@latest
 ```
 
 ## Basic Usage
@@ -13,7 +13,7 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -61,7 +61,7 @@ package main
 
 import (
     "fmt"
-    "github.com/GiGurra/boa/pkg/boa"
+    "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
@@ -257,7 +257,7 @@ You can also use [Claude Code](https://claude.com/claude-code) to scaffold a boa
 mkdir my-cli && cd my-cli
 go mod init my-cli
 
-claude "$(curl -s https://raw.githubusercontent.com/GiGurra/boa/main/README.md)
+claude "$(curl -s https://raw.githubusercontent.com/j0sh/boa/main/README.md)
 
 Build me a CLI tool that manages TODO items with commands for:
 - add: adds a new todo

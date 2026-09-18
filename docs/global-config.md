@@ -7,7 +7,7 @@ Boa supports global configuration via `boa.Init()` with functional options. Call
 ```go
 package main
 
-import "github.com/GiGurra/boa/pkg/boa"
+import "github.com/j0sh/boa/pkg/boa"
 
 func main() {
     boa.Init(

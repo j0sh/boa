@@ -1,8 +1,8 @@
 site_name: BOA
-site_url: https://gigurra.github.io/boa/
+site_url: https://j0sh.github.io/boa/
 site_description: Declarative Go CLI Framework built on Cobra
-repo_url: https://github.com/GiGurra/boa
-repo_name: GiGurra/boa
+repo_url: https://github.com/j0sh/boa
+repo_name: j0sh/boa
 
 theme:
   name: material
