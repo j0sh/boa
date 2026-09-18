@@ -1,35 +1,31 @@
-// Example matching the README "Minimum setup" section.
-// This demonstrates raw Go types with struct tags.
+// Example matching the README and Getting Started quick start.
 package main
 
 import (
 	"fmt"
+
 	"github.com/j0sh/boa/pkg/boa"
 	"github.com/spf13/cobra"
 )
 
 type Params struct {
-	Foo  string `descr:"a foo"`
-	Bar  int    `descr:"a bar" env:"BAR_X" optional:"true"`
-	Path string `positional:"true"`
-	Baz  string `positional:"true" default:"cba"`
-	FB   string `positional:"true" optional:"true"`
+	Name    string `descr:"name to greet"`
+	Count   int    `descr:"number of greetings" default:"1"`
+	Excited bool   `descr:"add an exclamation mark" optional:"true"`
 }
 
 func main() {
 	boa.Cmd[Params]{
-		Use:   "hello-world",
-		Short: "a generic cli tool",
-		Long:  `A generic cli tool that has a longer description. See the README.MD for more information`,
-		RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
-			fmt.Printf(
-				"Hello world with params: %s, %d, %s, %s, %s\n",
-				params.Foo,  // string (access directly)
-				params.Bar,  // int (access directly)
-				params.Path, // string
-				params.Baz,  // string
-				params.FB,   // string
-			)
+		Use:   "greet",
+		Short: "print a greeting",
+		RunFunc: func(p *Params, _ *cobra.Command, _ []string) {
+			suffix := ""
+			if p.Excited {
+				suffix = "!"
+			}
+			for range p.Count {
+				fmt.Printf("Hello %s%s\n", p.Name, suffix)
+			}
 		},
 	}.Run()
 }

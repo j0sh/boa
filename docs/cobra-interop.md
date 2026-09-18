@@ -1,331 +1,146 @@
 # Cobra Interoperability
 
-BOA is built on top of [Cobra](https://github.com/spf13/cobra) and provides full access to Cobra's primitives. This design allows you to:
+BOA builds ordinary `*cobra.Command` values. It exposes Cobra types in its command definition and passes the active command to hooks and run functions, so a command tree can mix BOA and native Cobra at any depth.
 
-- Access the underlying `*cobra.Command` when you need low-level control
-- Mix BOA commands with existing Cobra commands in the same command tree
-- Migrate existing Cobra applications to BOA incrementally, one command at a time
-- Use existing Cobra plugins and ecosystem libraries
+## Cobra fields on Cmd
 
-## Exposed Cobra Types
-
-BOA's `Cmd` struct directly exposes Cobra types in its API - no wrapping or abstraction:
-
-```go
-type Cmd[Struct any] struct {
-    // ...
-    GroupID string              // Cobra's group ID for help categorization
-    Groups  []*cobra.Group      // Cobra's Group type directly
-    Args    cobra.PositionalArgs // Cobra's positional args validation
-    SubCmds []*cobra.Command    // Cobra's Command type directly
-    // ...
-}
-```
-
-This means you can use Cobra types directly when configuring BOA commands:
+`boa.Cmd[T]` accepts Cobra's own types where Cobra already has the right abstraction:
 
 ```go
 boa.Cmd[Params]{
-    Use:     "myapp",
-    Groups:  []*cobra.Group{{ID: "admin", Title: "Admin Commands:"}},
-    Args:    cobra.ExactArgs(2),
-    SubCmds: []*cobra.Command{existingCobraCmd, anotherCobraCmd},
-    // ...
+    Use:     "serve [extra...]",
+    Aliases: []string{"server"},
+    Args:    cobra.MaximumNArgs(2),
+    Groups:  []*cobra.Group{{ID: "core", Title: "Core commands:"}},
+    SubCmds: []*cobra.Command{existingCommand},
 }
 ```
 
-## Accessing the Underlying Cobra Command
+Relevant fields include `Args`, `Groups`, `GroupID`, `SubCmds`, `Aliases`, `ValidArgs`, and `ValidArgsFunc`.
 
-BOA commands can be converted to Cobra commands using `ToCobra()`:
+## Accessing the active command
 
-```go
-boaCmd := boa.Cmd[Params]{
-    Use:   "myapp",
-    Short: "My application",
-    RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
-        // ...
-    },
-}
-
-// Get the underlying *cobra.Command
-cobraCmd := boaCmd.ToCobra()
-
-// Now you can use any Cobra API
-cobraCmd.SetHelpTemplate("Custom help template...")
-cobraCmd.SetUsageFunc(customUsageFunc)
-```
-
-## Cobra Access in Run Functions
-
-The `*cobra.Command` is available in run functions and lifecycle hooks:
+Every command function receives `*cobra.Command`:
 
 ```go
 boa.Cmd[Params]{
-    Use: "myapp",
-    RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
-        // cmd is the *cobra.Command
-        fmt.Println("Command name:", cmd.Name())
-        fmt.Println("Positional args:", args)
-
-        // Access Cobra features
-        cmd.Println("Using Cobra's output methods")
+    Use: "app",
+    InitFunc: func(_ *Params, cmd *cobra.Command) error {
+        cmd.Deprecated = "use new-app instead"
+        cmd.SilenceUsage = true
+        return nil
     },
-}.Run()
-```
-
-## Mixing BOA and Cobra Commands
-
-The `SubCmds` field accepts `[]*cobra.Command`, meaning you can freely mix BOA commands with pure Cobra commands:
-
-### Adding Cobra Commands to a BOA Parent
-
-```go
-// Existing Cobra command (from your codebase or a library)
-legacyCmd := &cobra.Command{
-    Use:   "legacy",
-    Short: "A legacy Cobra command",
-    Run: func(cmd *cobra.Command, args []string) {
-        fmt.Println("Running legacy command")
+    RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
+        cmd.Printf("running %s with %d args\n", cmd.Name(), len(args))
     },
 }
-
-// BOA root command with mixed subcommands
-boa.Cmd[RootParams]{
-    Use:   "myapp",
-    Short: "Application with mixed commands",
-    SubCmds: []*cobra.Command{
-        legacyCmd,  // Pure Cobra command
-        boa.Cmd[ServeParams]{
-            Use:   "serve",
-            Short: "Start the server",
-            RunFunc: func(p *ServeParams, cmd *cobra.Command, args []string) { /* ... */ },
-        }.ToCobra(),  // BOA command converted to Cobra
-    },
-}.Run()
 ```
 
-### Adding BOA Commands to a Cobra Parent
+Use Init for command properties and PostCreate for operations that need BOA's generated flags to exist.
+
+## Converting a BOA command
+
+`ToCobra` builds and returns the underlying command:
 
 ```go
-// Existing Cobra root command
-rootCmd := &cobra.Command{
-    Use:   "myapp",
-    Short: "My application",
-}
+cmd := boa.Cmd[Params]{
+    Use:    "serve",
+    RunFunc: runServe,
+}.ToCobra()
 
-// Add BOA subcommands to Cobra parent
-rootCmd.AddCommand(
+cmd.SetHelpTemplate(customHelp)
+root.AddCommand(cmd)
+```
+
+`ToCobraE` returns construction errors instead of panicking. See [Lifecycle and Errors](lifecycle.md#tocobra-and-tocobrae).
+
+## Mixing command trees
+
+### Native Cobra parent
+
+Add a BOA child like any other Cobra command:
+
+```go
+root := &cobra.Command{Use: "tool"}
+root.AddCommand(
+    legacyCommand,
     boa.Cmd[ServeParams]{
-        Use:   "serve",
-        Short: "Start the server",
-        RunFunc: func(p *ServeParams, cmd *cobra.Command, args []string) { /* ... */ },
-    }.ToCobra(),
-
-    boa.Cmd[MigrateParams]{
-        Use:   "migrate",
-        Short: "Run migrations",
-        RunFunc: func(p *MigrateParams, cmd *cobra.Command, args []string) { /* ... */ },
+        Use:    "serve",
+        RunFunc: runServe,
     }.ToCobra(),
 )
-
-rootCmd.Execute()
 ```
 
-## Incremental Migration Strategy
+### BOA parent
 
-BOA's Cobra interoperability enables gradual migration of existing Cobra applications. You can migrate one command at a time without disrupting the entire codebase.
-
-### Step 1: Start with Your Existing Cobra Tree
+`SubCmds` is `[]*cobra.Command`, so native children fit directly. `boa.SubCmds` converts a heterogeneous list of typed BOA commands:
 
 ```go
-// Your existing Cobra command structure
-func main() {
-    rootCmd := &cobra.Command{Use: "myapp"}
-
-    rootCmd.AddCommand(serveCmd)   // Cobra command
-    rootCmd.AddCommand(migrateCmd) // Cobra command
-    rootCmd.AddCommand(configCmd)  // Cobra command
-
-    rootCmd.Execute()
+root := boa.Cmd[boa.NoParams]{
+    Use: "tool",
+    SubCmds: append(
+        boa.SubCmds(
+            boa.Cmd[ServeParams]{Use: "serve", RunFunc: runServe},
+            boa.Cmd[DeployParams]{Use: "deploy", RunFunc: runDeploy},
+        ),
+        legacyCommand,
+    ),
 }
+root.Run()
 ```
 
-### Step 2: Migrate One Command to BOA
+This is also the incremental adoption strategy: convert one leaf command at a time, then convert parents only when useful.
 
-```go
-func main() {
-    rootCmd := &cobra.Command{Use: "myapp"}
+## Cobra argument validation
 
-    rootCmd.AddCommand(serveCmd)   // Still Cobra
-    rootCmd.AddCommand(migrateCmd) // Still Cobra
-
-    // Migrated to BOA - now with type-safe params!
-    rootCmd.AddCommand(
-        boa.Cmd[ConfigParams]{
-            Use:   "config",
-            Short: "Manage configuration",
-            RunFunc: func(p *ConfigParams, cmd *cobra.Command, args []string) {
-                // Type-safe access to parameters
-            },
-        }.ToCobra(),
-    )
-
-    rootCmd.Execute()
-}
-```
-
-### Step 3: Eventually Migrate the Root
-
-```go
-func main() {
-    // Root is now BOA, subcommands can be either
-    boa.Cmd[RootParams]{
-        Use: "myapp",
-        SubCmds: []*cobra.Command{
-            serveCmd,   // Legacy Cobra commands
-            migrateCmd,
-            boa.Cmd[ConfigParams]{
-                Use: "config",
-                RunFunc: func(p *ConfigParams, cmd *cobra.Command, args []string) { /* ... */ },
-            }.ToCobra(),
-        },
-    }.Run()
-}
-```
-
-## Using Cobra's PositionalArgs
-
-BOA supports Cobra's positional argument validation:
+BOA derives positional counts from `positional:"true"` fields. Set `Args` when Cobra's validators better express the rule:
 
 ```go
 boa.Cmd[Params]{
-    Use:  "greet [names...]",
-    Args: cobra.MinimumNArgs(1), // Cobra's validation
-    RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
-        for _, name := range args {
-            fmt.Printf("Hello, %s!\n", name)
+    Use: "greet [names...]",
+    Args: cobra.MinimumNArgs(1),
+    RunFunc: func(_ *Params, _ *cobra.Command, names []string) {
+        for _, name := range names {
+            fmt.Println("Hello", name)
         }
     },
 }.Run()
 ```
 
-## Using Cobra's Command Groups
+BOA wraps argument-validator failures as user input errors.
 
-Organize subcommands with Cobra's grouping feature:
+## Command groups
 
 ```go
 boa.Cmd[boa.NoParams]{
-    Use:   "myapp",
+    Use: "tool",
     Groups: []*cobra.Group{
-        {ID: "core", Title: "Core Commands:"},
-        {ID: "util", Title: "Utility Commands:"},
+        {ID: "core", Title: "Core commands:"},
+        {ID: "admin", Title: "Administrative commands:"},
     },
     SubCmds: boa.SubCmds(
-        boa.Cmd[ServeParams]{
-            Use:     "serve",
-            GroupID: "core",
-            RunFunc: func(p *ServeParams, cmd *cobra.Command, args []string) { /* ... */ },
-        },
-        boa.Cmd[StatusParams]{
-            Use:     "status",
-            GroupID: "util",
-            RunFunc: func(p *StatusParams, cmd *cobra.Command, args []string) { /* ... */ },
-        },
+        boa.Cmd[RunParams]{Use: "run", GroupID: "core"},
+        boa.Cmd[UserParams]{Use: "users", GroupID: "admin"},
     ),
-}.Run()
-```
-
-## Cobra Ecosystem Compatibility
-
-Since BOA commands convert to standard `*cobra.Command`, you can use the entire Cobra ecosystem:
-
-### Shell Completion
-
-Cobra's built-in completion generators work with BOA:
-
-```go
-cmd := boa.Cmd[Params]{
-    Use: "myapp",
-    SubCmds: boa.SubCmds(/* ... */),
-}.ToCobra()
-
-// Add Cobra's completion command
-cmd.AddCommand(completionCmd) // Your standard Cobra completion command
-```
-
-### Documentation Generation
-
-Use Cobra's doc generation packages:
-
-```go
-import "github.com/spf13/cobra/doc"
-
-cmd := boa.Cmd[Params]{Use: "myapp"}.ToCobra()
-
-// Generate markdown docs
-doc.GenMarkdownTree(cmd, "./docs")
-
-// Generate man pages
-doc.GenManTree(cmd, &doc.GenManHeader{Title: "MYAPP"}, "./man")
-```
-
-### Interactive Help with Bubbletea
-
-Libraries like [elewis787/boa](https://github.com/elewis787/boa) add interactive TUI help to Cobra (yes, we accidentally picked the same name - theirs adds Bubbletea-powered help to Cobra, ours adds declarative parameter handling):
-
-```go
-import eboa "github.com/elewis787/boa"
-
-boa.Cmd[Params]{
-    Use: "myapp",
-    PostCreateFunc: func(params *Params, cmd *cobra.Command) error {
-        cmd.SetUsageFunc(eboa.UsageFunc)
-        cmd.SetHelpFunc(eboa.HelpFunc)
-        return nil
-    },
-}.Run()
-```
-
-## Flag Constraints (Mutual Exclusion, Required Together)
-
-Cobra supports flag relationship constraints. Use `InitFunc` to access these via the `*cobra.Command`:
-
-```go
-type Params struct {
-    JSON bool   `descr:"output as JSON" optional:"true"`
-    YAML bool   `descr:"output as YAML" optional:"true"`
-    Host string `descr:"server host"`
-    Port int    `descr:"server port" default:"8080"`
 }
-
-boa.Cmd[Params]{
-    Use: "serve",
-    InitFunc: func(params *Params, cmd *cobra.Command) error {
-        // --json and --yaml cannot both be set
-        cmd.MarkFlagsMutuallyExclusive("json", "yaml")
-        // --host and --port must be set together
-        cmd.MarkFlagsRequiredTogether("host", "port")
-        return nil
-    },
-    RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
-        // ...
-    },
-}.Run()
 ```
 
-Available constraint methods on `*cobra.Command`:
-- `MarkFlagsMutuallyExclusive(flags ...string)` — at most one can be set
-- `MarkFlagsOneRequired(flags ...string)` — at least one must be set
-- `MarkFlagsRequiredTogether(flags ...string)` — all or none must be set
+When a child has a `GroupID` not listed in `Groups`, BOA creates a group for it automatically.
 
-## Summary
+## Flag relationships
 
-| Task | Method |
-|------|--------|
-| Convert BOA -> Cobra | `boaCmd.ToCobra()` |
-| Add Cobra subcommands | Set `SubCmds` field with `[]*cobra.Command` |
-| Add BOA subcommands | Use `boa.SubCmds()` helper or call `.ToCobra()` |
-| Access `*cobra.Command` in run | Use `RunFunc` with full signature |
-| Use Cobra arg validation | Set `Args` field |
-| Use Cobra groups | Set `Groups` and `GroupID` fields |
-| Use Cobra ecosystem libs | Call `ToCobra()` then use standard Cobra APIs |
+Cobra's generated-flag relationship APIs work in PostCreate:
+
+```go
+PostCreateFunc: func(_ *Params, cmd *cobra.Command) error {
+    cmd.MarkFlagsMutuallyExclusive("json", "yaml")
+    cmd.MarkFlagsRequiredTogether("host", "port")
+    return nil
+},
+```
+
+Other Cobra facilities—completion commands, help templates, output buffers, documentation generation, and ecosystem packages—operate on the result of `ToCobra` without BOA-specific adapters.
+
+## Executing an assembled tree
+
+Use Cobra's `Execute` when the surrounding application owns output and error policy. Use `boa.Execute(root)` to print usage and errors with BOA's default command-line behavior.
