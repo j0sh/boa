@@ -1318,7 +1318,7 @@ func loadConfigFileInto(filePath string, target any, override ConfigFormat) ([]b
 // loadConfigFileInto and runs the unmarshaler against the supplied bytes.
 func loadConfigBytesInto(data []byte, ext string, target any, override ConfigFormat) (ConfigFormat, error) {
 	effective := resolveConfigFormatByExt(ext, override)
-	if err := effective.Unmarshal(data, target); err != nil {
+	if err := unmarshalConfigWithExactTypes(data, target, effective); err != nil {
 		return effective, err
 	}
 	return effective, nil

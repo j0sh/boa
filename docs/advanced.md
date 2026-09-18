@@ -776,7 +776,11 @@ type Params struct {
 
 ## Custom Type Registration
 
-Register user-defined types as CLI parameters with `RegisterType`. The type is stored as a string flag in cobra and converted via your provided `Parse`/`Format` functions:
+Register user-defined types with `RegisterType`. String values from flags,
+environment variables, `default` tags, and config files all pass through the
+same `Parse` function, so validation and canonicalization are consistent no
+matter where a value came from. The type is stored as a string flag in cobra
+and converted via your provided `Parse`/`Format` functions:
 
 ```go
 type SemVer struct {
@@ -805,8 +809,27 @@ type Params struct {
 
 | Field | Type | Description |
 |-------|------|-------------|
-| `Parse` | `func(string) (T, error)` | Converts a CLI string into the typed value (required) |
+| `Parse` | `func(string) (T, error)` | Converts a string from CLI, env, defaults, or config into the typed value (required) |
 | `Format` | `func(T) string` | Converts the typed value back to a string for default display. If nil, `fmt.Sprintf("%v", val)` is used |
+
+Config-file parsing uses exact registered type matches. Registered values are
+supported as scalar fields, pointers, nested fields, slices, and values in
+Boa's supported `map[string]T` maps. A string-backed type is still passed
+through `Parse` even when the config library could assign the underlying
+string directly; this ensures the parser's validation and canonicalization
+cannot be bypassed by using a config file.
+
+Built-in exact-type handlers follow the same rule. For example, a
+`time.Duration` field accepts a human-readable config string such as
+`"1h30m"`, using the same parser as `--timeout 1h30m` or
+`TIMEOUT=1h30m`. Existing numeric config values remain nanoseconds, and config
+dumps continue to emit numeric nanoseconds.
+
+If normal decoding fails, Boa converts registered strings and retries the
+whole document through the format's decoder, preserving validation of other
+values. JSON works automatically; other formats should supply a matching
+`ConfigFormat.Marshal` for this retry. Concrete-destination-only parsers remain
+responsible for decoding registered strings themselves.
 
 ## ConfigFormatExtensions
 
