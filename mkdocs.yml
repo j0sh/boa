@@ -38,19 +38,15 @@ markdown_extensions:
 nav:
   - Home: index.md
   - Getting Started: getting-started.md
-  - Struct Tags: struct-tags.md
-  - Bring Someone Else's Config: bring-someone-elses-config.md
-  - Enrichers: enrichers.md
-  - Validation: validation.md
-  - Lifecycle Hooks: hooks.md
-  - Error Handling: error-handling.md
-  - Examples:
-    - Basic Examples: examples-basic.md
-    - Config File Examples: examples-config.md
-    - Advanced Examples: examples-advanced.md
-  - Advanced: advanced.md
-  - Config Decoding: config-decoding.md
-  - Live Config Reload: live-reload.md
-  - Global Config: global-config.md
-  - Cobra Interoperability: cobra-interop.md
-  - Migration Guide: migration.md
+  - Core Reference:
+    - Parameters and Struct Tags: struct-tags.md
+    - Lifecycle and Errors: lifecycle.md
+  - Configuration:
+    - Configuration Files: configuration.md
+    - Config Decoding: config-decoding.md
+    - Live Config Reload: live-reload.md
+  - Integration:
+    - External Structs: external-structs.md
+    - Cobra Interoperability: cobra-interop.md
+  - Recipes: recipes.md
+  - Migrating from GiGurra/boa: migration.md

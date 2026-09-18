@@ -7,36 +7,16 @@ import (
 
 func TestMain(t *testing.T) {
 	prevArgs := os.Args
-	defer func() {
-		os.Args = prevArgs
-	}()
+	defer func() { os.Args = prevArgs }()
 
-	// Test with all required args: --foo value, positional path and baz
-	os.Args = []string{"hello-world", "--foo", "test-foo", "my-path", "my-baz"}
+	os.Args = []string{"greet", "--name", "Ada"}
 	main()
 }
 
 func TestMainWithAllArgs(t *testing.T) {
 	prevArgs := os.Args
-	defer func() {
-		os.Args = prevArgs
-	}()
+	defer func() { os.Args = prevArgs }()
 
-	// Test with all args including optional ones
-	os.Args = []string{"hello-world", "--foo", "test-foo", "--bar", "42", "my-path", "my-baz", "my-fb"}
-	main()
-}
-
-func TestMainWithEnvVar(t *testing.T) {
-	prevArgs := os.Args
-	defer func() {
-		os.Args = prevArgs
-	}()
-
-	// Test with BAR_X env var
-	_ = os.Setenv("BAR_X", "100")
-	defer func() { _ = os.Unsetenv("BAR_X") }()
-
-	os.Args = []string{"hello-world", "--foo", "test-foo", "my-path", "my-baz"}
+	os.Args = []string{"greet", "--name", "Ada", "--count", "2", "--excited"}
 	main()
 }

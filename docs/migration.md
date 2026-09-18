@@ -1,390 +1,208 @@
-# Migration Guide
+# Migrating from GiGurra/boa
 
-## Go 1.27 consolidation
+This guide covers the differences between [GiGurra/boa](https://github.com/GiGurra/boa) and this fork. It intentionally does not preserve migration history for older releases of the original project.
 
-- Go 1.27 is now required. Commands use `boa.Cmd[T]`, and `boa.Param(ctx, &p.Field)` returns the type-safe `*boa.Field[T]` view.
-- JSON uses one decoder pass with registered string parsers. Custom format functions are authoritative: no retries, proxy structs, or discarded errors. For a portable custom scalar, implement `encoding.TextUnmarshaler` or use `boa.Text[T]` and access `.Value`. See [config decoding](config-decoding.md).
-- `Validate` validates the current command, skipping child routing and all action hooks. `Reload` skips all action hooks, preserves parsed invocation values, and refreshes watched files after success. See [reload](live-reload.md).
-- False Boolean defaults no longer clutter help. Enum completions suppress file candidates. Subcommand-only roots retain Cobra's suggestions.
-- Empty JSON collection arguments are rejected instead of silently retaining an unparsed string. Recursive CLI parameter groups return a construction error; ignore recursive config-only fields or register a scalar parser.
+## Summary
 
+| GiGurra/boa | j0sh/boa |
+|---|---|
+| Module `github.com/GiGurra/boa` | Module `github.com/j0sh/boa` |
+| Go 1.25 | Go 1.27 |
+| `CmdT[T]` plus exported erased `Cmd` | One public `Cmd[T]` |
+| `GetParamT` / `ParamT[T]` and untyped `HookContext.GetParam` | `Param` / `*Field[T]` embedding `Parameter` |
+| Typed method suffixes such as `SetDefaultT` | `SetDefault`, `SetCustomValidator`, `SetMin`, `SetMax` |
+| `ConfigUnmarshal` compatibility field | `ConfigFormat` as the per-command override |
+| Decoder repair/retry behavior | One authoritative decoder call |
+| Long and shorthand tag aliases | Canonical tag names only |
 
-## From Old BOA (pre-v1.0) to BOA v1.0
+Most command fields, struct shapes, hooks, config tags, and Cobra integration remain recognizable. The migration is primarily import replacement and a small number of mechanical API renames.
 
-BOA v1.0 removes the builder pattern and the `Required[T]`/`Optional[T]` generic wrapper types. Commands are now configured via struct literals, and parameters use plain Go types.
+## Module and Go version
 
-### Summary of Breaking Changes
+Update imports and the module dependency:
 
-| Old API (pre-v1.0) | New API (v1.0) |
-|---------------------|----------------|
-| Builder-chain command construction | `boa.Cmd[P]{Use: "name"}` |
-| `.WithShort("desc")` | `Short: "desc"` |
-| `.WithLong("desc")` | `Long: "desc"` |
-| `.WithRunFunc(func(p *P) { ... })` | `RunFunc: func(p *P, cmd *cobra.Command, args []string) { ... }` |
-| `.WithSubCmds(...)` | `SubCmds: boa.SubCmds(...)` |
-| `boa.Required[string]` | `string` (required by default) |
-| `boa.Optional[int]` | `int` with `optional:"true"` tag, or `*int` |
-| `params.Name.Value()` | `params.Name` (direct field access) |
-| `SupportedTypes` constraint | Removed -- `any` is used |
-
-### Command Definition
-
-Replace builder chains with a struct literal:
+**Before:**
 
 ```go
-boa.Cmd[Params]{
-    Use:   "myapp",
-    Short: "My application",
-    Long:  "A detailed description",
-    SubCmds: boa.SubCmds(subCmd1, subCmd2),
-    RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
-        fmt.Println(params.Name)
-    },
+import "github.com/GiGurra/boa/pkg/boa"
+```
+
+**After:**
+
+```go
+import "github.com/j0sh/boa/pkg/boa"
+```
+
+```bash
+go get github.com/j0sh/boa@latest
+go mod tidy
+```
+
+The fork requires Go 1.27 because its built-in JSON implementation uses the Go 1.27 `encoding/json/v2` API.
+
+## Commands: CmdT becomes Cmd
+
+The generic command is now the only public command type. The erased implementation is private.
+
+**Before:**
+
+```go
+boa.CmdT[Params]{
+    Use:    "serve",
+    RunFunc: runServe,
 }.Run()
 ```
 
-### RunFunc Signature
+**After:**
 
-The run function now receives the cobra command and args, matching cobra's own pattern:
+```go
+boa.Cmd[Params]{
+    Use:    "serve",
+    RunFunc: runServe,
+}.Run()
+```
+
+Code using the non-generic `boa.Cmd`, `CmdIfc`, or `CmdT.ToCmd()` should stay typed until converting directly to Cobra:
+
+```go
+cmd := boa.Cmd[Params]{Use: "serve", RunFunc: runServe}.ToCobra()
+```
+
+`CmdList` was removed. `SubCmds` is the single helper for heterogeneous typed commands:
+
+```go
+children := boa.SubCmds(
+    boa.Cmd[ServeParams]{Use: "serve", RunFunc: runServe},
+    boa.Cmd[DeployParams]{Use: "deploy", RunFunc: runDeploy},
+)
+```
+
+## Field configuration
+
+`boa.Param` replaces both `GetParamT` and `HookContext.GetParam`. The field pointer infers `T`, and `*Field[T]` embeds the general `Parameter` interface.
 
 **Before:**
 
 ```go
-RunFunc: func(params *Params) {
-    // no access to cmd or args
-}
+port := boa.GetParamT(ctx, &p.Port)
+port.SetDefaultT(8080)
+port.SetMinT(1)
+port.SetMaxT(65535)
+port.SetCustomValidatorT(validatePort)
+
+ctx.GetParam(&p.Host).SetDefault(boa.Default("localhost"))
 ```
 
 **After:**
 
 ```go
-RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
-    // full access to cobra command and positional args
-}
+port := boa.Param(ctx, &p.Port)
+port.SetDefault(8080)
+port.SetMin(1)
+port.SetMax(65535)
+port.SetCustomValidator(validatePort)
+
+boa.Param(ctx, &p.Host).SetDefault("localhost")
 ```
 
-The context-aware variant also changed:
-
-**Before:**
+For strings, slices, and maps, length bounds are explicit:
 
 ```go
-RunFuncCtx: func(ctx *boa.HookContext, params *Params) {
-    // ...
-}
+boa.Param(ctx, &p.Name).SetMinLen(3)
+boa.Param(ctx, &p.Tags).SetMaxLen(10)
 ```
 
-**After:**
+The standalone `boa.Default` helper and `boa.HasValue(param)` were removed. Pass values directly to `SetDefault`; use `ctx.HasValue(&p.Field)` or `field.HasValue()`.
+
+The untyped public interface was renamed from `Param` to `Parameter`. Most applications only see it when writing a `ParamEnricher` or iterating `ctx.AllMirrors()`.
+
+## Canonical struct tags
+
+The fork accepts one spelling for each tag. Replace aliases mechanically:
+
+| GiGurra/boa alias | j0sh/boa canonical tag |
+|---|---|
+| `help`, `desc`, `description` | `descr` |
+| `long` | `name` |
+| `pos` | `positional` |
+| `alternatives` | `alts` |
+| `strict-alts` | `strict` |
+| `req` | `required` |
+| `opt` | `optional` |
+| `boa:"nocli"` | `boa:"noflag"` |
+
+Other current tags—including `short`, `env`, `default`, `alts`, `strict`, `min`, `max`, `pattern`, `persistent`, `collection`, `configfile`, `configonly`, `noenv`, and `ignore`—retain their canonical spelling. See [Parameters and Struct Tags](struct-tags.md#tag-reference).
+
+## Config format overrides
+
+The registry API remains the preferred path:
 
 ```go
-RunFuncCtx: func(ctx *boa.HookContext, params *Params, cmd *cobra.Command, args []string) {
-    // ...
-}
-```
-
-### Parameter Types
-
-`Required[T]` and `Optional[T]` are removed. Use plain Go types instead.
-
-**Before:**
-
-```go
-type Params struct {
-    Name    boa.Required[string] `descr:"User name" env:"USER_NAME"`
-    Port    boa.Optional[int]    `descr:"Port number" default:"8080"`
-    Verbose boa.Optional[bool]   `short:"v"`
-}
-
-// Accessing values:
-fmt.Println(params.Name.Value())
-if params.Port.HasValue() {
-    fmt.Println(params.Port.Value())
-}
-```
-
-**After:**
-
-```go
-type Params struct {
-    Name    string `descr:"User name" env:"USER_NAME"`
-    Port    int    `descr:"Port number" default:"8080" optional:"true"`
-    Verbose bool   `short:"v" optional:"true"`
-}
-
-// Accessing values -- direct field access:
-fmt.Println(params.Name)
-fmt.Println(params.Port)
-```
-
-### Optional Parameters: Pointer Fields
-
-For truly optional parameters where you need to distinguish "not set" from "zero value", use pointer types:
-
-**Before:**
-
-```go
-type Params struct {
-    Retries boa.Optional[int] `descr:"retry count"`
-}
-
-if params.Retries.HasValue() {
-    fmt.Println(params.Retries.Value())
-}
-```
-
-**After:**
-
-```go
-type Params struct {
-    Retries *int `descr:"retry count"`
-}
-
-if params.Retries != nil {
-    fmt.Println(*params.Retries)
-}
-```
-
-Pointer fields are always optional by default, even without `optional:"true"` or `boa.WithDefaultOptional()`.
-
-### New Features in v1.0
-
-#### Map Fields
-
-```go
-type Params struct {
-    Labels map[string]string `descr:"key=value labels"`
-}
-// Usage: --labels env=prod,team=backend
-```
-
-#### Config File Support
-
-```go
-type Params struct {
-    ConfigFile string `configfile:"true" optional:"true" default:"config.json"`
-    Host       string
-    Port       int
-}
-```
-
-#### Config-File-Only Fields
-
-```go
-type Params struct {
-    ConfigFile string            `configfile:"true" optional:"true" default:"config.json"`
-    Host       string            `descr:"server host"`
-    InternalID string            `boa:"ignore"` // only loaded from config file
-    Metadata   map[string]string `boa:"ignore"` // not exposed as CLI flag
-}
-```
-
-#### JSON Fallback for Complex Types
-
-```go
-type Params struct {
-    Matrix [][]int             `descr:"nested matrix" optional:"true"`
-    Meta   map[string][]string `descr:"metadata" optional:"true"`
-}
-// Usage: --matrix '[[1,2],[3,4]]' --meta '{"tags":["a","b"]}'
-```
-
-#### Substruct Config Files
-
-The `configfile:"true"` tag now works on fields inside nested structs. Each substruct can have its own config file. Priority: CLI > env > root config > substruct config > defaults.
-
-```go
-type DBConfig struct {
-    ConfigFile string `configfile:"true" optional:"true"`
-    Host       string `default:"localhost"`
-    Port       int    `default:"5432"`
-}
-
-type Params struct {
-    ConfigFile string   `configfile:"true" optional:"true" default:"config.json"`
-    DB         DBConfig
-}
-```
-
-#### Config Format Registry
-
-Register custom config file formats by extension. JSON is the only format shipped by default:
-
-```go
-// One line per format — works for every mainstream Go config parser.
-// Key-presence detection (including zero-value and same-as-default writes
-// to optional struct-pointer parameter groups) is enabled automatically.
 boa.RegisterConfigFormat(".yaml", yaml.Unmarshal)
 boa.RegisterConfigFormat(".toml", toml.Unmarshal)
 ```
 
-`RegisterConfigFormat` wraps the unmarshal function in a `boa.UniversalConfigFormat`, which synthesizes the `KeyTree` probe by asking the same parser to decode into a `map[string]any`. For inline per-command overrides you can call the helper directly: `ConfigFormat: boa.UniversalConfigFormat(yaml.Unmarshal)`. Only drop to the explicit `boa.ConfigFormat{Unmarshal: ..., KeyTree: ...}` literal (via `RegisterConfigFormatFull`) when your parser genuinely cannot decode into `map[string]any` — that is almost never a third-party library, only a handwritten custom format.
+The legacy `Cmd.ConfigUnmarshal` field was removed. Use a complete `ConfigFormat` override when one command must bypass extension dispatch.
 
-Resolution: `Cmd.ConfigFormat` > registered format by extension > `boa.UnmarshalJSON` fallback. See the [Config Format Registry section in Advanced Usage](advanced.md#config-format-registry) for details.
-
-#### Named Struct Auto-Prefixing
-
-Named (non-anonymous) struct fields now auto-prefix their children's flag names and env var names. This is a behavioral change from pre-v1.0 where all nested struct fields were unprefixed.
+**Before:**
 
 ```go
-type DBConfig struct {
-    Host string `default:"localhost"`
-    Port int    `default:"5432"`
-}
-
-type Params struct {
-    DB DBConfig  // v1.0: --db-host, --db-port (auto-prefixed)
-                 // pre-v1.0: --host, --port (no prefix)
+boa.CmdT[Params]{
+    Use:            "app",
+    ConfigUnmarshal: yaml.Unmarshal,
 }
 ```
 
-Embedded (anonymous) fields remain unprefixed as before. If you rely on the old unprefixed behavior for named fields, either embed the struct anonymously or use explicit `name:"..."` tags (noting that explicit tags are also prefixed inside named fields).
-
-#### Custom Type Registration
-
-Register user-defined types as CLI parameters:
+**After:**
 
 ```go
-boa.RegisterType[SemVer](boa.TypeDef[SemVer]{
-    Parse:  func(s string) (SemVer, error) { return parseSemVer(s) },
-    Format: func(v SemVer) string { return v.String() },
-})
-```
-
-#### Min/Max/Pattern Validation Tags
-
-```go
-type Params struct {
-    Port int    `min:"1" max:"65535"`
-    Name string `min:"3" max:"20" pattern:"^[a-z][a-z0-9-]*$"`
-}
-```
-
-#### Viper-like Config Discovery (boaviper)
-
-Optional subpackage for automatic config file discovery:
-
-```go
-import "github.com/j0sh/boa/pkg/boaviper"
-
 boa.Cmd[Params]{
-    Use:      "myapp",
-    InitFunc: boaviper.AutoConfig[Params]("myapp"),
-    ParamEnrich: boa.ParamEnricherCombine(
-        boa.ParamEnricherDefault,
-        boaviper.SetEnvPrefix("MYAPP"),
-    ),
+    Use:          "app",
+    ConfigFormat: boa.UniversalConfigFormat(yaml.Unmarshal),
 }
 ```
 
-#### Global Default Optional
+`UnMarshalFromFileParam` was removed; use `LoadConfigFile`, `LoadConfigFiles`, or the automatic `configfile:"true"` field.
 
-```go
-boa.Init(boa.WithDefaultOptional())
+## Config decoding behavior
 
-type Params struct {
-    Name   string `descr:"user name"`             // now optional
-    Port   int    `descr:"port" required:"true"`   // still required
-}
-```
+The fork treats each selected decoder as authoritative: it calls the decoder once for the target and preserves its values, custom methods, and errors. It no longer retries failed decodes through proxy structs or reconstructs third-party type systems.
 
-### Programmatic field configuration
+Built-in JSON shares registered string parsers with flags and environment variables. For portable custom scalars:
 
-Use `boa.Param` inside a context-aware init hook. The field pointer determines `T`, so type arguments are normally unnecessary:
+- implement `encoding.TextUnmarshaler` on a type you own;
+- use `boa.Text[T]` around a type you cannot change; or
+- use `boa.RegisterType` when BOA should own the textual parser.
 
-```go
-nameParam := boa.Param(ctx, &params.Name)
-nameParam.SetDefault("anonymous")
-```
+See [Config Decoding](config-decoding.md) for exact cross-format behavior.
 
-### Step-by-Step Migration
+## Validation and reload behavior
 
-1. **Replace command construction**: Change builder chains to `boa.Cmd[P]{Use: "name", ...}` struct literals.
+The public calls keep their names, but the fork makes their boundaries stricter:
 
-2. **Update RunFunc signatures**: Add `cmd *cobra.Command, args []string` parameters.
+- `Cmd.Validate()` validates only the current command, does not route to children, and skips every PreExecute and Run hook.
+- `boa.Reload` rebuilds only the executed command, skips every PreExecute and Run hook including struct methods, and replays the captured invocation rather than reading `os.Args` again.
+- Reloads through one `HookContext` are serialized. A successful reload refreshes its watched-file list; a failed reload preserves the previous list.
+- Nested Init hooks run on the nested receiver, and config-file targets are resolved by field path rather than traversal order.
 
-3. **Replace Required[T] with plain types**: `boa.Required[string]` becomes `string`. Fields are required by default.
+See [Lifecycle and Errors](lifecycle.md#validation-without-actions) and [Live Config Reload](live-reload.md).
 
-4. **Replace Optional[T] with tagged types or pointers**: `boa.Optional[int]` becomes either `int` with `optional:"true"` tag, or `*int` for nil-distinguishable optionality.
+## Other visible behavior changes
 
-5. **Remove .Value() calls**: Access fields directly (`params.Name` instead of `params.Name.Value()`).
+- A false default installed only by Boolean enrichment is omitted from help unless the user supplied the value.
+- Enum completions suppress filesystem candidates.
+- Subcommand-only roots retain Cobra's spelling suggestions.
+- Empty JSON collection arguments are rejected instead of retaining an unparsed string.
+- Recursive parameter groups return a construction error instead of recursing without a bound. Mark recursive config-only data ignored or register a scalar parser at the boundary.
 
-6. **Remove .HasValue() calls**: Use `HookContext.HasValue(&params.Field)` in `RunFuncCtx`, or use pointer fields (`params.Field != nil`).
+## Migration checklist
 
-7. **Update imports**: Remove any imports of removed types.
-
-## From Cobra to BOA
-
-### Before (Pure Cobra)
-
-```go
-var port int
-var host string
-
-var rootCmd = &cobra.Command{
-    Use:   "myapp",
-    Short: "My application",
-    Run: func(cmd *cobra.Command, args []string) {
-        fmt.Printf("Host: %s, Port: %d\n", host, port)
-    },
-}
-
-func init() {
-    rootCmd.Flags().StringVarP(&host, "host", "H", "localhost", "Server hostname")
-    rootCmd.Flags().IntVarP(&port, "port", "p", 8080, "Server port")
-    rootCmd.MarkFlagRequired("host")
-}
-
-func main() {
-    rootCmd.Execute()
-}
-```
-
-### After (BOA)
-
-```go
-type Params struct {
-    Host string `descr:"Server hostname" default:"localhost"`
-    Port int    `descr:"Server port" default:"8080" optional:"true"`
-}
-
-func main() {
-    boa.Cmd[Params]{
-        Use:   "myapp",
-        Short: "My application",
-        RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
-            fmt.Printf("Host: %s, Port: %d\n", params.Host, params.Port)
-        },
-    }.Run()
-}
-```
-
-## Incremental Migration
-
-You don't have to migrate everything at once. BOA commands produce standard `*cobra.Command` objects, so you can mix them freely:
-
-```go
-// Start: all Cobra
-rootCmd.AddCommand(serveCmd, migrateCmd, configCmd)
-
-// Migrate one at a time
-rootCmd.AddCommand(
-    serveCmd,   // Still Cobra
-    migrateCmd, // Still Cobra
-    boa.Cmd[ConfigParams]{
-        Use: "config",
-        RunFunc: func(p *ConfigParams, cmd *cobra.Command, args []string) { /* ... */ },
-    }.ToCobra(), // Now BOA
-)
-```
-
-See [Cobra Interoperability](cobra-interop.md) for the full incremental migration strategy.
-
-## Why Migrate?
-
-BOA provides:
-
-- **Declarative parameters** - Define flags as struct fields, no manual registration
-- **Automatic flag generation** - Field names become kebab-case flags automatically
-- **Type safety** - Parameters are typed struct fields, not `interface{}`
-- **Built-in validation** - Required fields, alternatives, custom validators
-- **Environment variable binding** - Automatic or custom env var support
-- **Cleaner code** - No scattered `init()` functions or global variables
+1. Change the module import path to `github.com/j0sh/boa`.
+2. Upgrade the project toolchain to Go 1.27.
+3. Rename `CmdT[T]` to `Cmd[T]`; remove uses of the erased `Cmd`, `CmdIfc`, `ToCmd`, and `CmdList`.
+4. Replace `GetParamT` and `HookContext.GetParam` with `boa.Param`.
+5. Remove typed method suffixes and pass defaults directly rather than through `boa.Default`.
+6. Replace tag aliases with canonical spellings.
+7. Replace `ConfigUnmarshal` and `UnMarshalFromFileParam` if used.
+8. Review custom decoder assumptions and any side effects in Init, PostCreate, or PreValidate hooks that will run during reload.
+9. Run `go test ./...`, then exercise help, completion, config loading, validation-only paths, and reload behavior relevant to the application.

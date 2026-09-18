@@ -1,377 +1,282 @@
-# Struct Tags Reference
+# Parameters and Struct Tags
 
-Quick reference for all BOA struct tags.
+This page is the canonical reference for BOA fields: supported shapes, struct tags, validation, source precedence, enrichment, and programmatic configuration.
 
-## Tag Reference
+## Source precedence
 
-| Tag | Description | Example |
-|-----|-------------|---------|
-| `descr` | Help text | `descr:"User name"` |
-| `name` | Override flag name | `name:"server-host"` |
-| `short` | Single-character flag | `short:"n"` |
-| `env` | Environment variable | `env:"APP_HOST"` |
-| `default` | Default value | `default:"8080"` |
-| `required` | Mark as required | `required:"true"` |
-| `optional` | Mark as optional | `optional:"true"` |
-| `positional` | Positional argument | `positional:"true"` |
-| `persistent` | Flag inherited by descendant commands | `persistent:"true"` |
-| `alts` | Allowed values | `alts:"a,b,c"` |
-| `strict` | Validate against `alts` | `strict:"true"` |
-| `min` | Minimum number or collection length | `min:"1"` |
-| `max` | Maximum number or collection length | `max:"65535"` |
-| `pattern` | Regular expression for a string | `pattern:"^[a-z]+$"` |
-| `collection` | Slice CLI parsing: `slice` (CSV, default) or `array` (one scalar per occurrence) | `collection:"array"` |
-| `configfile` | Auto-load a config file for the enclosing struct | `configfile:"true"` |
-| `boa` | Directives: `ignore`, `configonly`, `noflag`, `noenv` | `boa:"configonly"` |
+When more than one source sets a field, the highest source wins:
 
-## Special Field Types
+1. CLI flags and positional arguments
+2. environment variables
+3. root config files
+4. nested-struct config files
+5. defaults
+6. Go zero values
 
-### Pointer Fields
+BOA tracks whether a source supplied a value separately from the value itself. An explicit `0`, `false`, empty string, or config value equal to the default is still present.
 
-Pointer types (`*string`, `*int`, `*bool`, etc.) are always optional by default, regardless of the global configuration. A `nil` value means the flag was not provided. Use `required:"true"` to override.
+## Tag reference
 
-```go
-type Params struct {
-    Name  *string `descr:"user name"`              // optional, nil if not set
-    Count *int    `descr:"item count"`              // optional, nil if not set
-    Force *bool   `required:"true" descr:"force"`   // required even though it's a pointer
-}
-```
+| Tag | Meaning | Example |
+|---|---|---|
+| `descr` | Help description | `descr:"server port"` |
+| `name` | Override the long flag name | `name:"listen-port"` |
+| `short` | Set a one-character shorthand | `short:"p"` |
+| `env` | Bind an environment variable | `env:"PORT"` |
+| `default` | Parse and install a default | `default:"8080"` |
+| `required` | Explicitly require or unrequire | `required:"true"` |
+| `optional` | Explicitly make optional or required | `optional:"true"` |
+| `positional` | Consume a positional argument | `positional:"true"` |
+| `persistent` | Inherit the flag in child commands | `persistent:"true"` |
+| `alts` | Comma-separated completion/validation values | `alts:"debug,info,warn"` |
+| `strict` | Enforce alternatives; defaults to true | `strict:"false"` |
+| `min`, `max` | Numeric bound or collection/string length | `min:"1" max:"65535"` |
+| `pattern` | Regular expression for a string | `pattern:"^[a-z][a-z0-9-]*$"` |
+| `collection` | Slice occurrence mode: `slice` or `array` | `collection:"array"` |
+| `configfile` | Load path(s) into the enclosing struct | `configfile:"true"` |
+| `boa` | Processing directives | `boa:"configonly"` |
 
-### The `boa:"ignore"` and `boa:"configonly"` Tags
+Tag values are applied before flags are bound and environment variables are read. Invalid bounds, defaults, or tag combinations fail command construction.
 
-Both tags hide a field from the CLI and from env vars, but they differ in whether boa's mirror and validation still run:
+## Required and optional
 
-- **`boa:"ignore"`** — field is **fully excluded** from boa. No mirror, no validation, no required check. Only raw config-file unmarshal writes to it.
-- **`boa:"configonly"`** — field is hidden from CLI and env (it's shorthand for `noflag` + `noenv`) but the **mirror is preserved** and validation, required checks, and custom validators still run. Use this when you want a config-file-only field that's still validated.
+Plain scalar and flat-slice fields are required by default. These field shapes default to optional:
 
-```go
-type Params struct {
-    ConfigFile string            `configfile:"true" optional:"true" default:"config.json"`
-    Host       string            `descr:"server host"`
-    Port       int               `descr:"server port"`
-    InternalID string            `boa:"configonly" min:"8"` // validated
-    Metadata   map[string]string `boa:"ignore"`             // opaque, boa doesn't touch it
-}
-```
+- pointers, because `nil` represents absence;
+- maps;
+- nested slices such as `[][]int`.
 
-### The `boa:"noflag"` Tag
-
-Fields tagged `boa:"noflag"` are **excluded from CLI flag registration only**. They do not appear in `--help` and cannot be set with a `--flag`, but they are fully processed in every other way: env vars, config files, defaults, `min`/`max`/`pattern` validation, and custom validators all still apply.
+`required:"true"` and `optional:"true"` override the default. A declared default also satisfies a required field.
 
 ```go
 type Params struct {
-    Name   string `descr:"public name"`
-    Secret string `descr:"api token" boa:"noflag" env:"API_TOKEN"`
+    Host    string `default:"localhost"`
+    Port    int
+    Debug   bool `optional:"true"`
+    Retries *int
+    Labels  map[string]string
 }
 ```
 
-With the above, `--secret` is not a valid flag, but `API_TOKEN=...` still populates the field, and the user still sees a `missing required param 'secret' (env: API_TOKEN)` error if it is required and unset.
+To make plain fields optional throughout an application, call this before creating commands:
 
-Combining `boa:"noflag"` with `positional` is an error — a positional argument is, by definition, a CLI argument.
+```go
+boa.Init(boa.WithDefaultOptional())
+```
 
-Difference from `boa:"ignore"`: `ignore` skips boa processing entirely (no env reads, no validation) and only supports config-file unmarshal; `noflag` skips just the CLI flag layer.
+Explicit `required` and `optional` tags still win over the global setting.
 
-### The `boa:"noenv"` Tag
+## Flags and positional arguments
 
-Mirror image of `noflag`: the field is exposed as a CLI flag and still loads from config files, but **env var reading is suppressed**. This is mostly useful in combination with `ParamEnricherEnv`, where you want the enricher to auto-bind most fields to env vars but opt a few out:
+BOA normally derives a kebab-case flag name from the field name and attempts to assign the first non-conflicting character as a shorthand. `HTTPPort` becomes `--http-port`; `-h` remains reserved for help.
+
+Use `positional:"true"` for arguments without flag names:
 
 ```go
 type Params struct {
-    Host     string `descr:"hostname"`
-    Internal string `descr:"internal knob" boa:"noenv"`
-}
-// With ParamEnricherEnv: $HOST populates Host, but $INTERNAL is ignored.
-```
-
-### Persistent Flags
-
-Use `persistent:"true"` to register a field on the declaring Cobra command's
-persistent flag set. Descendant commands inherit the flag, and may accept it
-either before or after the subcommand path:
-
-```go
-type RootParams struct {
-    DB string `name:"db" persistent:"true" optional:"true"`
-}
-// Both forms work:
-// myapp --db app.db child
-// myapp child --db app.db
-```
-
-Boa runs the declaring command's sourcing and validation pipeline when a
-descendant executes, so env/config/default handling and required validation
-still apply to the root field. Persistent flags can be declared at any command
-level. They cannot be positional arguments. A descendant local flag with the
-same name follows Cobra's normal shadowing behavior.
-
-The default enricher auto-generates a short name for a persistent flag only when
-that shorthand is unique throughout the assembled command subtree. If a
-descendant already uses it, Boa omits the persistent flag's automatic shorthand
-while leaving the descendant shorthand intact. Explicit persistent shorthands
-set with `short:"x"` or `SetShort("x")` are never silently removed; Boa returns
-a construction error if one conflicts with a local or persistent descendant
-flag.
-
-### Programmatic parity
-
-Anything configurable with a struct tag is also configurable programmatically through `boa.Param(ctx, &p.Field)`. This is the escape hatch for parameter structs you don't own and can't add tags to:
-
-```go
-boa.Cmd[ExternalConfig]{
-    Use: "cmd",
-    InitFuncCtx: func(ctx *boa.HookContext, p *ExternalConfig, cmd *cobra.Command) error {
-        secret := boa.Param(ctx, &p.Secret)
-        secret.SetDescription("auth token (env or config only)")
-        secret.SetNoFlag(true)    // equivalent to `boa:"noflag"`
-        secret.SetEnv("APP_TOKEN")
-
-        port := boa.Param(ctx, &p.Port)
-        port.SetMin(1)           // equivalent to `min:"1"`
-        port.SetMax(65535)       // equivalent to `max:"65535"`
-        return nil
-    },
+    Input  string   `positional:"true"`
+    Output string   `positional:"true" optional:"true" default:"stdout"`
+    Extra  []string `positional:"true" optional:"true"`
 }
 ```
 
-Available setters include `SetDescription`, `SetName`, `SetShort`, `SetEnv`, `SetPositional`, `SetPersistent`, `SetRequired` / `SetRequiredFn`, `SetNoFlag`, `SetNoEnv`, `SetIgnored`, `SetCollection`, `SetMin` / `SetMax` for numeric fields, `SetMinLen` / `SetMaxLen` for strings, slices, and maps, `ClearMin` / `ClearMax`, `SetPattern`, `SetAlternatives`, `SetAlternativesFunc`, `SetStrictAlts`, `SetDefault`, `SetCustomValidator`, and `SetIsEnabledFn`. Numeric bounds retain the field's natural precision.
+Required positionals must precede optional positionals. A positional slice must be last. Positional fields cannot be combined with `boa:"noflag"` or `boa:"ignore"`.
 
-Call these setters from `InitFuncCtx` or `CfgStructInitCtx.InitCtx`, before BOA binds flags or reads environment variables.
+`persistent:"true"` registers a flag on Cobra's persistent flag set so descendant commands inherit it. BOA suppresses auto-generated shorthand characters that would collide in the assembled subtree.
 
-### Map Fields
+## Environment variables and enrichers
 
-Map types with string keys (`map[string]string`, `map[string]int`, `map[string]int64`) use `key=val,key=val` syntax on the CLI. Maps default to optional.
+An `env` tag binds one field directly:
 
 ```go
 type Params struct {
-    Labels map[string]string `descr:"key=value labels"`
-    Limits map[string]int    `descr:"resource limits"`
-}
-// Usage: myapp --labels env=prod,team=backend --limits cpu=4,memory=8192
-```
-
-For complex map value types (e.g., `map[string][]string`), the CLI uses JSON syntax. See [Advanced](advanced.md#json-fallback-for-complex-types).
-
-### Complex Types (JSON Fallback)
-
-Any field type without native pflag support (nested slices, complex maps, etc.) automatically falls back to JSON parsing on the CLI:
-
-```go
-type Params struct {
-    Matrix [][]int             `descr:"nested matrix" optional:"true"`
-    Meta   map[string][]string `descr:"metadata" optional:"true"`
-}
-// Usage: --matrix '[[1,2],[3,4]]' --meta '{"tags":["a","b"]}'
-```
-
-## Examples
-
-### Basic Flags
-
-```go
-type Params struct {
-    Host string `descr:"Server hostname" default:"localhost"`
-    Port int    `descr:"Server port" short:"p" default:"8080"`
+    Host string `env:"APP_HOST" default:"localhost"`
 }
 ```
 
-### Environment Variables
-
-```go
-type Params struct {
-    APIKey   string `env:"API_KEY" descr:"API authentication key"`
-    LogLevel string `env:"LOG_LEVEL" default:"info"`
-}
-```
-
-### Positional Arguments
-
-```go
-type Params struct {
-    Source string `positional:"true" descr:"Source file"`
-    Dest   string `positional:"true" descr:"Destination file"`
-}
-// Usage: myapp <source> <dest>
-```
-
-### Optional Positional Arguments
-
-```go
-type Params struct {
-    File   string `positional:"true" descr:"Input file"`
-    Output string `positional:"true" optional:"true" default:"out.txt"`
-}
-// Usage: myapp <file> [output]
-```
-
-### Enum Values
-
-```go
-type Params struct {
-    Format string `alts:"json,yaml,toml" default:"json"`
-    Level  string `alts:"debug,info,warn,error" strict:"true"`
-}
-```
-
-### Min/Max Validation
-
-For numeric types, `min` and `max` validate the value itself. For strings and slices, they validate the length:
-
-```go
-type Params struct {
-    Port    int      `descr:"port" min:"1" max:"65535"`
-    Rate    float64  `descr:"rate" min:"0.0" max:"1.0"`
-    Name    string   `descr:"name" min:"3" max:"20"`
-    Retries int      `descr:"retries" max:"10"`
-    Tags    []string `descr:"tags" min:"1" max:"5"`
-    Files   []string `positional:"true" min:"2" max:"10"`
-}
-```
-
-Optional (pointer) fields are only validated when a value is actually provided.
-
-### Pattern Validation
-
-Use `pattern` to validate string fields against a regular expression:
-
-```go
-type Params struct {
-    Name string `descr:"name" pattern:"^[a-z][a-z0-9-]*$"`
-    Tag  string `descr:"tag" pattern:"^v[0-9]+\\.[0-9]+\\.[0-9]+$"`
-}
-```
-
-Optional (pointer) fields are only validated when a value is actually provided.
-
-### Config File
-
-```go
-type Params struct {
-    Config string `configfile:"true" optional:"true" default:"config.json" descr:"Path to config file"`
-    Host   string `descr:"Server hostname"`
-    Port   int    `descr:"Server port"`
-}
-// Usage: myapp --config myconfig.json
-// Or just: myapp (loads config.json by default)
-```
-
-The tagged field may be a `string` or `[]string`. Multiple paths load from left to right. Nested structs can also have their own `configfile:"true"` field for substruct-level config files. See [Advanced](advanced.md#substruct-config-files) for details.
-
-### Combined Example
-
-```go
-type Params struct {
-    // Required flag with short form and env var
-    Config string `short:"c" env:"APP_CONFIG" descr:"Config file path"`
-
-    // Optional flag with default
-    Port int `short:"p" optional:"true" default:"8080" descr:"Listen port"`
-
-    // Positional argument
-    Command string `positional:"true" descr:"Command to run"`
-
-    // Boolean flag (defaults to false automatically)
-    Verbose bool `short:"v" optional:"true" descr:"Verbose output"`
-
-    // Enum with validation
-    Mode string `alts:"dev,prod" default:"dev" descr:"Run mode"`
-}
-```
-
-## Auto-Generated Values
-
-Without explicit tags, BOA derives flag names and short flags automatically. Environment variables are **not** auto-derived by default -- add `ParamEnricherEnv` to your enricher chain or use `env` struct tags.
-
-The `camelToKebabCase` conversion handles acronyms correctly:
-
-| Field | Flag | Short | Env Var |
-|-------|------|-------|---------|
-| `ServerHost` | `--server-host` | `-s` | (none by default) |
-| `DBHost` | `--db-host` | `-d` | (none by default) |
-| `HTTPPort` | `--http-port` | `-h` (skipped, reserved) | (none by default) |
-| `MaxRetries` | `--max-retries` | `-m` | (none by default) |
-| `FB` | `--fb` | `-f` | (none by default) |
-
-To auto-derive env vars, set `ParamEnrich`:
+Environment names are not derived by default. To derive them for all fields, compose the environment enricher with the default chain:
 
 ```go
 boa.Cmd[Params]{
     Use: "app",
     ParamEnrich: boa.ParamEnricherCombine(
-        boa.ParamEnricherName,
-        boa.ParamEnricherShort,
-        boa.ParamEnricherEnv,   // adds SERVER_HOST, MAX_RETRIES, etc.
-        boa.ParamEnricherBool,
+        boa.ParamEnricherDefault,
+        boa.ParamEnricherEnv,
+        boa.ParamEnricherEnvPrefix("MYAPP"),
     ),
 }
 ```
 
-See [Enrichers](enrichers.md) to customize this behavior.
+The built-in enrichers are:
 
-## Named Struct Auto-Prefixing
+| Enricher | Behavior |
+|---|---|
+| `ParamEnricherDefault` | Name + shorthand + Boolean false default |
+| `ParamEnricherName` | Derive a kebab-case flag name |
+| `ParamEnricherShort` | Assign a non-conflicting shorthand |
+| `ParamEnricherEnv` | Derive `UPPER_SNAKE_CASE` from the flag name |
+| `ParamEnricherEnvPrefix(prefix)` | Prefix an existing environment name |
+| `ParamEnricherBool` | Give Boolean fields a false default |
+| `ParamEnricherNone` | Disable enrichment |
 
-Named (non-anonymous) struct fields auto-prefix their children's flag names and env var names. This prevents collisions when the same struct type is used in multiple fields.
+Explicit tags take precedence over enrichers.
+
+## Collections and complex values
+
+Flat slices use Cobra's slice semantics by default, including comma splitting:
 
 ```go
-type DBConfig struct {
-    Host string `descr:"database host" default:"localhost"`
-    Port int    `descr:"database port" default:"5432"`
-}
-
 type Params struct {
-    Primary DBConfig  // named → --primary-host, --primary-port
-    Replica DBConfig  // named → --replica-host, --replica-port
+    Tags []string `default:"[red,blue]"`
+}
+// --tags red,blue
+```
+
+Use `collection:"array"` when each flag occurrence should be one scalar value without CSV splitting:
+
+```go
+type Params struct {
+    Label []string `collection:"array"`
+}
+// --label 'one,opaque' --label two
+```
+
+Simple string-keyed maps accept `key=value` pairs:
+
+```go
+type Params struct {
+    Labels map[string]string // --labels env=prod,team=platform
+    Limits map[string]int    // --limits cpu=4,memory=8192
 }
 ```
 
-### Rules
-
-- **Embedded (anonymous) fields** are not prefixed: `CommonFlags` → `--verbose`
-- **Named fields** auto-prefix: `DB DBConfig` → `--db-host`
-- **Deep nesting chains**: `Infra.Primary.Host` → `--infra-primary-host`
-- **Env vars also prefixed**: `DB.Host` with `ParamEnricherEnv` → `DB_HOST`
-- **Explicit tags also prefixed**: `name:"host"` inside named field `API` → `--api-host`
-- **Explicit env tags also prefixed**: `env:"HOST"` inside named field `API` → `API_HOST`
-
-### Example with Env Vars
+Nested slices, complex maps, and other values without a native flag handler use JSON:
 
 ```go
-type ServerConfig struct {
-    Host string `env:"SERVER_HOST" default:"localhost"`
-    Port int    `env:"SERVER_PORT" default:"8080"`
-}
-
 type Params struct {
-    API ServerConfig  // env vars become API_SERVER_HOST, API_SERVER_PORT
+    Matrix [][]int             `optional:"true"`
+    Meta   map[string][]string `optional:"true"`
+}
+// --matrix '[[1,2],[3,4]]' --meta '{"owners":["ada"]}'
+```
+
+## Validation
+
+`alts` supplies completion candidates and, by default, restricts the value:
+
+```go
+type Params struct {
+    Level string `alts:"debug,info,warn,error"`
+    Color string `alts:"red,green,blue" strict:"false"` // suggestions only
 }
 ```
 
-## Beyond Struct Tags
-
-Struct tags cover the most common use cases, but for dynamic behavior you'll need programmatic configuration via `HookContext`:
-
-- **Dynamic defaults** - Set defaults based on runtime values
-- **Conditional requirements** - Make fields required based on other fields
-- **Dynamic completions** - Shell completions from APIs, files, or computed at runtime
-- **AlternativesFunc** - Generate completion suggestions dynamically (e.g., list files, query databases)
-- **Custom validation** - Complex validation logic
+`min` and `max` constrain numeric values and the length of strings, slices, and maps. `pattern` applies a regular expression to strings:
 
 ```go
-boa.Cmd[Params]{
-    Use: "app",
-    InitFuncCtx: func(ctx *boa.HookContext, p *Params, cmd *cobra.Command) error {
-        param := boa.Param(ctx, &p.Region)
-        param.SetAlternatives(fetchRegionsFromAPI())
-        param.SetStrictAlts(true)
+type Params struct {
+    Port int      `min:"1" max:"65535"`
+    Name string   `min:"3" max:"20" pattern:"^[a-z][a-z0-9-]*$"`
+    Tags []string `min:"1" max:"5"`
+}
+```
+
+Validation of an absent optional pointer is skipped. When present, its pointed-to value is validated normally.
+
+For application logic, install typed validators in `InitFuncCtx`:
+
+```go
+InitFuncCtx: func(ctx *boa.HookContext, p *Params, _ *cobra.Command) error {
+    boa.Param(ctx, &p.Port).SetCustomValidator(func(port int) error {
+        if port < 1024 && port != 80 && port != 443 {
+            return fmt.Errorf("unsupported privileged port %d", port)
+        }
         return nil
-    },
+    })
+    return nil
+},
+```
+
+Conditional requirements and visibility use functions evaluated at runtime:
+
+```go
+field := boa.Param(ctx, &p.Token)
+field.SetRequiredFn(func() bool { return p.Environment == "production" })
+field.SetIsEnabledFn(func() bool { return p.AuthMode != "none" })
+```
+
+## BOA processing directives
+
+The `boa` tag accepts comma-separated directives:
+
+| Directive | CLI | Environment | Config decode | Validation/mirror |
+|---|---:|---:|---:|---:|
+| `noflag` | no | yes | yes | yes |
+| `noenv` | yes | no | yes | yes |
+| `configonly` | no | no | yes | yes |
+| `ignore` | no | no | raw decoder only | no |
+
+Use `configonly` for validated configuration that must not be exposed as a flag or environment variable. Use `ignore` for opaque data BOA should not traverse or validate.
+
+```go
+type Params struct {
+    ConfigFile string         `configfile:"true" optional:"true"`
+    Secret     string         `boa:"noflag" env:"APP_SECRET" min:"20"`
+    InternalID string         `boa:"configonly" min:"8"`
+    PluginData map[string]any `boa:"ignore"`
 }
 ```
 
-See [Advanced](advanced.md) for the full `Param` interface and examples.
+## Struct composition and prefixes
 
-## See Also
+Anonymous embedded structs stay flat. Named structs prefix every descendant:
 
-- [Enrichers](enrichers.md) - Auto-derivation of names
-- [Validation](validation.md) - Constraints and conditional requirements
-- [Advanced](advanced.md) - Programmatic configuration
+```go
+type Server struct {
+    Host string `env:"HOST" default:"localhost"`
+    Port int    `name:"port" default:"8080"`
+}
+
+type Params struct {
+    Primary Server // --primary-host, --primary-port; PRIMARY_HOST
+    Replica Server // --replica-host, --replica-port; REPLICA_HOST
+}
+```
+
+Explicit `name` and `env` tags are also prefixed. Deep nesting chains: `Infra.Primary.Host` becomes `--infra-primary-host`.
+
+Optional struct pointers are temporarily allocated so BOA can discover their fields. After sourcing and validation, an untouched group returns to `nil`. A child default alone does not keep the pointer alive; a CLI, environment, or config value does.
+
+## Programmatic field configuration
+
+Use `boa.Param(ctx, &p.Field)` inside `InitFuncCtx` or an `InitCtx` struct method. It returns `*boa.Field[T]`, embedding the general `boa.Parameter` metadata API.
+
+```go
+InitFuncCtx: func(ctx *boa.HookContext, p *Params, _ *cobra.Command) error {
+    port := boa.Param(ctx, &p.Port)
+    port.SetDefault(8080)
+    port.SetMin(1)
+    port.SetMax(65535)
+    port.SetEnv("PORT")
+    return nil
+},
+```
+
+Typed methods catch the common type errors at compile time:
+
+| Method | Applies to |
+|---|---|
+| `SetDefault(T)` | every field |
+| `SetCustomValidator(func(T) error)` | every field |
+| `SetMin(T)`, `SetMax(T)` | numeric fields |
+| `SetMinLen(int)`, `SetMaxLen(int)` | strings, slices, maps |
+
+The embedded `Parameter` also exposes name, shorthand, environment, alternatives, collection mode, required/enabled functions, processing directives, pattern, persistence, config-file status, and untyped min/max controls.
+
+Programmatic metadata must be set during initialization. Later hooks run after binding and cannot retroactively add flags or environment bindings.
+
+`ctx.HasValue(&p.Field)` reports whether any source supplied a value. `ctx.AllMirrors()` supports bulk inspection and custom enrichers.
+
+## Custom scalar types
+
+For types you own, implement `encoding.TextUnmarshaler` and preferably `encoding.TextMarshaler`. For types you cannot change, use `boa.RegisterType`. See [Config Decoding](config-decoding.md) for sharing the same textual behavior across flags, environment variables, JSON, YAML, and TOML.

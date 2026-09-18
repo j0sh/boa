@@ -1,6 +1,6 @@
-# Config decoding and custom values
+# Config Decoding and Custom Values
 
-Boa shares scalar parsers between CLI flags, environment variables, default tags,
+BOA shares scalar parsers between CLI flags, environment variables, default tags,
 and its built-in JSON decoder. For example, a `time.Duration` field accepts
 `--timeout 2.5h`, `TIMEOUT=2.5h`, and `{"timeout":"2.5h"}`.
 
@@ -40,15 +40,15 @@ unquoted number for nanoseconds.
 ## Other formats
 
 Register a decoder with `boa.RegisterConfigFormat(".yaml", yaml.Unmarshal)` or
-set `Cmd.ConfigFormat`. Boa calls the decoder once for the target and preserves
+set `Cmd.ConfigFormat`. BOA calls the decoder once for the target and preserves
 its values, custom methods, and errors. An optional independent `KeyTree` probe
 tracks which keys were present; its scalar values are never used for conversion.
 
 Native support varies by decoder. For example, yaml.v3 and BurntSushi TOML
 support duration strings directly; pelletier TOML v2.2.4 needs a text adapter.
-Boa does not detect parser names or reconstruct their type systems.
+BOA does not detect parser names or reconstruct their type systems.
 
-For a type you own, implement `encoding.TextUnmarshaler`. Boa discovers this
+For a type you own, implement `encoding.TextUnmarshaler`. BOA discovers this
 method for flags and env vars, and JSON/YAML/TOML decoders that support the
 interface use it directly. Implement `encoding.TextMarshaler` as well for
 round-tripping and default display.
@@ -63,12 +63,12 @@ type Params struct {
 // p.Timeout.Value is a time.Duration.
 ```
 
-`Text[T]` uses Boa's parser for `T`, including `RegisterType` registrations.
+`Text[T]` uses BOA's parser for `T`, including `RegisterType` registrations.
 It reads and writes textual config values. For application-owned types, using
 the standard encoding interfaces avoids a registry altogether. Register custom
 types before constructing commands or decoding config, not concurrently with
 running commands.
 
 Cross-field checks can live in a native format's custom unmarshaler. Put checks
-that must see the final CLI/env/config combination in a Boa PreValidate hook or
-parameter validator, since config decoding happens before final source merging.
+that must see the final CLI/environment/config combination in a BOA PreValidate
+hook or parameter validator, after source precedence has produced effective values.

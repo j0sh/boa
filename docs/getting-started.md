@@ -1,266 +1,167 @@
 # Getting Started
 
-## Installation
+## Install
 
 ```bash
 go get github.com/j0sh/boa@latest
 ```
 
-## Basic Usage
+BOA requires Go 1.27 or later.
+
+## Build a command
+
+This is a complete program:
 
 ```go
 package main
 
 import (
     "fmt"
+
     "github.com/j0sh/boa/pkg/boa"
     "github.com/spf13/cobra"
 )
 
 type Params struct {
-    Foo  string `descr:"a foo"`
-    Bar  int    `descr:"a bar" env:"BAR_X" optional:"true"`
-    Path string `positional:"true"`
-    Baz  string `positional:"true" default:"cba"`
-    FB   string `positional:"true" optional:"true"`
+    Name    string `descr:"name to greet"`
+    Count   int    `descr:"number of greetings" default:"1"`
+    Excited bool   `descr:"add an exclamation mark" optional:"true"`
 }
 
 func main() {
     boa.Cmd[Params]{
-        Use:   "hello-world",
-        Short: "a generic cli tool",
-        Long:  "A generic cli tool that has a longer description",
-        RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
-            fmt.Printf("Hello world with params: %s, %d, %s, %s, %s\n",
-                params.Foo, params.Bar, params.Path, params.Baz, params.FB)
-        },
-    }.Run()
-}
-```
-
-Help output:
-
-```
-A generic cli tool that has a longer description
-
-Usage:
-  hello-world <path> <baz> [f-b] [flags]
-
-Flags:
-  -b, --bar int      a bar (env: BAR_X)
-  -f, --foo string   a foo (required)
-  -h, --help         help for hello-world
-```
-
-## Sub-commands
-
-Create hierarchical CLI tools with sub-commands:
-
-```go
-package main
-
-import (
-    "fmt"
-    "github.com/j0sh/boa/pkg/boa"
-    "github.com/spf13/cobra"
-)
-
-type SubParams struct {
-    Foo  string `descr:"a foo"`
-    Bar  int    `descr:"a bar" env:"BAR_X" default:"4"`
-    Path string `positional:"true"`
-}
-
-type OtherParams struct {
-    Foo2 string `descr:"a foo"`
-}
-
-func main() {
-    boa.Cmd[boa.NoParams]{
-        Use:   "hello-world",
-        Short: "a generic cli tool",
-        SubCmds: boa.SubCmds(
-            boa.Cmd[SubParams]{
-                Use:   "subcommand1",
-                Short: "a subcommand",
-                RunFunc: func(params *SubParams, cmd *cobra.Command, args []string) {
-                    fmt.Printf("Hello from subcommand1: %s, %d, %s\n",
-                        params.Foo, params.Bar, params.Path)
-                },
-            },
-            boa.Cmd[OtherParams]{
-                Use:   "subcommand2",
-                Short: "another subcommand",
-                RunFunc: func(params *OtherParams, cmd *cobra.Command, args []string) {
-                    fmt.Println("Hello from subcommand2")
-                },
-            },
-        ),
-    }.Run()
-}
-```
-
-## Struct Composition
-
-Compose structs to create complex parameter structures:
-
-```go
-type Base struct {
-    Foo  string
-    Bar  int
-    File string
-}
-
-type DBConfig struct {
-    Host string `default:"localhost"`
-    Port int    `default:"5432"`
-}
-
-type Combined struct {
-    Base               // embedded (anonymous): --foo, --bar, --file (no prefix)
-    DB     DBConfig    // named field: --db-host, --db-port (auto-prefixed)
-    Baz    string
-    Time   time.Time `optional:"true"`
-}
-```
-
-**Embedded (anonymous) fields** are not prefixed. `Base.Foo` becomes `--foo`, not `--base-foo`.
-
-**Named struct fields** auto-prefix their children with the field name in kebab-case. `DB.Host` becomes `--db-host`. This prevents collisions when the same struct type is used in multiple fields:
-
-```go
-type Params struct {
-    Primary DBConfig  // --primary-host, --primary-port
-    Replica DBConfig  // --replica-host, --replica-port
-}
-```
-
-Deep nesting chains prefixes: `Infra.Primary.Host` becomes `--infra-primary-host`. Explicit `name:"..."` and `env:"..."` tags also get prefixed inside named fields. See [Struct Tags](struct-tags.md#named-struct-auto-prefixing) for full details.
-
-> **Using a struct you can't tag?** If the struct comes from a third-party package (or a generated type, or shared internal code you don't want to fork), you can embed it as a field — or as the whole CLI config — and configure every setting programmatically via `InitFuncCtx` instead of struct tags. See [Bring Someone Else's Config](bring-someone-elses-config.md) for the full pattern.
-
-## Array/Slice Parameters
-
-BOA supports array/slice types:
-
-```go
-type Params struct {
-    Numbers []int    `descr:"list of numbers"`
-    Tags    []string `descr:"tags" default:"[a,b,c]"`
-    Ports   []int64  `descr:"ports" default:"[8080,8081,8082]"`
-}
-```
-
-## Pointer Fields
-
-Use pointer types for truly optional parameters where you need to distinguish "not set" from "zero value":
-
-```go
-type Params struct {
-    Name    *string `descr:"user name"`   // nil if not provided
-    Retries *int    `descr:"retry count"` // nil if not provided
-    Verbose *bool   `descr:"verbose mode"`
-}
-
-func main() {
-    boa.Cmd[Params]{
-        Use: "app",
-        RunFunc: func(p *Params, cmd *cobra.Command, args []string) {
-            if p.Name != nil {
-                fmt.Println("Name:", *p.Name)
-            } else {
-                fmt.Println("No name provided")
+        Use:   "greet",
+        Short: "print a greeting",
+        RunFunc: func(p *Params, _ *cobra.Command, _ []string) {
+            suffix := ""
+            if p.Excited {
+                suffix = "!"
+            }
+            for range p.Count {
+                fmt.Printf("Hello %s%s\n", p.Name, suffix)
             }
         },
     }.Run()
 }
 ```
 
-Pointer fields are always optional by default, even without `boa.WithDefaultOptional()`. Use `required:"true"` to override.
+BOA derives `--name`, `--count`, and `--excited`, assigns non-conflicting short flags, parses values, validates required fields, and generates Cobra help.
 
-## Map Fields
+```text
+$ greet --name Ada --count 2 --excited
+Hello Ada!
+Hello Ada!
+```
 
-Maps are supported as CLI flags with `key=val,key=val` syntax:
+The complete tested version is in [`internal/example_readme_minimum`](https://github.com/j0sh/boa/tree/main/internal/example_readme_minimum).
+
+## Required and optional fields
+
+Plain scalar and flat-slice fields are required by default. A default satisfies the requirement. Use `optional:"true"` for an ordinary zero-valued optional field, or use a pointer when absence matters:
 
 ```go
 type Params struct {
-    Labels map[string]string `descr:"key=value labels"`
-    Limits map[string]int    `descr:"resource limits"`
+    Host    string `default:"localhost"` // has a default
+    Debug   bool   `optional:"true"`     // false when absent
+    Retries *int                         // nil when absent, &0 for --retries 0
 }
-// Usage: myapp --labels env=prod,team=backend --limits cpu=4,memory=8192
 ```
 
-Maps default to optional. For complex map types like `map[string][]string`, pass JSON on the CLI:
+Maps, nested slices, and pointer fields default to optional. `required:"true"` overrides that default. Applications that want all plain fields optional can call `boa.Init(boa.WithDefaultOptional())` before constructing commands.
 
+## Common field shapes
+
+| Go field | CLI form | Notes |
+|---|---|---|
+| `string`, numeric, `bool` | `--name value` | Native Cobra/pflag parsing |
+| `time.Duration`, `time.Time`, `net.IP`, `*url.URL` | textual value | Built-in parsers |
+| `[]string`, numeric slices | comma-separated | Repeatable; `collection:"array"` changes occurrence semantics |
+| `map[string]string`, `map[string]int` | `key=value,key=value` | Maps default to optional |
+| nested slices and complex maps | JSON | For example `--matrix '[[1,2],[3,4]]'` |
+| `positional:"true"` field | bare argument | Positional fields must be declared in order |
+
+See [Parameters and Struct Tags](struct-tags.md) for the complete behavior and tag table.
+
+## Positional arguments
+
+```go
+type CopyParams struct {
+    Source string `positional:"true" descr:"source path"`
+    Dest   string `positional:"true" descr:"destination path"`
+}
 ```
-myapp --meta '{"tags":["a","b"],"owners":["alice"]}'
+
+Required positional fields must precede optional ones. A final slice positional consumes the remaining arguments.
+
+## Struct composition
+
+Embedded fields stay flat. Named fields prefix their children:
+
+```go
+type Network struct {
+    Host string `default:"localhost"`
+    Port int    `default:"8080"`
+}
+
+type Common struct {
+    Verbose bool `optional:"true"`
+}
+
+type Params struct {
+    Common          // --verbose
+    API     Network // --api-host, --api-port
+    Admin   Network // --admin-host, --admin-port
+}
 ```
 
-## Value Priority
+Prefixes also apply to environment names and explicit `name`/`env` tags. Deep nesting chains prefixes.
 
-When multiple sources provide values, BOA uses this priority order:
+## Subcommands
 
-1. **Command-line flags** - Highest priority
-2. **Environment variables**
-3. **Root config file** (via `configfile` tag at root or PreValidate hook)
-4. **Substruct config files** (via `configfile` tag in nested structs)
-5. **Default values**
-6. **Zero value** - Lowest priority
+Use `boa.NoParams` for a command with no fields and `boa.SubCmds` to combine typed children:
 
-## Config File Support
+```go
+root := boa.Cmd[boa.NoParams]{
+    Use: "tool",
+    SubCmds: boa.SubCmds(
+        boa.Cmd[ServeParams]{Use: "serve", RunFunc: runServe},
+        boa.Cmd[DeployParams]{Use: "deploy", RunFunc: runDeploy},
+    ),
+}
+root.Run()
+```
 
-Tag a string field with `configfile:"true"` and boa loads it automatically:
+`SubCmds` returns ordinary `[]*cobra.Command`, so BOA and native Cobra commands can be mixed. See [Cobra Interoperability](cobra-interop.md).
+
+## Environment variables and config files
+
+Environment variables are opt-in through the `env` tag or `ParamEnricherEnv`. Config files are opt-in through a `configfile:"true"` string or string-slice field:
 
 ```go
 type Params struct {
     ConfigFile string `configfile:"true" optional:"true" default:"config.json"`
-    Host       string
-    Port       int
-}
-
-func main() {
-    boa.Cmd[Params]{
-        Use: "my-app",
-        RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
-            fmt.Printf("Host: %s, Port: %d\n", params.Host, params.Port)
-        },
-    }.Run()
+    Host       string `env:"HOST" default:"localhost"`
+    Port       int    `env:"PORT" default:"8080"`
 }
 ```
 
-The config file (JSON by default) is loaded before validation. CLI and env var values always take precedence over config file values.
+When several sources set the same field, BOA uses this order:
 
-Nested structs can also have their own `configfile:"true"` field for independent config files. For YAML, TOML, or other formats, register them with `boa.RegisterConfigFormat(".yaml", yaml.Unmarshal)`. See [Advanced Usage](advanced.md#config-file-loading) for substruct config files, format registry, and the explicit `LoadConfigFile` API.
+1. CLI flags and positional arguments
+2. environment variables
+3. root config files
+4. nested-struct config files
+5. defaults
+6. Go zero values
 
-## Accessing Cobra
+See [Configuration Files](configuration.md) for formats, overlay chains, discovery, explicit loading, and dumping.
 
-Access the underlying Cobra command for advanced customization:
+## Errors and testing
+
+`Run()` supplies command-line application behavior. `RunE()` and `RunArgsE()` return errors and are usually better for tests or embedding:
 
 ```go
-boa.Cmd[Params]{
-    Use: "hello-world",
-    InitFunc: func(params *Params, cmd *cobra.Command) error {
-        cmd.Deprecated = "this command is deprecated"
-        return nil
-    },
-    RunFunc: func(params *Params, cmd *cobra.Command, args []string) {
-        // ...
-    },
-}.Run()
+err := boa.Cmd[Params]{Use: "greet"}.RunArgsE([]string{"--name", "Ada"})
 ```
 
-## Using Claude Code
-
-You can also use [Claude Code](https://claude.com/claude-code) to scaffold a boa CLI project. Feed it the README and describe what you want:
-
-```bash
-mkdir my-cli && cd my-cli
-go mod init my-cli
-
-claude "$(curl -s https://raw.githubusercontent.com/j0sh/boa/main/README.md)
-
-Build me a CLI tool that manages TODO items with commands for:
-- add: adds a new todo
-- list: lists all todos
-- done: marks a todo as complete"
-```
+See [Lifecycle and Errors](lifecycle.md) for hook order, error categories, validation-only execution, and test patterns.
