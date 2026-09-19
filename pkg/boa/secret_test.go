@@ -94,7 +94,7 @@ func TestSecretFor_SourcesAndExactContents(t *testing.T) {
 
 func TestSecret_DirectEnvironmentAndHiddenFlag(t *testing.T) {
 	type Params struct {
-		Token     string `secret:"true" env:"BOA_SECRET_DIRECT_TOKEN"`
+		Token     string `secret:"true" env:"BOA_SECRET_DIRECT_TOKEN" descr:"API token"`
 		TokenFile string `secretfor:"Token"`
 	}
 
@@ -112,6 +112,20 @@ func TestSecret_DirectEnvironmentAndHiddenFlag(t *testing.T) {
 	}
 	if err := cmd.RunArgsE([]string{"--token", "exposed"}); err == nil || !strings.Contains(err.Error(), "unknown flag") {
 		t.Fatalf("expected hidden secret flag to be rejected, got %v", err)
+	}
+	cobraCmd := cmd.ToCobra()
+	var help strings.Builder
+	cobraCmd.SetOut(&help)
+	cobraCmd.SetArgs([]string{"--help"})
+	if err := cobraCmd.Execute(); err != nil {
+		t.Fatalf("--help failed: %v", err)
+	}
+	usage := help.String()
+	if !strings.Contains(usage, "\nEnvironment Variables:\n  BOA_SECRET_DIRECT_TOKEN  API token\n") || !strings.Contains(usage, "--token-file") {
+		t.Errorf("secret help should list the environment source and file flag:\n%s", usage)
+	}
+	if strings.Contains(usage, "--token string") || strings.Contains(usage, "direct") {
+		t.Errorf("direct secret flag or value appeared in help:\n%s", usage)
 	}
 }
 

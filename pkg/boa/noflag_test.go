@@ -2,7 +2,9 @@ package boa
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -33,14 +35,14 @@ func TestNoFlag_NoCLIFlagRegistered(t *testing.T) {
 		t.Errorf("expected error mentioning 'secret', got: %v", err)
 	}
 
-	// And the help output should not list --secret.
+	// Help should not list --secret as a flag.
 	usage := captureUsage(t, Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
 	})
-	if strings.Contains(usage, "--secret") || strings.Contains(usage, "api token") {
-		t.Errorf("noflag field should not appear in --help:\n%s", usage)
+	if strings.Contains(usage, "--secret") {
+		t.Errorf("noflag field should not appear as a flag in --help:\n%s", usage)
 	}
 }
 
@@ -291,8 +293,67 @@ func TestNoFlag_ProgrammaticViaHook(t *testing.T) {
 	}
 
 	usage = captureUsage(t, cmd)
-	if strings.Contains(usage, "--secret") {
-		t.Errorf("--secret should not appear in help after SetNoFlag:\n%s", usage)
+	if strings.Contains(usage, "--secret") || !strings.Contains(usage, "BOA_NOFLAG_HOOK_TOKEN") {
+		t.Errorf("help should list only the environment source after SetNoFlag:\n%s", usage)
+	}
+}
+
+func TestNoFlag_EnvironmentHelp(t *testing.T) {
+	params := []parameter{
+		&paramMeta{noFlag: true, env: "ZULU_TOKEN", descr: "zulu"},
+		&paramMeta{noFlag: true, env: "A_TOKEN", descr: "alpha"},
+		&paramMeta{noFlag: true, env: "BARE_TOKEN"},
+		&paramMeta{noFlag: true, noEnv: true, env: "HIDDEN_TOKEN"},
+		&paramMeta{noFlag: true, ignored: true, env: "IGNORED_TOKEN"},
+		&paramMeta{noFlag: true, descr: "unbound"},
+		&paramMeta{env: "FLAG_TOKEN"},
+	}
+	for _, tt := range []struct {
+		name   string
+		params []parameter
+		sorted bool
+		want   string
+	}{
+		{"declaration order", params, false, "\nEnvironment Variables:\n  ZULU_TOKEN  zulu\n  A_TOKEN     alpha\n  BARE_TOKEN\n"},
+		{"sorted", params, true, "\nEnvironment Variables:\n  A_TOKEN     alpha\n  BARE_TOKEN\n  ZULU_TOKEN  zulu\n"},
+		{"excluded", params[3:], false, ""},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := &cobra.Command{Use: "root"}
+			cmd.SetUsageFunc(func(active *cobra.Command) error {
+				active.Println("custom", active.Name())
+				return nil
+			})
+			addNoFlagEnvironmentHelp(cmd, tt.params, tt.sorted)
+			if got := cmd.UsageString(); got != "custom root\n"+tt.want {
+				t.Fatalf("usage = %q, want %q", got, "custom root\n"+tt.want)
+			}
+			child := &cobra.Command{Use: "child"}
+			cmd.AddCommand(child)
+			if got := child.UsageString(); got != "custom child\n" {
+				t.Fatalf("child inherited parent environment help: %q", got)
+			}
+		})
+	}
+}
+
+func TestNoFlag_EnvironmentHelpErrors(t *testing.T) {
+	cmd := &cobra.Command{}
+	var output strings.Builder
+	cmd.SetOut(&output)
+	usageErr := errors.New("usage failed")
+	cmd.SetUsageFunc(func(*cobra.Command) error { return usageErr })
+	addNoFlagEnvironmentHelp(cmd, []parameter{&paramMeta{noFlag: true, env: "TOKEN"}}, false)
+	if err := cmd.Usage(); !errors.Is(err, usageErr) || output.Len() != 0 {
+		t.Fatalf("Usage() = %v, output = %q; want usage error and no output", err, output.String())
+	}
+	usageErr = nil
+	reader, writer := io.Pipe()
+	_ = reader.Close()
+	t.Cleanup(func() { _ = writer.Close() })
+	cmd.SetOut(writer)
+	if err := cmd.Usage(); !errors.Is(err, io.ErrClosedPipe) {
+		t.Fatalf("Usage() = %v, want output error", err)
 	}
 }
 

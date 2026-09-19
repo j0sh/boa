@@ -1137,6 +1137,47 @@ func connect(f parameter, cmd *cobra.Command, posArgs []parameter, ctx *processi
 
 }
 
+// addNoFlagEnvironmentHelp lists environment inputs that have no CLI flag.
+func addNoFlagEnvironmentHelp(cmd *cobra.Command, params []parameter, sortEntries bool) {
+	var entries []parameter
+	maxNameLen := 0
+	for _, param := range params {
+		if !param.IsNoFlag() || param.IsNoEnv() || param.IsIgnored() || param.GetEnv() == "" {
+			continue
+		}
+		entries = append(entries, param)
+		maxNameLen = max(maxNameLen, len(param.GetEnv()))
+	}
+	if len(entries) == 0 {
+		return
+	}
+	if sortEntries {
+		slices.SortFunc(entries, func(a, b parameter) int {
+			return strings.Compare(a.GetEnv(), b.GetEnv())
+		})
+	}
+
+	var help strings.Builder
+	help.WriteString("\nEnvironment Variables:\n")
+	for _, param := range entries {
+		if param.getDescr() == "" {
+			fmt.Fprintf(&help, "  %s\n", param.GetEnv())
+		} else {
+			fmt.Fprintf(&help, "  %-*s  %s\n", maxNameLen, param.GetEnv(), param.getDescr())
+		}
+	}
+
+	baseUsage := cmd.UsageFunc()
+	cmd.SetUsageFunc(func(active *cobra.Command) error {
+		// Children inherit usage functions, but not the parent's local inputs.
+		if err := baseUsage(active); err != nil || active != cmd {
+			return err
+		}
+		_, err := fmt.Fprint(active.OutOrStderr(), help.String())
+		return err
+	})
+}
+
 func readEnv(f parameter) error {
 	if f.GetEnv() == "" {
 		return nil
@@ -1845,6 +1886,8 @@ func (b command) toCobraBase() (*cobra.Command, *processingContext, error) {
 				return nil, nil, fmt.Errorf("error in PostCreateFuncCtx: %w", err)
 			}
 		}
+
+		addNoFlagEnvironmentHelp(cmd, processed, b.SortFlags)
 	}
 
 	// Build ValidArgsFunction from per-positional-param Alternatives/AlternativesFunc

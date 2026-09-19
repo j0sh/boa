@@ -189,7 +189,7 @@ type Params struct {
 
 ## Secrets and secret files
 
-Use `secret:"true"` for a string value that may come directly from an environment variable or application code but must not be exposed as a flag or accepted literally from a config file. It implies `boa:"noflag,noconfig"`:
+`secret:"true"` marks a string secret and implies `boa:"noflag,noconfig"`: direct values can come from environment variables or code, but not flags or config files. Enabled environment bindings appear under `Environment Variables` in help:
 
 ```go
 type Params struct {
@@ -250,7 +250,7 @@ The `boa` tag accepts comma-separated directives:
 | `configonly` | no | no | yes | yes |
 | `ignore` | no | no | raw decoder only | no |
 
-Use `configonly` for validated configuration that must not be exposed as a flag or environment variable. Use `ignore` for opaque data BOA should not traverse or validate.
+Use `configonly` for validated config without CLI or environment input. Use `ignore` to skip BOA traversal and validation. Enabled environment bindings for `noflag` fields appear under `Environment Variables` in help.
 
 Use `noconfig` when a field may come from flags, environment variables, defaults, or application code but must not appear in a config file. The check runs before decoding and rejects the whole file even if a higher-precedence source already supplied the field. Combine it with `noflag` for an environment-only secret:
 
