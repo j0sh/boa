@@ -309,6 +309,10 @@ type processingContext struct {
 	// ConfigFiles tracks all configfile:"true" fields and their target structs.
 	// Ordered: substruct entries first, root entry last (so root overrides inner).
 	ConfigFiles []configFileEntry
+	// SecretFiles links real secretfor path fields to their same-struct secret
+	// targets. Runtime state on each entry makes pre/post-PreValidate resolution
+	// idempotent without treating a derived secret as a direct-source conflict.
+	SecretFiles []secretFileEntry
 	// PreallocatedPtrs tracks struct pointer fields that were nil and got preallocated.
 	// Ordered depth-first (innermost first) so cleanup processes leaves before parents.
 	PreallocatedPtrs []preallocatedPtrInfo
@@ -748,7 +752,7 @@ func validate(ctx *processingContext, structPtr any) error {
 				}
 			}
 
-			if tags.Get("file") == "true" {
+			if hasFileTag(tags) {
 				value := reflect.Indirect(reflect.ValueOf(param.valuePtrF()))
 				if err := validateFile(value.String()); err != nil {
 					return fmt.Errorf("invalid value for param '%s': %w", param.GetName(), err)
@@ -2240,7 +2244,7 @@ func newParam(field *reflect.StructField, t reflect.Type) parameter {
 		fieldType:       valueType,
 		isPointer:       isPtr,
 		defaultRequired: isRequired,
-		noConfig:        slices.Contains(getBoaTags(*field), "noconfig"),
+		noConfig:        slices.Contains(getBoaTags(*field), "noconfig") || field.Tag.Get("secret") == "true",
 	}
 }
 

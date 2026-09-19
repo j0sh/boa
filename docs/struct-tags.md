@@ -33,6 +33,8 @@ BOA tracks whether a source supplied a value separately from the value itself. A
 | `min`, `max` | Numeric bound or collection/string length | `min:"1" max:"65535"` |
 | `pattern` | Regular expression for a string | `pattern:"^[a-z][a-z0-9-]*$"` |
 | `file` | Require an existing regular file | `file:"true"` |
+| `secret` | Hide and exclude a secret value from config | `secret:"true"` |
+| `secretfor` | Read a file into a sibling secret field | `secretfor:"Token"` |
 | `collection` | Slice occurrence mode: `slice` or `array` | `collection:"array"` |
 | `configfile` | Load path(s) into the enclosing struct | `configfile:"true"` |
 | `boa` | Processing directives | `boa:"configonly"` |
@@ -184,6 +186,35 @@ type Params struct {
 ```
 
 `file:"true"` accepts string paths that resolve to existing regular files. Symlinks are followed. Validation of an absent optional pointer is skipped; when present, its pointed-to value is validated normally.
+
+## Secrets and secret files
+
+Use `secret:"true"` for a string value that may come directly from an environment variable or application code but must not be exposed as a flag or accepted literally from a config file. It implies `boa:"noflag,noconfig"`:
+
+```go
+type Params struct {
+    Token string `secret:"true" env:"TOKEN"`
+}
+```
+
+To accept the value through a file, declare a real sibling path field and point it at the secret by its exact exported Go field name:
+
+```go
+type Params struct {
+    Token     string `secret:"true" env:"TOKEN"`
+    TokenFile string `secretfor:"Token" env:"TOKEN_FILE"`
+}
+```
+
+`secretfor` implies `file:"true"` and makes the path field optional. Do not combine it with `required:"true"` or `optional:"false"`. The path remains an ordinary BOA field: `TokenFile` derives `--token-file`, uses an explicit or enriched environment binding, and follows its format-specific struct tag for config decoding. Targets resolve only among direct siblings in the same struct; nested groups declare their own pairs.
+
+`secret:"false"` disables the tag. Other values are rejected during command construction.
+
+When the path is set, BOA verifies that it names a regular file and copies its exact bytes into the secret before PreValidate. Whitespace, trailing newlines, invalid UTF-8 bytes, and empty files are preserved. The resulting value satisfies required checks and is validated using the secret field's validators. If both the direct secret and its file companion have values—from any sources, including defaults—BOA returns a user-input error instead of choosing one.
+
+After PreValidate, BOA resolves paths supplied or changed by hooks and checks for direct/file conflicts again. Disabled or programmatically ignored secret fields are skipped.
+
+Source-aware dumps omit the secret because it is `noconfig`, but emit the companion path under the ordinary field rules. Reload rereads the secret file when invoked. Secret files are deliberately not added to `WatchedConfigFiles`; applications that want edits to trigger reload should watch or register them explicitly.
 
 For application logic, install typed validators in `InitFuncCtx`:
 

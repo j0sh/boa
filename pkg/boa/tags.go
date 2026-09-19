@@ -7,6 +7,30 @@ import (
 )
 
 func (ctx *processingContext) applyTags(param parameter, tags reflect.StructTag) error {
+	secret, hasSecret := tags.Lookup("secret")
+	if hasSecret && secret != "true" && secret != "false" {
+		return fmt.Errorf("param %s: invalid secret value %q (expected \"true\" or \"false\")", param.GetName(), secret)
+	}
+	secretFor := tags.Get("secretfor")
+	if secret == "true" && secretFor != "" {
+		return fmt.Errorf("param %s cannot use both secret:\"true\" and secretfor", param.GetName())
+	}
+	if secret == "true" {
+		if param.GetKind() != reflect.String {
+			return fmt.Errorf("secret tag requires a string field, got %s", param.GetType())
+		}
+		param.SetNoFlag(true)
+		param.SetNoConfig(true)
+	}
+	if secretFor != "" {
+		if tags.Get("required") == "true" || tags.Get("optional") == "false" {
+			return fmt.Errorf("secretfor param %s is implicitly optional and cannot be required", param.GetName())
+		}
+		param.SetRequired(false)
+		if err := ctx.registerSecretFile(param, secretFor); err != nil {
+			return fmt.Errorf("param %s: %w", param.GetName(), err)
+		}
+	}
 	if tags.Get("positional") == "true" {
 		param.setPositional(true)
 	}
@@ -90,7 +114,7 @@ func (ctx *processingContext) applyTags(param parameter, tags reflect.StructTag)
 			meta.pattern = pattern
 		}
 	}
-	if tags.Get("file") == "true" && param.GetKind() != reflect.String {
+	if hasFileTag(tags) && param.GetKind() != reflect.String {
 		return fmt.Errorf("file tag requires a string field, got %s", param.GetType())
 	}
 	for _, directive := range strings.Split(tags.Get("boa"), ",") {

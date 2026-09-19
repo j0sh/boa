@@ -48,6 +48,31 @@ app --header 'Accept: text/plain, text/html' --header 'X-Debug: true'
 
 Each occurrence is one element. Without `collection:"array"`, flat slices use comma-separated slice semantics.
 
+## Load a token from the environment or a file
+
+Use an environment variable during local development and a mounted secret file in deployment:
+
+```go
+type Params struct {
+    Token     string `secret:"true" env:"TOKEN"`
+    TokenFile string `secretfor:"Token"`
+}
+```
+
+```sh
+# Local development
+TOKEN=example-token app
+
+# Deployment with a mounted secret file
+app --token-file /run/secrets/api_token
+```
+
+Both invocations populate `p.Token` for your command handler. Supplying both sources causes an error. File contents are preserved exactly, including trailing newlines.
+
+When creating a secret file, use `echo -n "$TOKEN" > token` or the more portable `printf '%s' "$TOKEN" > token` to avoid appending a newline to secrets such as API keys, access tokens, or passwords.
+
+See [Secrets and secret files](struct-tags.md#secrets-and-secret-files) for config restrictions, validation, and reload behavior.
+
 ## Dynamic completion
 
 ```go

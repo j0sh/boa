@@ -17,7 +17,7 @@ func (ctx *processingContext) noConfig(path fieldPath, sf reflect.StructField) b
 			return mirror.IsNoConfig()
 		}
 	}
-	return slices.Contains(getBoaTags(sf), "noconfig")
+	return slices.Contains(getBoaTags(sf), "noconfig") || sf.Tag.Get("secret") == "true"
 }
 
 type configField struct {

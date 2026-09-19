@@ -21,7 +21,7 @@ The path itself can come from a flag, environment variable, or default. An empty
 CLI > environment > root config > nested config > default > zero value
 ```
 
-Use `boa:"configonly"` for fields that should still be mirrored and validated but must not be exposed through flags or environment variables. Use `boa:"noconfig"` for fields that may be available from other sources but should cause an error when present in a config file. Use `boa:"ignore"` for opaque data the decoder may populate but BOA should not process.
+Use `boa:"configonly"` for fields that should still be mirrored and validated but must not be exposed through flags or environment variables. Use `boa:"noconfig"` for fields that may be available from other sources but should cause an error when present in a config file. `secret:"true"` implies `noconfig`; a real sibling field tagged `secretfor:"FieldName"` may hold a file path in config without exposing the secret itself. Use `boa:"ignore"` for opaque data the decoder may populate but BOA should not process.
 
 ## Nested config files
 
