@@ -34,7 +34,7 @@ boa.Cmd[Params]{
 - Source precedence is CLI > env > root config > nested config > default > zero value.
 - Metadata changed programmatically must be set in `InitFunc` or `InitFuncCtx`, before flags and environment values are bound.
 - Pointer substructures are allocated for traversal, then restored to `nil` unless an input source populated them. Defaults alone do not keep them alive.
-- `boa:"ignore"` removes a field from BOA processing. `boa:"configonly"` keeps validation while disabling CLI and environment input.
+- `boa:"ignore"` removes a field from BOA processing. `boa:"configonly"` keeps validation while disabling CLI and environment input. `boa:"noconfig"` rejects an explicit config key while retaining other sources.
 - Config formats normally dispatch by file extension. `Cmd.ConfigFormat` deliberately bypasses that registry for one command.
 
 ## Install

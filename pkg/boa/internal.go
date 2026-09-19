@@ -150,6 +150,8 @@ type Parameter interface {
 	SetNoFlag(bool)
 	IsNoEnv() bool
 	SetNoEnv(bool)
+	IsNoConfig() bool
+	SetNoConfig(bool)
 	IsIgnored() bool
 	SetIgnored(bool)
 	IsConfigFile() bool
@@ -446,124 +448,6 @@ func cleanupPreallocatedPtrs(ctx *processingContext) {
 	}
 }
 
-// markConfigKeysPresent probes the raw config file data for key presence to detect
-// which struct fields — flat leaves and preallocated struct-pointer groups alike —
-// were explicitly mentioned in the config, even if the written values are zero
-// or match the defaults.
-//
-// It delegates to the ConfigFormat's KeyTree to build a nested map[string]any
-// representing the raw bytes' key structure. That raw tree is then canonicalised
-// in one pass: format-tag key names (e.g. a yaml `retry_count`) are rewritten to
-// the matching Go field names via the tag picked by structTagForExt(ext). After
-// canonicalisation the walker works purely in Go-field-name space, the same way
-// boa's mirrors are keyed — no tag awareness inside the walker itself.
-//
-// Returns true if key-presence detection succeeded (the walker was run). Returns
-// false when the format has no KeyTree or the probe errors out — in those cases
-// the caller should fall back to snapshot comparison for any struct-pointer groups
-// inside this subtree.
-func markConfigKeysPresent(ctx *processingContext, target any, targetPath fieldPath, rawData []byte, format ConfigFormat, ext string) bool {
-	if len(rawData) == 0 {
-		return false
-	}
-	if format.KeyTree == nil {
-		return false
-	}
-	topLevel, err := format.KeyTree(rawData)
-	if err != nil || topLevel == nil {
-		return false
-	}
-	canonical := canonicalizeKeyTree(topLevel, reflect.TypeOf(target), structTagForExt(ext))
-	if canonical == nil {
-		return false
-	}
-	markConfigKeysPresentInStruct(ctx, target, canonical, splitPath(targetPath))
-	return true
-}
-
-// canonicalizeKeyTree walks a raw KeyTree (keyed by the format's own tag
-// names) alongside the target struct type, and returns an equivalent tree
-// whose keys are Go field names. Nested struct and struct-pointer fields
-// recurse so sub-trees end up canonical too.
-//
-// tag names the struct tag to consult for per-field renaming. When empty,
-// or when a field has no such tag, the Go field name is used directly.
-// Raw-key lookups are case-insensitive so the resulting matching rule
-// mirrors what encoding/json does, which keeps previously-passing tests
-// passing after the walker stops doing its own lookups.
-//
-// Unknown raw keys (with no matching struct field) are dropped — they
-// have no mirror for the walker to mark anyway. Scalar / slice / map
-// leaf values are passed through unchanged so the walker can still
-// treat them as "something was written here".
-func canonicalizeKeyTree(raw map[string]any, targetType reflect.Type, tag string) map[string]any {
-	if raw == nil {
-		return nil
-	}
-	for targetType != nil && targetType.Kind() == reflect.Pointer {
-		targetType = targetType.Elem()
-	}
-	if targetType == nil || targetType.Kind() != reflect.Struct {
-		// No struct to walk against — hand the raw map through. The
-		// walker will then either find keys by Go field name or not at
-		// all, which matches the pre-canonicalisation behaviour for
-		// unusual call sites.
-		return raw
-	}
-	out := make(map[string]any, len(raw))
-	for i := 0; i < targetType.NumField(); i++ {
-		sf := targetType.Field(i)
-		if !sf.IsExported() {
-			continue
-		}
-		rawKey := fieldRawKey(sf, tag)
-		if rawKey == "" {
-			continue // tag value was "-" — field deliberately skipped by the format
-		}
-		rawVal, ok := configKeyLookup(raw, rawKey)
-		if !ok {
-			continue
-		}
-		// Recurse into nested struct / *struct fields so their sub-keys
-		// also end up keyed by Go field name before the walker sees them.
-		ft := sf.Type
-		for ft.Kind() == reflect.Pointer {
-			ft = ft.Elem()
-		}
-		if ft.Kind() == reflect.Struct && !isSupportedType(sf.Type) {
-			if subMap := asKeyMap(rawVal); subMap != nil {
-				out[sf.Name] = canonicalizeKeyTree(subMap, ft, tag)
-				continue
-			}
-		}
-		out[sf.Name] = rawVal
-	}
-	return out
-}
-
-// fieldRawKey returns the raw key name that tag would use for this field.
-// Empty tag or missing tag value → Go field name. Tag value "-" means
-// "skip" (returns ""). Tag value with options (e.g. "name,omitempty") is
-// split on the first comma. This matches the conventions of encoding/json
-// and of every mainstream YAML/TOML/HCL parser boa is likely to meet.
-func fieldRawKey(sf reflect.StructField, tag string) string {
-	if tag == "" {
-		return sf.Name
-	}
-	tv := sf.Tag.Get(tag)
-	if tv == "" {
-		return sf.Name
-	}
-	name := strings.SplitN(tv, ",", 2)[0]
-	switch name {
-	case "":
-		return sf.Name
-	case "-":
-		return ""
-	}
-	return name
-}
-
 // splitPath parses a fieldPath string back into the []int index path form.
 // Accepts an empty path.
 //
@@ -587,96 +471,6 @@ func splitPath(p fieldPath) []int {
 		out[i] = n
 	}
 	return out
-}
-
-// configKeyLookup does a case-insensitive key lookup matching encoding/json behavior:
-// exact match first, then case-insensitive fallback. Works on any KeyTree output,
-// regardless of the underlying config format (JSON, YAML, TOML, …).
-func configKeyLookup(keys map[string]any, target string) (any, bool) {
-	if target == "" {
-		return nil, false
-	}
-	// Exact match first (fast path)
-	if v, ok := keys[target]; ok {
-		return v, true
-	}
-	// Case-insensitive fallback (matches encoding/json behavior)
-	for k, v := range keys {
-		if strings.EqualFold(k, target) {
-			return v, true
-		}
-	}
-	return nil, false
-}
-
-// asKeyMap coerces a KeyTree sub-value to a map[string]any when it is one,
-// tolerating the map[any]any shape that some YAML parsers (notably yaml.v2)
-// produce for nested mappings. Returns nil if the value is not a map-like.
-func asKeyMap(v any) map[string]any {
-	switch m := v.(type) {
-	case map[string]any:
-		return m
-	case map[any]any:
-		out := make(map[string]any, len(m))
-		for k, val := range m {
-			if ks, ok := k.(string); ok {
-				out[ks] = val
-			}
-		}
-		return out
-	}
-	return nil
-}
-
-// markConfigKeysPresentInStruct walks a canonicalised KeyTree (Go field
-// names) alongside the target struct, marking mirrors and preallocated
-// struct-pointer groups that the config file mentioned. The walker has
-// no tag awareness — canonicalizeKeyTree already folded the format's
-// rename rules into Go-field-name space before the walker was called.
-func markConfigKeysPresentInStruct(ctx *processingContext, structPtr any, keys map[string]any, path []int) {
-	val := reflect.ValueOf(structPtr).Elem()
-	typ := val.Type()
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
-		if isBoaIgnored(field) {
-			continue
-		}
-		childPath := append(append([]int(nil), path...), i)
-		rawVal, keyPresent := keys[field.Name]
-		if !keyPresent {
-			continue
-		}
-		fieldVal := val.Field(i)
-		// If this is a struct pointer field and it's preallocated (non-nil)
-		if field.Type.Kind() == reflect.Pointer && field.Type.Elem().Kind() == reflect.Struct && !isSupportedType(field.Type) && !fieldVal.IsNil() {
-			// The config mentioned this struct — mark it as present so the
-			// pointer survives cleanup, even if the object is empty `{}`.
-			// Individual fields only get setByConfig if they appear as keys.
-			markStructPtrPresentByConfig(ctx, joinPath(childPath))
-			if subMap := asKeyMap(rawVal); len(subMap) > 0 {
-				markConfigKeysPresentInStruct(ctx, fieldVal.Interface(), subMap, childPath)
-			}
-			continue
-		}
-		// If this is a non-pointer struct, recurse
-		if field.Type.Kind() == reflect.Struct && !isSupportedType(field.Type) {
-			if subMap := asKeyMap(rawVal); subMap != nil {
-				markConfigKeysPresentInStruct(ctx, fieldVal.Addr().Interface(), subMap, childPath)
-			}
-			continue
-		}
-		// Leaf field present in config — mark its mirror (unless the mirror
-		// was programmatically marked ignored, in which case we treat it like
-		// the tag form and leave setByConfig untouched so optional substruct
-		// cleanup cannot be kept alive by a key that boa is supposed to ignore).
-		if isSupportedType(field.Type) {
-			if mirror, ok := ctx.mirrorByPath[joinPath(childPath)]; ok {
-				if pm, isPM := mirror.(*paramMeta); isPM && !pm.ignored {
-					pm.setByConfig = true
-				}
-			}
-		}
-	}
 }
 
 // snapshotPreallocatedStructs takes a shallow copy of each preallocated struct's value.
@@ -749,7 +543,7 @@ func markStructPtrPresentByConfig(ctx *processingContext, path fieldPath) {
 // markAllMirrorsInSubtree marks every mirror within the given subtree as set by config.
 // The subtree is identified by its path from the root (empty path == entire root).
 // Only direct-descendant mirrors are marked; nested pointer-to-struct boundaries are
-// handled separately by key-presence recursion in markConfigKeysPresentInStruct.
+// handled separately by key-presence tracking in markConfigKeysPresent.
 //
 // We iterate mirrorByPath looking for entries whose path starts with prefix and does
 // NOT cross a pointer-struct boundary further down (i.e., they're the immediate
@@ -2428,6 +2222,7 @@ func newParam(field *reflect.StructField, t reflect.Type) parameter {
 		fieldType:       valueType,
 		isPointer:       isPtr,
 		defaultRequired: isRequired,
+		noConfig:        slices.Contains(getBoaTags(*field), "noconfig"),
 	}
 }
 

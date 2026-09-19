@@ -2,7 +2,6 @@ package boa
 
 import (
 	"fmt"
-	"path/filepath"
 	"reflect"
 
 	"github.com/spf13/cobra"
@@ -176,10 +175,8 @@ func (b command) loadConfigs(ctx *processingContext) error {
 	snapshots := snapshotPreallocatedStructs(ctx)
 	override := b.ConfigFormat
 	type loadedConfig struct {
-		path   fieldPath
-		data   []byte
-		format ConfigFormat
-		ext    string
+		path    fieldPath
+		present []fieldPath
 	}
 	var loaded []loadedConfig
 	// Root files override nested files; each list of paths overlays left to right.
@@ -196,11 +193,17 @@ func (b command) loadConfigs(ctx *processingContext) error {
 				if err != nil {
 					return err
 				}
-				data, format, err := loadConfigFileInto(file, target, override)
+				predicate := func(path fieldPath, sf reflect.StructField) bool {
+					if entry.targetPath != "" {
+						path = entry.targetPath + "." + path
+					}
+					return ctx.noConfig(path, sf)
+				}
+				present, err := loadConfigFileInto(file, target, override, predicate)
 				if err != nil {
 					return NewUserInputError(fmt.Errorf("configfile %s: %w", entry.mirror.GetName(), err))
 				}
-				loaded = append(loaded, loadedConfig{entry.targetPath, data, format, filepath.Ext(file)})
+				loaded = append(loaded, loadedConfig{entry.targetPath, present})
 				ctx.LoadedConfigFiles = append(ctx.LoadedConfigFiles, file)
 			}
 		}
@@ -208,13 +211,10 @@ func (b command) loadConfigs(ctx *processingContext) error {
 	syncMirrors(ctx)
 	var fallback []fieldPath
 	for _, item := range loaded {
-		target, err := ctx.configTarget(item.path)
-		if err != nil {
-			continue
-		} // A later overlay may explicitly clear this group.
-		if !markConfigKeysPresent(ctx, target, item.path, item.data, item.format, item.ext) {
+		if item.present == nil {
 			fallback = append(fallback, item.path)
 		}
+		markConfigKeysPresent(ctx, item.path, item.present)
 	}
 	markConfigChangedStructs(ctx, snapshots, fallback)
 	return nil

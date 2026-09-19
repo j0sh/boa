@@ -22,7 +22,7 @@ func fakeUnmarshal(data []byte, target any) error {
 }
 
 // fakeKeyTree builds the KeyTree as a plain map[string]any. Matching the
-// jsonKeyTree shape ensures the generic walker in markConfigKeysPresentInStruct
+// jsonKeyTree shape ensures the shared config field mapping
 // is format-agnostic.
 func fakeKeyTree(data []byte) (map[string]any, error) {
 	var out map[string]any
@@ -1194,8 +1194,8 @@ func TestConfigFile_FormatAwareFieldTag_MiniKV_TagWithOptions(t *testing.T) {
 
 // TestConfigFile_FormatAwareFieldTag_MiniKV_CaseInsensitiveLookup
 // locks in encoding/json's case-insensitive matching rule for non-
-// JSON formats too, since the canonicalization step reuses the same
-// configKeyLookup helper. A config file that writes `DISPLAY_NAME`
+// JSON formats too, since the shared config mapping uses case-insensitive
+// key matching. A config file that writes `DISPLAY_NAME`
 // (upper-cased) must still match a field tagged `kvp:"display_name"`.
 func TestConfigFile_FormatAwareFieldTag_MiniKV_CaseInsensitiveLookup(t *testing.T) {
 	registerFormatCleanup(t, ".kvp", ConfigFormat{

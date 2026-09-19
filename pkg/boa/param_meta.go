@@ -84,6 +84,11 @@ type paramMeta struct {
 	// `boa:"noenv"` tag.
 	noEnv bool
 
+	// noConfig rejects config files that explicitly contain this field while
+	// leaving CLI flags, environment variables, defaults, and validation intact.
+	// Initialized from the tag before Init hooks, which can override it with SetNoConfig.
+	noConfig bool
+
 	// ignored marks the mirror as fully ignored by boa: skip CLI flag,
 	// skip env reading, skip required/min/max/pattern validation. The
 	// only remaining write path is config-file unmarshal, which writes
@@ -384,6 +389,8 @@ func (f *paramMeta) IsNoFlag() bool         { return f.noFlag }
 func (f *paramMeta) SetNoFlag(val bool)     { f.noFlag = val }
 func (f *paramMeta) IsNoEnv() bool          { return f.noEnv }
 func (f *paramMeta) SetNoEnv(val bool)      { f.noEnv = val }
+func (f *paramMeta) IsNoConfig() bool       { return f.noConfig }
+func (f *paramMeta) SetNoConfig(val bool)   { f.noConfig = val }
 func (f *paramMeta) IsIgnored() bool        { return f.ignored }
 func (f *paramMeta) SetIgnored(val bool)    { f.ignored = val }
 func (f *paramMeta) IsConfigFile() bool     { return f.isConfigFile }

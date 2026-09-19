@@ -213,15 +213,29 @@ The `boa` tag accepts comma-separated directives:
 |---|---:|---:|---:|---:|
 | `noflag` | no | yes | yes | yes |
 | `noenv` | yes | no | yes | yes |
+| `noconfig` | yes | yes | explicit key rejected | yes |
 | `configonly` | no | no | yes | yes |
 | `ignore` | no | no | raw decoder only | no |
 
 Use `configonly` for validated configuration that must not be exposed as a flag or environment variable. Use `ignore` for opaque data BOA should not traverse or validate.
 
+Use `noconfig` when a field may come from flags, environment variables, defaults, or application code but must not appear in a config file. The check runs before decoding and rejects the whole file even if a higher-precedence source already supplied the field. Combine it with `noflag` for an environment-only secret:
+
+```go
+type Params struct {
+    WebhookToken string `boa:"noflag,noconfig" env:"TOP_SECRET_WEBHOOK_TOKEN"`
+}
+```
+
+On a struct group, `noconfig` also excludes its descendants, including embedded fields. Managed dumps omit excluded fields and groups; if nothing remains, they produce an empty object.
+
+Custom formats must provide `ConfigFormat.KeyTree` so BOA can inspect literal keys. `RegisterConfigFormat` supplies one automatically for decoders that can also decode into `map[string]any`; a complete `ConfigFormat` without a key tree fails closed when an applicable `noconfig` field exists.
+
 ```go
 type Params struct {
     ConfigFile string         `configfile:"true" optional:"true"`
     Secret     string         `boa:"noflag" env:"APP_SECRET" min:"20"`
+    EnvOnly    string         `boa:"noflag,noconfig" env:"ENV_ONLY_SECRET"`
     InternalID string         `boa:"configonly" min:"8"`
     PluginData map[string]any `boa:"ignore"`
 }

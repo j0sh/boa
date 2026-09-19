@@ -583,7 +583,8 @@ func Reload[T any](ctx *HookContext) (*T, error) {
 //
 // The configfile param itself (the field tagged configfile:"true") is
 // omitted from the output — a dumped file that references its own path as
-// a field is self-referential and surprising on the next load.
+// a field is self-referential and surprising on the next load. Fields marked
+// boa:"noconfig" are also omitted because the resulting file could not load.
 func (c *HookContext) DumpBytes(ext string, marshalFunc func(v any) ([]byte, error)) ([]byte, error) {
 	if ext != "" && !strings.HasPrefix(ext, ".") {
 		ext = "." + ext
@@ -625,34 +626,6 @@ func structTagForExt(ext string) string {
 	return strings.TrimPrefix(ext, ".")
 }
 
-// resolveDumpFieldName picks the key name for a struct field in a
-// source-aware dump. It honours the format-appropriate struct tag so
-// `Host string `json:"hostname"“ dumps as `"hostname"` (and round-trips
-// through LoadConfigFile). A "-" tag value means "skip this field";
-// callers should drop the field entirely when this returns ("", true).
-// An empty tagName means "no tag lookup"; fall back to the field name.
-func resolveDumpFieldName(sf reflect.StructField, tagName string) (name string, skip bool) {
-	if tagName == "" {
-		return sf.Name, false
-	}
-	tag := sf.Tag.Get(tagName)
-	if tag == "" {
-		return sf.Name, false
-	}
-	// Tag value may be `name,opt1,opt2` (e.g. json:"name,omitempty").
-	// We only care about the name part.
-	if comma := strings.IndexByte(tag, ','); comma >= 0 {
-		tag = tag[:comma]
-	}
-	if tag == "-" {
-		return "", true
-	}
-	if tag == "" {
-		return sf.Name, false
-	}
-	return tag, false
-}
-
 // DumpFile is the file-writing counterpart to DumpBytes. The marshaler is
 // resolved from filePath's extension; the file is written with mode 0644
 // and overwrites any existing file.
@@ -691,7 +664,28 @@ func (c *HookContext) buildSetValueTree(tagName string) (map[string]any, error) 
 		}
 		rv = rv.Elem()
 	}
-	return buildSetValueMapNode(rv, c.ctx, nil, tagName), nil
+	out := map[string]any{}
+	for _, field := range configFields(rv.Type(), tagName, c.ctx.noConfig) {
+		mirror := c.ctx.mirrorByPath[field.path]
+		if field.noConfig || field.ignored || mirror == nil || mirror.IsConfigFile() {
+			continue
+		}
+		v, ok := c.ctx.resolveFieldValue(field.path)
+		if !ok || !shouldEmitInDump(mirror, v) {
+			continue
+		}
+		node := out
+		for _, key := range field.keys[:len(field.keys)-1] {
+			sub, ok := node[key].(map[string]any)
+			if !ok {
+				sub = map[string]any{}
+				node[key] = sub
+			}
+			node = sub
+		}
+		node[field.keys[len(field.keys)-1]] = v.Interface()
+	}
+	return out, nil
 }
 
 // shouldEmitInDump decides whether a leaf parameter should appear in a
@@ -729,94 +723,6 @@ func shouldEmitInDump(f parameter, v reflect.Value) bool {
 	return true
 }
 
-// buildSetValueMapNode is the recursive walker used by buildSetValueTree.
-// It returns nil when the entire subtree has no set fields so the caller
-// can omit the parent key. tagName is the struct tag to consult for field
-// key names (see structTagForExt); an empty tagName means "use the Go
-// field name".
-func buildSetValueMapNode(v reflect.Value, ctx *processingContext, pathIdx []int, tagName string) map[string]any {
-	if v.Kind() == reflect.Pointer {
-		if v.IsNil() {
-			return nil
-		}
-		v = v.Elem()
-	}
-	if v.Kind() != reflect.Struct {
-		return nil
-	}
-	t := v.Type()
-	out := map[string]any{}
-	for i := 0; i < t.NumField(); i++ {
-		sf := t.Field(i)
-		if !sf.IsExported() {
-			continue
-		}
-		fv := v.Field(i)
-		childIdx := append(append([]int{}, pathIdx...), i)
-		pathKey := joinPath(childIdx)
-
-		if mirror, ok := ctx.mirrorByPath[pathKey]; ok {
-			// Leaf parameter with a registered mirror.
-			if mirror.IsConfigFile() {
-				// Never write the configfile path back into the dumped file —
-				// self-reference on the next load is a surprise.
-				continue
-			}
-			if shouldEmitInDump(mirror, fv) {
-				name, skip := resolveDumpFieldName(sf, tagName)
-				if skip {
-					continue
-				}
-				out[name] = fv.Interface()
-			}
-			continue
-		}
-		// No direct mirror at this path → might be a nested anonymous or
-		// pointer struct whose children carry the mirrors. Recurse.
-		// Anonymous (embedded) fields flatten their children into the
-		// parent map, matching boa's flag-generation semantics (an embedded
-		// DBConfig produces --host, not --db-config-host) and encoding/json's
-		// default struct-embedding flattening.
-		switch fv.Kind() {
-		case reflect.Struct:
-			if sub := buildSetValueMapNode(fv, ctx, childIdx, tagName); len(sub) > 0 {
-				if sf.Anonymous {
-					for k, v := range sub {
-						out[k] = v
-					}
-				} else {
-					name, skip := resolveDumpFieldName(sf, tagName)
-					if skip {
-						continue
-					}
-					out[name] = sub
-				}
-			}
-		case reflect.Pointer:
-			if !fv.IsNil() && fv.Elem().Kind() == reflect.Struct {
-				if sub := buildSetValueMapNode(fv, ctx, childIdx, tagName); len(sub) > 0 {
-					if sf.Anonymous {
-						for k, v := range sub {
-							out[k] = v
-						}
-					} else {
-						name, skip := resolveDumpFieldName(sf, tagName)
-						if skip {
-							continue
-						}
-						out[name] = sub
-					}
-				}
-			}
-		}
-		// Other kinds with no mirror → boa:"ignore" or unsupported; skip.
-	}
-	if len(out) == 0 {
-		return nil
-	}
-	return out
-}
-
 // SubCmds converts typed Boa commands to the Cobra slice accepted by
 // Cmd.SubCmds. Commands with different parameter types can be mixed.
 func SubCmds(cmds ...interface{ ToCobra() *cobra.Command }) []*cobra.Command {
@@ -831,17 +737,18 @@ func SubCmds(cmds ...interface{ ToCobra() *cobra.Command }) []*cobra.Command {
 // If filePath is empty, it's a no-op (returns nil).
 // CLI and env var values still take precedence when used in PreValidateFunc.
 //
-// If unmarshalFunc is non-nil it is used directly. If unmarshalFunc is nil the
-// resolution order is the same as for configfile:"true" fields: the registered
+// If unmarshalFunc is non-nil it is used for decoding and, when the target has
+// boa:"noconfig" fields, for the raw key-presence probe. If unmarshalFunc is nil
+// the resolution order is the same as for configfile:"true" fields: the registered
 // format matching the file's extension first (RegisterConfigFormat /
 // RegisterConfigFormatFull), and UnmarshalJSON as the final fallback when no
 // registration matches.
 func LoadConfigFile[T any](filePath string, target *T, unmarshalFunc func([]byte, any) error) error {
 	override := ConfigFormat{}
 	if unmarshalFunc != nil {
-		override.Unmarshal = unmarshalFunc
+		override = UniversalConfigFormat(unmarshalFunc)
 	}
-	_, _, err := loadConfigFileInto(filePath, target, override)
+	_, err := loadConfigFileInto(filePath, target, override, nil)
 	return err
 }
 
@@ -898,19 +805,19 @@ func LoadConfigBytes[T any](data []byte, ext string, target *T, unmarshalFunc fu
 	}
 	override := ConfigFormat{}
 	if unmarshalFunc != nil {
-		override.Unmarshal = unmarshalFunc
+		override = UniversalConfigFormat(unmarshalFunc)
 	}
 	if ext != "" && !strings.HasPrefix(ext, ".") {
 		ext = "." + ext
 	}
-	_, err := loadConfigBytesInto(data, ext, target, override)
+	_, err := loadConfigBytesInto(data, ext, target, override, nil)
 	return err
 }
 
 // DumpConfigBytes serializes v to config bytes using the marshaler resolved
 // from ext. This is the *naive* dump — every exported field on v is emitted,
-// including Go zero values. Useful for "generate an example config with
-// every option" or round-trip tests.
+// including Go zero values and fields marked boa:"noconfig". Useful for
+// "generate an example config with every option" or round-trip tests.
 //
 // For "persist the resolved config between runs, but don't emit fields the
 // user never set" semantics, use HookContext.DumpBytes / HookContext.DumpFile
@@ -988,17 +895,22 @@ type ConfigFormat struct {
 	Marshal func(v any) ([]byte, error)
 
 	// KeyTree returns a nested map[string]any representing the top-level and
-	// nested key structure of the raw bytes. boa uses this to detect which
-	// struct fields — and which optional struct-pointer parameter groups —
-	// were explicitly mentioned in the config file, even when the written
-	// value equals Go's zero value or the parameter's default.
+	// nested key structure of the raw bytes. boa uses this to enforce
+	// boa:"noconfig" before decoding and to detect which struct fields — and
+	// which optional struct-pointer parameter groups — were explicitly mentioned
+	// in the config file, even when the written value equals Go's zero value or
+	// the parameter's default.
 	//
 	// Only key presence matters. Nested objects should appear as map[string]any
 	// so boa can recurse; scalars and arrays may be any non-nil placeholder.
+	// Preserve the union of nested keys if the format permits repeated members;
+	// replacing an earlier object can hide a forbidden key from inspection.
 	//
-	// Optional. If nil, boa falls back to snapshot comparison, which detects
+	// Optional unless the target contains a config-addressable boa:"noconfig"
+	// field. Without one, boa falls back to snapshot comparison, which detects
 	// changed values but not zero-value or same-as-default writes to optional
-	// struct-pointer parameter groups.
+	// struct-pointer parameter groups. With one, loading fails closed because
+	// boa cannot verify that the forbidden key is absent.
 	KeyTree func(data []byte) (map[string]any, error)
 }
 
@@ -1021,15 +933,6 @@ var (
 		},
 	}
 )
-
-// jsonKeyTree is the built-in KeyTree implementation for JSON.
-func jsonKeyTree(data []byte) (map[string]any, error) {
-	var out map[string]any
-	if err := json.Unmarshal(data, &out); err != nil {
-		return nil, err
-	}
-	return out, nil
-}
 
 // jsonMarshalPretty is the built-in Marshal used for DumpConfig*.
 // It produces human-readable, 2-space-indented JSON with a trailing
@@ -1217,58 +1120,46 @@ func ConfigFormatExtensions() []string {
 	return exts
 }
 
-// loadConfigFileInto is the non-generic implementation used internally.
-// Resolution order for the effective ConfigFormat:
-//  1. override from Cmd.ConfigFormat when its Unmarshal is non-nil
-//  2. Registered format for the file extension
-//  3. JSON fallback (unmarshal + key-tree)
-//
-// Returns the raw bytes and the effective ConfigFormat so callers can reuse
-// its KeyTree for key-presence detection.
-func loadConfigFileInto(filePath string, target any, override ConfigFormat) ([]byte, ConfigFormat, error) {
+// loadConfigFileInto shares inspection and decoding with the bytes loader.
+// The returned field paths retain presence information for later source tracking.
+func loadConfigFileInto(filePath string, target any, override ConfigFormat, policy noConfigPredicate) ([]fieldPath, error) {
 	if filePath == "" {
-		return nil, ConfigFormat{}, nil
+		return nil, nil
 	}
-	fileContents, err := os.ReadFile(filePath)
+	data, err := os.ReadFile(filePath)
 	if err != nil {
-		return nil, ConfigFormat{}, fmt.Errorf("failed to read config file %s: %w", filePath, err)
+		return nil, fmt.Errorf("failed to read config file %s: %w", filePath, err)
 	}
-	effective, err := loadConfigBytesInto(fileContents, filepath.Ext(filePath), target, override)
+	present, err := loadConfigBytesInto(data, filepath.Ext(filePath), target, override, policy)
 	if err != nil {
-		return nil, effective, fmt.Errorf("failed to unmarshal config file %s: %w", filePath, err)
+		return nil, fmt.Errorf("failed to unmarshal config file %s: %w", filePath, err)
 	}
-	return fileContents, effective, nil
+	return present, nil
 }
 
-// loadConfigBytesInto is the shared bytes-level core used by both file and
-// in-memory loaders. It resolves the effective ConfigFormat the same way as
-// loadConfigFileInto and runs the unmarshaler against the supplied bytes.
-func loadConfigBytesInto(data []byte, ext string, target any, override ConfigFormat) (ConfigFormat, error) {
-	effective := resolveConfigFormatByExt(ext, override)
-	if err := effective.Unmarshal(data, target); err != nil {
-		return effective, err
+// loadConfigBytesInto rejects forbidden keys before the decoder can mutate target.
+func loadConfigBytesInto(data []byte, ext string, target any, override ConfigFormat, policy noConfigPredicate) ([]fieldPath, error) {
+	format, tag := resolveConfigFormatByExt(ext, override)
+	present, err := inspectConfig(data, target, format, tag, policy)
+	if err != nil {
+		return nil, err
 	}
-	return effective, nil
+	return present, format.Unmarshal(data, target)
 }
 
-// resolveConfigFormatByExt picks the ConfigFormat to use for a given extension,
-// honouring the precedence override → extension-registered → JSON fallback.
-// The returned ConfigFormat always has a non-nil Unmarshal. ext should be
-// dot-prefixed (filepath.Ext form); an empty string means "no hint" and falls
-// through to the JSON default.
-func resolveConfigFormatByExt(ext string, override ConfigFormat) ConfigFormat {
+// resolveConfigFormatByExt returns both the decoder and its field-name convention.
+// Resolution is command override, registered extension, then the JSON fallback.
+func resolveConfigFormatByExt(ext string, override ConfigFormat) (ConfigFormat, string) {
 	if override.Unmarshal != nil {
-		return override
+		return override, structTagForExt(ext)
 	}
-	if ext != "" {
-		configFormatsMu.RLock()
-		cf, ok := configFormats[ext]
-		configFormatsMu.RUnlock()
-		if ok && cf.Unmarshal != nil {
-			return cf
-		}
+	configFormatsMu.RLock()
+	cf, ok := configFormats[ext]
+	configFormatsMu.RUnlock()
+	if ok && cf.Unmarshal != nil {
+		return cf, structTagForExt(ext)
 	}
-	return ConfigFormat{Unmarshal: UnmarshalJSON, KeyTree: jsonKeyTree}
+	return ConfigFormat{Unmarshal: UnmarshalJSON, KeyTree: jsonKeyTree}, "json"
 }
 
 // resolveConfigMarshalByExt picks the marshaler for the Dump* helpers.

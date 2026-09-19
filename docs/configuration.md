@@ -21,7 +21,7 @@ The path itself can come from a flag, environment variable, or default. An empty
 CLI > environment > root config > nested config > default > zero value
 ```
 
-Use `boa:"configonly"` for fields that should still be mirrored and validated but must not be exposed through flags or environment variables. Use `boa:"ignore"` for opaque data the decoder may populate but BOA should not process.
+Use `boa:"configonly"` for fields that should still be mirrored and validated but must not be exposed through flags or environment variables. Use `boa:"noconfig"` for fields that may be available from other sources but should cause an error when present in a config file. Use `boa:"ignore"` for opaque data the decoder may populate but BOA should not process.
 
 ## Nested config files
 
@@ -72,7 +72,13 @@ boa.RegisterConfigFormat(".toml", toml.Unmarshal)
 
 Format selection is per file, so one binary—and even one overlay chain—may accept several formats.
 
+When an unregistered extension falls back to JSON, field-name matching uses `json` tags too.
+
 `RegisterConfigFormat` uses the decoder both for the target value and for a key-presence probe. Presence tracking lets BOA distinguish “the file explicitly supplied the default value” from “the file omitted this field,” including inside optional pointer groups.
+
+The same key-presence probe enforces `boa:"noconfig"` before the target decoder runs. If a custom `ConfigFormat` has no `KeyTree`, loading a target with an applicable `noconfig` field fails closed. Explicit decoder functions passed to `LoadConfigFile`, `LoadConfigFiles`, or `LoadConfigBytes` are used for the probe as well as the target and therefore must support decoding into `map[string]any` when `noconfig` is present.
+
+If a format permits repeated object members, its `KeyTree` must preserve all nested keys across those occurrences. The built-in JSON probe does this so a later object cannot hide a forbidden key in an earlier one.
 
 Most parsers can decode into `map[string]any` and need no extra work. For a parser that only understands concrete structs, register both operations:
 
@@ -139,7 +145,7 @@ BOA provides two output models:
 | `DumpConfigBytes`, `DumpConfigFile` | Every exported field, including zero values |
 | `HookContext.DumpBytes`, `HookContext.DumpFile` | Only fields for which `HasValue` is true |
 
-Source-aware dumping includes defaults so a saved config pins the current behavior across future application upgrades. It omits untouched zero values and the config-file path field itself.
+Source-aware dumping includes defaults so a saved config pins the current behavior across future application upgrades. It omits untouched zero values, the config-file path field itself, and `boa:"noconfig"` fields. The intentionally naive `DumpConfig*` helpers serialize the raw struct and do not enforce BOA source policies.
 
 JSON marshaling is built in. Register a marshaler for other formats:
 
