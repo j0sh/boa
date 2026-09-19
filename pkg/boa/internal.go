@@ -679,7 +679,7 @@ func parseEnv(ctx *processingContext, structPtr any) error {
 
 func validate(ctx *processingContext, structPtr any) error {
 
-	err := traverse(ctx, structPtr, func(param parameter, _ string, _ reflect.StructTag) error {
+	err := traverse(ctx, structPtr, func(param parameter, _ string, tags reflect.StructTag) error {
 
 		if !param.IsEnabled() {
 			return nil
@@ -747,11 +747,29 @@ func validate(ctx *processingContext, structPtr any) error {
 					return fmt.Errorf("invalid value for param '%s': %s", param.GetName(), err.Error())
 				}
 			}
+
+			if tags.Get("file") == "true" {
+				value := reflect.Indirect(reflect.ValueOf(param.valuePtrF()))
+				if err := validateFile(value.String()); err != nil {
+					return fmt.Errorf("invalid value for param '%s': %w", param.GetName(), err)
+				}
+			}
 		}
 
 		return nil
 	}, nil)
 	return NewUserInputError(err)
+}
+
+func validateFile(path string) error {
+	info, err := os.Stat(path)
+	if err != nil {
+		return err
+	}
+	if !info.Mode().IsRegular() {
+		return fmt.Errorf("file %q is not a regular file", path)
+	}
+	return nil
 }
 
 // parseBoundTag parses a `min:"..."` or `max:"..."` tag value against the

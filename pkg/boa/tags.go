@@ -90,6 +90,9 @@ func (ctx *processingContext) applyTags(param parameter, tags reflect.StructTag)
 			meta.pattern = pattern
 		}
 	}
+	if tags.Get("file") == "true" && param.GetKind() != reflect.String {
+		return fmt.Errorf("file tag requires a string field, got %s", param.GetType())
+	}
 	for _, directive := range strings.Split(tags.Get("boa"), ",") {
 		switch strings.TrimSpace(directive) {
 		case "noflag":

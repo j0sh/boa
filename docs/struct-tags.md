@@ -32,6 +32,7 @@ BOA tracks whether a source supplied a value separately from the value itself. A
 | `strict` | Enforce alternatives; defaults to true | `strict:"false"` |
 | `min`, `max` | Numeric bound or collection/string length | `min:"1" max:"65535"` |
 | `pattern` | Regular expression for a string | `pattern:"^[a-z][a-z0-9-]*$"` |
+| `file` | Require an existing regular file | `file:"true"` |
 | `collection` | Slice occurrence mode: `slice` or `array` | `collection:"array"` |
 | `configfile` | Load path(s) into the enclosing struct | `configfile:"true"` |
 | `boa` | Processing directives | `boa:"configonly"` |
@@ -178,10 +179,11 @@ type Params struct {
     Port int      `min:"1" max:"65535"`
     Name string   `min:"3" max:"20" pattern:"^[a-z][a-z0-9-]*$"`
     Tags []string `min:"1" max:"5"`
+    Input string  `file:"true"`
 }
 ```
 
-Validation of an absent optional pointer is skipped. When present, its pointed-to value is validated normally.
+`file:"true"` accepts string paths that resolve to existing regular files. Symlinks are followed. Validation of an absent optional pointer is skipped; when present, its pointed-to value is validated normally.
 
 For application logic, install typed validators in `InitFuncCtx`:
 

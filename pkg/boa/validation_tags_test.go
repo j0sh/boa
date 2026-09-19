@@ -1,11 +1,124 @@
 package boa
 
 import (
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
 )
+
+func TestValidationTag_File(t *testing.T) {
+	type Params struct {
+		Input string `file:"true"`
+	}
+
+	run := func(path string) error {
+		return (Cmd[Params]{
+			Use:         "test",
+			ParamEnrich: ParamEnricherName,
+			RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
+		}).RunArgsE([]string{"--input", path})
+	}
+
+	dir := t.TempDir()
+	regular := filepath.Join(dir, "input.txt")
+	if err := os.WriteFile(regular, []byte("input"), 0o600); err != nil {
+		t.Fatalf("write regular file: %v", err)
+	}
+
+	t.Run("regular file", func(t *testing.T) {
+		if err := run(regular); err != nil {
+			t.Fatalf("expected regular file to pass validation, got: %v", err)
+		}
+	})
+
+	t.Run("symlink to regular file", func(t *testing.T) {
+		link := filepath.Join(dir, "input-link")
+		if err := os.Symlink(regular, link); err != nil {
+			t.Skipf("symlinks unavailable: %v", err)
+		}
+		if err := run(link); err != nil {
+			t.Fatalf("expected symlink to regular file to pass validation, got: %v", err)
+		}
+	})
+
+	t.Run("missing file", func(t *testing.T) {
+		missing := filepath.Join(dir, "missing.txt")
+		err := run(missing)
+		if err == nil {
+			t.Fatal("expected missing file to fail validation")
+		}
+		if !IsUserInputError(err) {
+			t.Fatalf("expected UserInputError, got %T: %v", err, err)
+		}
+		if !strings.Contains(err.Error(), "input") || !strings.Contains(err.Error(), missing) {
+			t.Errorf("expected error to identify the parameter and path, got: %v", err)
+		}
+	})
+
+	t.Run("directory", func(t *testing.T) {
+		err := run(dir)
+		if err == nil {
+			t.Fatal("expected directory to fail validation")
+		}
+		if !IsUserInputError(err) {
+			t.Fatalf("expected UserInputError, got %T: %v", err, err)
+		}
+		if !strings.Contains(err.Error(), "input") || !strings.Contains(err.Error(), "regular file") {
+			t.Errorf("expected error to identify the parameter and regular-file requirement, got: %v", err)
+		}
+	})
+}
+
+func TestValidationTag_File_OptionalPointerAbsent(t *testing.T) {
+	type Params struct {
+		Input *string `file:"true"`
+	}
+
+	err := (Cmd[Params]{
+		Use:         "test",
+		ParamEnrich: ParamEnricherName,
+		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
+	}).RunArgsE(nil)
+	if err != nil {
+		t.Fatalf("expected absent optional file to skip validation, got: %v", err)
+	}
+}
+
+func TestValidationTag_File_NonStringRejected(t *testing.T) {
+	type Params struct {
+		Input int `file:"true"`
+	}
+
+	_, err := (Cmd[Params]{
+		Use:         "test",
+		ParamEnrich: ParamEnricherName,
+		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
+	}).ToCobraE()
+	if err == nil {
+		t.Fatal("expected file tag on non-string field to fail command construction")
+	}
+	if !strings.Contains(err.Error(), "file tag requires a string field") {
+		t.Errorf("expected string-field error, got: %v", err)
+	}
+}
+
+func TestValidationTag_File_FalseDisabled(t *testing.T) {
+	type Params struct {
+		Input string `file:"false"`
+	}
+
+	err := (Cmd[Params]{
+		Use:         "test",
+		ParamEnrich: ParamEnricherName,
+		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
+	}).RunArgsE([]string{"--input", t.TempDir()})
+	if err != nil {
+		t.Fatalf("expected file:false to disable validation, got: %v", err)
+	}
+}
 
 // --- min/max for numeric types ---
 
