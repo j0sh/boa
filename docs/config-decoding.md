@@ -13,9 +13,9 @@ maps. Numeric durations retain their nanosecond representation. Plain duration
 fields still dump as numeric nanoseconds.
 
 Other JSON values retain the native decoder's behavior. Custom `UnmarshalJSON`
-methods own their entire value and run once. A method that wants Boa's parsing
-inside its object can delegate to `boa.UnmarshalJSON` using the usual method-free
-alias:
+methods own their entire value and run once. On structs, `RejectUnknown` also
+requires keys to match declared fields. A method that wants Boa's parsing inside
+its object can delegate to `boa.UnmarshalJSON` using the usual method-free alias:
 
 ```go
 func (p *Params) UnmarshalJSON(data []byte) error {
@@ -30,7 +30,8 @@ func (p *Params) UnmarshalJSON(data []byte) error {
 }
 ```
 
-To configure a stricter JSON decoder, compose `boa.JSONUnmarshalers()` with
+For automatic config files, use [`Cmd.RejectUnknown`](configuration.md#rejecting-unknown-fields).
+For a strict standalone JSON decoder, compose `boa.JSONUnmarshalers()` with
 `jsonv2.WithUnmarshalers` and `jsonv2.RejectUnknownMembers(true)`.
 
 Use duration strings with units. The legacy `json:",string"` convention for
@@ -41,8 +42,8 @@ unquoted number for nanoseconds.
 
 Register a decoder with `boa.RegisterConfigFormat(".yaml", yaml.Unmarshal)` or
 set `Cmd.ConfigFormat`. BOA calls the decoder once for the target and preserves
-its values, custom methods, and errors. An optional independent `KeyTree` probe
-tracks which keys were present; its scalar values are never used for conversion.
+its values, custom methods, and errors. A separate `KeyTree` probe
+tracks field presence without converting values.
 
 Native support varies by decoder. For example, yaml.v3 and BurntSushi TOML
 support duration strings directly; pelletier TOML v2.2.4 needs a text adapter.

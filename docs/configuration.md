@@ -23,6 +23,12 @@ CLI > environment > root config > nested config > default > zero value
 
 Use `boa:"configonly"` for fields that should still be mirrored and validated but must not be exposed through flags or environment variables. Use `boa:"noconfig"` for fields that may be available from other sources but should cause an error when present in a config file. `secret:"true"` implies `noconfig`; a real sibling field tagged `secretfor:"FieldName"` may hold a file path in config without exposing the secret itself. Use `boa:"ignore"` for opaque data the decoder may populate but BOA should not process.
 
+## Rejecting unknown fields
+
+Set `RejectUnknown: true` on `boa.Cmd[Params]` to reject unknown fields in automatically loaded files, including nested files, overlays, and reloads. The default is permissive.
+
+Checks follow format tags and include structs inside collections. Errors identify the file and field path. Standalone `LoadConfig*` helpers and CLI/environment decoding are unaffected.
+
 ## Nested config files
 
 A nested struct can own its own config path:
@@ -58,7 +64,7 @@ type Params struct {
 
 Later files replace keys they mention; absent keys preserve earlier values. Collection behavior follows the selected decoder. With built-in JSON, slices are replaced and map members merge according to `encoding/json` semantics. Empty path entries are skipped.
 
-Each nested struct may have its own overlay chain. All nested chains load before the root chain.
+Each nested struct may have its own overlay chain. All nested chains load before the root chain. If strict checking rejects a file, earlier files remain applied.
 
 ## Registering formats
 
@@ -74,13 +80,9 @@ Format selection is per file, so one binary—and even one overlay chain—may a
 
 When an unregistered extension falls back to JSON, field-name matching uses `json` tags too.
 
-`RegisterConfigFormat` uses the decoder both for the target value and for a key-presence probe. Presence tracking lets BOA distinguish “the file explicitly supplied the default value” from “the file omitted this field,” including inside optional pointer groups.
+`RegisterConfigFormat` also uses the decoder to track supplied keys, including explicit zero or default values. Most parsers support the required `map[string]any` target.
 
-The same key-presence probe enforces `boa:"noconfig"` before the target decoder runs. If a custom `ConfigFormat` has no `KeyTree`, loading a target with an applicable `noconfig` field fails closed. Explicit decoder functions passed to `LoadConfigFile`, `LoadConfigFiles`, or `LoadConfigBytes` are used for the probe as well as the target and therefore must support decoding into `map[string]any` when `noconfig` is present.
-
-If a format permits repeated object members, its `KeyTree` must preserve all nested keys across those occurrences. The built-in JSON probe does this so a later object cannot hide a forbidden key in an earlier one.
-
-Most parsers can decode into `map[string]any` and need no extra work. For a parser that only understands concrete structs, register both operations:
+A usable `KeyTree` is required to enforce `RejectUnknown` or `boa:"noconfig"`. For a parser that only understands concrete structs, supply a separate probe:
 
 ```go
 boa.RegisterConfigFormatFull(".kv", boa.ConfigFormat{
@@ -89,7 +91,7 @@ boa.RegisterConfigFormatFull(".kv", boa.ConfigFormat{
 })
 ```
 
-The tested [`internal/example_custom_config_format`](https://github.com/j0sh/boa/tree/main/internal/example_custom_config_format) demonstrates this uncommon full form.
+See [`ConfigFormat.KeyTree`](https://pkg.go.dev/github.com/j0sh/boa/pkg/boa#ConfigFormat) for the probe contract and [`internal/example_custom_config_format`](https://github.com/j0sh/boa/tree/main/internal/example_custom_config_format) for a complete example.
 
 ## Per-command format override
 
@@ -133,6 +135,8 @@ The helpers are:
 | `LoadConfigBytes(data, ext, target, decoder)` | Decode embedded, remote, stdin, or test data |
 
 A non-nil decoder argument overrides registry selection. Otherwise file extension or `ext` selects the registered format, with JSON as the fallback. Empty paths and empty byte slices are no-ops.
+
+With `boa:"noconfig"` fields, a decoder override must also support `map[string]any` for key inspection.
 
 When called from `PreValidateFunc`, CLI and environment values retain their precedence. Explicit helper calls are not automatically added to the live-reload watch list; register file paths with `ctx.WatchConfigFile(path)` in a context-aware hook.
 

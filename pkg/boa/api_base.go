@@ -33,6 +33,7 @@ type command struct {
 	SortFlags      bool
 	ValidArgs      []string
 	ConfigFormat   ConfigFormat
+	RejectUnknown  bool
 	RawArgs        []string
 	// Params is a pointer to a struct containing command parameters
 	Params any
@@ -748,7 +749,7 @@ func LoadConfigFile[T any](filePath string, target *T, unmarshalFunc func([]byte
 	if unmarshalFunc != nil {
 		override = UniversalConfigFormat(unmarshalFunc)
 	}
-	_, err := loadConfigFileInto(filePath, target, override, nil)
+	_, err := loadConfigFileInto(filePath, target, override, nil, false)
 	return err
 }
 
@@ -810,7 +811,7 @@ func LoadConfigBytes[T any](data []byte, ext string, target *T, unmarshalFunc fu
 	if ext != "" && !strings.HasPrefix(ext, ".") {
 		ext = "." + ext
 	}
-	_, err := loadConfigBytesInto(data, ext, target, override, nil)
+	_, err := loadConfigBytesInto(data, ext, target, override, nil, false)
 	return err
 }
 
@@ -902,15 +903,18 @@ type ConfigFormat struct {
 	// the parameter's default.
 	//
 	// Only key presence matters. Nested objects should appear as map[string]any
-	// so boa can recurse; scalars and arrays may be any non-nil placeholder.
+	// so boa can recurse. When Cmd.RejectUnknown is enabled, arrays must retain
+	// every element (for example as []any containing nested objects), including
+	// empty objects and arrays. Scalars may be non-nil placeholders; nil denotes
+	// null. Without strict inspection, arrays may also be opaque placeholders.
 	// Preserve the union of nested keys if the format permits repeated members;
 	// replacing an earlier object can hide a forbidden key from inspection.
 	//
-	// Optional unless the target contains a config-addressable boa:"noconfig"
-	// field. Without one, boa falls back to snapshot comparison, which detects
-	// changed values but not zero-value or same-as-default writes to optional
-	// struct-pointer parameter groups. With one, loading fails closed because
-	// boa cannot verify that the forbidden key is absent.
+	// Required when Cmd.RejectUnknown is enabled or the target contains a
+	// config-addressable boa:"noconfig" field; loading fails closed if the probe
+	// is missing or unusable. Otherwise, boa falls back to snapshot comparison,
+	// which detects changed values but not zero-value or same-as-default writes
+	// to optional struct-pointer parameter groups.
 	KeyTree func(data []byte) (map[string]any, error)
 }
 
@@ -1122,7 +1126,7 @@ func ConfigFormatExtensions() []string {
 
 // loadConfigFileInto shares inspection and decoding with the bytes loader.
 // The returned field paths retain presence information for later source tracking.
-func loadConfigFileInto(filePath string, target any, override ConfigFormat, policy noConfigPredicate) ([]fieldPath, error) {
+func loadConfigFileInto(filePath string, target any, override ConfigFormat, policy noConfigPredicate, rejectUnknown bool) ([]fieldPath, error) {
 	if filePath == "" {
 		return nil, nil
 	}
@@ -1130,7 +1134,7 @@ func loadConfigFileInto(filePath string, target any, override ConfigFormat, poli
 	if err != nil {
 		return nil, fmt.Errorf("failed to read config file %s: %w", filePath, err)
 	}
-	present, err := loadConfigBytesInto(data, filepath.Ext(filePath), target, override, policy)
+	present, err := loadConfigBytesInto(data, filepath.Ext(filePath), target, override, policy, rejectUnknown)
 	if err != nil {
 		return nil, fmt.Errorf("failed to unmarshal config file %s: %w", filePath, err)
 	}
@@ -1138,9 +1142,9 @@ func loadConfigFileInto(filePath string, target any, override ConfigFormat, poli
 }
 
 // loadConfigBytesInto rejects forbidden keys before the decoder can mutate target.
-func loadConfigBytesInto(data []byte, ext string, target any, override ConfigFormat, policy noConfigPredicate) ([]fieldPath, error) {
+func loadConfigBytesInto(data []byte, ext string, target any, override ConfigFormat, policy noConfigPredicate, rejectUnknown bool) ([]fieldPath, error) {
 	format, tag := resolveConfigFormatByExt(ext, override)
-	present, err := inspectConfig(data, target, format, tag, policy)
+	present, err := inspectConfig(data, target, format, tag, policy, rejectUnknown)
 	if err != nil {
 		return nil, err
 	}

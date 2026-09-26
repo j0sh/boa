@@ -205,7 +205,7 @@ func (b command) loadConfigs(ctx *processingContext) error {
 					}
 					return ctx.noConfig(path, sf)
 				}
-				present, err := loadConfigFileInto(file, target, override, predicate)
+				present, err := loadConfigFileInto(file, target, override, predicate, b.RejectUnknown)
 				if err != nil {
 					return NewUserInputError(fmt.Errorf("configfile %s: %w", entry.mirror.GetName(), err))
 				}

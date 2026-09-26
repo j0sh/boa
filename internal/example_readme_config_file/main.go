@@ -15,7 +15,7 @@ type ConfigFromFile struct {
 }
 
 func main() {
-	boa.Cmd[ConfigFromFile]{Use: "my-app", RunFunc: func(p *ConfigFromFile, _ *cobra.Command, _ []string) {
+	boa.Cmd[ConfigFromFile]{Use: "my-app", RejectUnknown: true, RunFunc: func(p *ConfigFromFile, _ *cobra.Command, _ []string) {
 		fmt.Printf("Host: %s, Port: %d\n", p.Host, p.Port)
 	}}.Run()
 }

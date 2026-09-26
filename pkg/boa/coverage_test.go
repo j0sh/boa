@@ -1740,7 +1740,7 @@ func TestLoadConfigFileExtensionLookup(t *testing.T) {
 	_ = tmpFile.Close()
 
 	var cfg Config
-	_, err := loadConfigFileInto(tmpFile.Name(), &cfg, ConfigFormat{}, nil)
+	_, err := loadConfigFileInto(tmpFile.Name(), &cfg, ConfigFormat{}, nil, false)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

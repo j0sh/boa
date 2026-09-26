@@ -7,7 +7,7 @@ This guide covers the differences between [GiGurra/boa](https://github.com/GiGur
 | GiGurra/boa | j0sh/boa |
 |---|---|
 | Module `github.com/GiGurra/boa` | Module `github.com/j0sh/boa` |
-| Go 1.25 | Go 1.27 |
+| Go 1.25 | Go 1.27.1 |
 | `CmdT[T]` plus exported erased `Cmd` | One public `Cmd[T]` |
 | `GetParamT` / `ParamT[T]` and untyped `HookContext.GetParam` | `Param` / `*Field[T]` embedding `Parameter` |
 | Typed method suffixes such as `SetDefaultT` | `SetDefault`, `SetCustomValidator`, `SetMin`, `SetMax` |
@@ -38,7 +38,7 @@ go get github.com/j0sh/boa@latest
 go mod tidy
 ```
 
-The fork requires Go 1.27 because its built-in JSON implementation uses the Go 1.27 `encoding/json/v2` API.
+The fork requires Go 1.27.1 because its built-in JSON implementation uses the Go 1.27 `encoding/json/v2` API.
 
 ## Commands: CmdT becomes Cmd
 
@@ -198,7 +198,7 @@ See [Lifecycle and Errors](lifecycle.md#validation-without-actions) and [Live Co
 ## Migration checklist
 
 1. Change the module import path to `github.com/j0sh/boa`.
-2. Upgrade the project toolchain to Go 1.27.
+2. Upgrade the project toolchain to Go 1.27.1.
 3. Rename `CmdT[T]` to `Cmd[T]`; remove uses of the erased `Cmd`, `CmdIfc`, `ToCmd`, and `CmdList`.
 4. Replace `GetParamT` and `HookContext.GetParam` with `boa.Param`.
 5. Remove typed method suffixes and pass defaults directly rather than through `boa.Default`.

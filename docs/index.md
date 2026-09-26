@@ -43,4 +43,4 @@ boa.Cmd[Params]{
 go get github.com/j0sh/boa@latest
 ```
 
-BOA requires Go 1.27 or later. The public package reference is on [pkg.go.dev](https://pkg.go.dev/github.com/j0sh/boa/pkg/boa).
+BOA requires Go 1.27.1 or later. The public package reference is on [pkg.go.dev](https://pkg.go.dev/github.com/j0sh/boa/pkg/boa).

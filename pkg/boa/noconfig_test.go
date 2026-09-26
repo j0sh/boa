@@ -2,7 +2,6 @@ package boa
 
 import (
 	"encoding/json"
-	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -273,49 +272,11 @@ func TestNoConfig_ProgrammaticNestedPolicy(t *testing.T) {
 }
 
 func TestNoConfig_FailsClosedWithoutUsableKeyTree(t *testing.T) {
-	type Params struct {
-		ConfigFile string `configfile:"true" optional:"true"`
-		Secret     string `boa:"noconfig" optional:"true"`
-	}
+	testConfigProbes(t, false)
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(path, []byte(`{"Other":"value"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
-
-	t.Run("missing", func(t *testing.T) {
-		calls := 0
-		err := (Cmd[Params]{
-			Use:     "test",
-			RunFunc: func(*Params, *cobra.Command, []string) {},
-			ConfigFormat: ConfigFormat{Unmarshal: func(data []byte, target any) error {
-				calls++
-				return json.Unmarshal(data, target)
-			}},
-		}).RunArgsE([]string{"--config-file", path})
-		if err == nil || !strings.Contains(err.Error(), "does not provide KeyTree") {
-			t.Fatalf("expected missing-KeyTree error, got %v", err)
-		}
-		if calls != 0 {
-			t.Fatalf("decoder called %d times", calls)
-		}
-	})
-
-	t.Run("failing", func(t *testing.T) {
-		sentinel := errors.New("probe failed")
-		err := (Cmd[Params]{
-			Use:     "test",
-			RunFunc: func(*Params, *cobra.Command, []string) {},
-			ConfigFormat: ConfigFormat{
-				Unmarshal: json.Unmarshal,
-				KeyTree: func([]byte) (map[string]any, error) {
-					return nil, sentinel
-				},
-			},
-		}).RunArgsE([]string{"--config-file", path})
-		if err == nil || !errors.Is(err, sentinel) || !strings.Contains(err.Error(), "cannot inspect config") {
-			t.Fatalf("expected failing-KeyTree error, got %v", err)
-		}
-	})
 
 	t.Run("unrelated target remains compatible", func(t *testing.T) {
 		type Plain struct {
@@ -449,13 +410,17 @@ func TestNoConfig_AllNestedOccurrences(t *testing.T) {
 	type Auth struct {
 		Secret string `boa:"noconfig"`
 	}
-	type Params struct{ Auth Auth }
+	type Params struct {
+		Auth Auth `json:",inline"`
+	}
 	for _, data := range []string{
 		`{"Auth":{},"auth":{"Secret":"bad"}}`,
 		`{"AUTH":{},"auth":{"Secret":"bad"}}`,
 		`{"Auth":{"Secret":"bad"},"Auth":{}}`,
 		`{"Auth":{"Secret":"bad"},"Auth":null}`,
 		`{"Auth":{"Secret":null},"Auth":{}}`,
+		`{"Auth":{"Secret":"bad"},"Auth":[]}`,
+		`{"Auth":[],"Auth":{"Secret":"bad"}}`,
 	} {
 		t.Run(data, func(t *testing.T) {
 			p := Params{Auth: Auth{Secret: "original"}}

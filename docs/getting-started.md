@@ -6,7 +6,7 @@
 go get github.com/j0sh/boa@latest
 ```
 
-BOA requires Go 1.27 or later.
+BOA requires Go 1.27.1 or later.
 
 ## Build a command
 

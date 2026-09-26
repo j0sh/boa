@@ -51,7 +51,12 @@ func configFields(t reflect.Type, tag string, policy noConfigPredicate) []config
 			sf := t.Field(i)
 			tagParts := strings.Split(sf.Tag.Get(tag), ",")
 			key := tagParts[0]
-			if !sf.IsExported() || key == "-" {
+			ft := sf.Type
+			for ft.Kind() == reflect.Pointer {
+				ft = ft.Elem()
+			}
+			// JSON promotes exported fields of unexported anonymous structs too.
+			if key == "-" || !sf.IsExported() && (tag != "json" || !sf.Anonymous || ft.Kind() != reflect.Struct) {
 				continue
 			}
 			childIndex := append(slices.Clone(index), i)
@@ -61,10 +66,6 @@ func configFields(t reflect.Type, tag string, policy noConfigPredicate) []config
 				ignored: parent.ignored || isBoaIgnored(sf),
 			}
 			f.noConfig = parent.noConfig || policy(f.path, sf)
-			ft := sf.Type
-			for ft.Kind() == reflect.Pointer {
-				ft = ft.Elem()
-			}
 			group := ft.Kind() == reflect.Struct && !isSupportedType(sf.Type)
 			flatten := sf.Anonymous && key == ""
 			if tag == "yaml" {
@@ -92,9 +93,9 @@ func configFields(t reflect.Type, tag string, policy noConfigPredicate) []config
 // inspectConfig probes once, rejects forbidden keys before decoding, and returns
 // declared paths to mark after all overlays. Nil means snapshot fallback; an
 // empty non-nil slice means a successful probe with no recognized keys.
-func inspectConfig(data []byte, target any, format ConfigFormat, tag string, policy noConfigPredicate) ([]fieldPath, error) {
+func inspectConfig(data []byte, target any, format ConfigFormat, tag string, policy noConfigPredicate, rejectUnknown bool) ([]fieldPath, error) {
 	fields := configFields(reflect.TypeOf(target), tag, policy)
-	if policy == nil && !slices.ContainsFunc(fields, func(f configField) bool { return f.noConfig }) {
+	if !rejectUnknown && policy == nil && !slices.ContainsFunc(fields, func(f configField) bool { return f.noConfig }) {
 		return nil, nil // Standalone decoders need not support a key probe otherwise.
 	}
 	var raw map[string]any
@@ -104,6 +105,9 @@ func inspectConfig(data []byte, target any, format ConfigFormat, tag string, pol
 		if probeErr == nil && raw == nil {
 			probeErr = fmt.Errorf("KeyTree returned nil")
 		}
+	}
+	if rejectUnknown && probeErr != nil {
+		return nil, fmt.Errorf("cannot inspect config with RejectUnknown: %w", probeErr)
 	}
 	var present []fieldPath
 	if probeErr == nil {
@@ -120,6 +124,11 @@ func inspectConfig(data []byte, target any, format ConfigFormat, tag string, pol
 			if !f.ignored {
 				present = append(present, f.path)
 			}
+		}
+	}
+	if rejectUnknown {
+		if err := checkConfigKeys(raw, reflect.TypeOf(target), tag, ""); err != nil {
+			return nil, err
 		}
 	}
 	return present, nil

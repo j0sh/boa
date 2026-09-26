@@ -1,9 +1,11 @@
 package formats_test
 
 import (
+	"encoding/json"
 	"errors"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -17,17 +19,18 @@ import (
 
 func TestPortableTextAndNativeDates(t *testing.T) {
 	type Config struct {
+		Source  string                  `configfile:"true" boa:"configonly" json:"-" yaml:"-" toml:"-"`
 		At      time.Time               `json:"at" yaml:"at" toml:"at"`
 		Timeout boa.Text[time.Duration] `json:"timeout" yaml:"timeout" toml:"timeout"`
 	}
 	for _, tc := range []struct {
-		name, data string
-		decode     func([]byte, any) error
+		name, ext, data string
+		decode          func([]byte, any) error
 	}{
-		{"json", `{"at":"2026-09-17","timeout":"2.5h"}`, boa.UnmarshalJSON},
-		{"yaml", "at: 2026-09-17\ntimeout: 2.5h\n", yaml.Unmarshal},
-		{"burntsushi", "at = 2026-09-17\ntimeout = \"2.5h\"\n", burnttoml.Unmarshal},
-		{"pelletier", "at = 2026-09-17\ntimeout = \"2.5h\"\n", toml.Unmarshal},
+		{"json", ".json", `{"at":"2026-09-17","timeout":"2.5h"}`, boa.UnmarshalJSON},
+		{"yaml", ".yaml", "at: 2026-09-17\ntimeout: 2.5h\n", yaml.Unmarshal},
+		{"burntsushi", ".toml", "at = 2026-09-17\ntimeout = \"2.5h\"\n", burnttoml.Unmarshal},
+		{"pelletier", ".toml", "at = 2026-09-17\ntimeout = \"2.5h\"\n", toml.Unmarshal},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var p Config
@@ -36,6 +39,13 @@ func TestPortableTextAndNativeDates(t *testing.T) {
 			}
 			if p.At.Format(time.DateOnly) != "2026-09-17" || p.Timeout.Value != 150*time.Minute {
 				t.Fatalf("p=%+v", p)
+			}
+			strict := Config{Source: writeConfig(t, tc.ext, []byte(tc.data))}
+			if err := (boa.Cmd[Config]{Params: &strict, RawArgs: []string{}, RejectUnknown: true, ConfigFormat: boa.UniversalConfigFormat(tc.decode)}).Validate(); err != nil {
+				t.Fatal(err)
+			}
+			if !strict.At.Equal(p.At) || strict.Timeout != p.Timeout {
+				t.Fatalf("strict loading changed native values: strict=%+v want=%+v", strict, p)
 			}
 		})
 	}
@@ -171,4 +181,109 @@ func TestYAMLEmbeddedGroupPresence(t *testing.T) {
 	if err := boa.LoadConfigBytes([]byte("secret: bad\n"), ".yaml", &inline, nil); err == nil {
 		t.Fatal("inline YAML secret was not rejected")
 	}
+}
+
+func TestRejectUnknownRegisteredFormats(t *testing.T) {
+	type Policy struct {
+		Name    string   `json:"name" yaml:"name" toml:"name"`
+		Allow   []string `json:"allow" yaml:"allow" toml:"allow"`
+		Enabled bool     `json:"enabled" yaml:"enabled" toml:"enabled"`
+	}
+	type Entry struct {
+		ID     string  `json:"id" yaml:"id" toml:"id"`
+		Secret string  `json:"secret" yaml:"secret" toml:"secret"`
+		Policy *Policy `json:"policy" yaml:"policy" toml:"policy"`
+	}
+	type Config struct {
+		Source      string           `configfile:"true" boa:"configonly" json:"-" yaml:"-" toml:"-"`
+		Credentials []Entry          `boa:"configonly" json:"credentials" yaml:"credentials" toml:"credentials"`
+		ByName      map[string]Entry `boa:"configonly" optional:"true" json:"by_name" yaml:"by_name" toml:"by_name"`
+	}
+	for _, format := range []struct {
+		name, ext string
+		decode    func([]byte, any) error
+		encode    func(any) ([]byte, error)
+	}{
+		{"json", ".json", boa.UnmarshalJSON, json.Marshal},
+		{"yaml", ".yaml", yaml.Unmarshal, yaml.Marshal},
+		{"burntsushi", ".toml", burnttoml.Unmarshal, burnttoml.Marshal},
+		{"pelletier", ".toml", toml.Unmarshal, toml.Marshal},
+	} {
+		t.Run(format.name, func(t *testing.T) {
+			boa.RegisterConfigFormat(format.ext, format.decode)
+			for _, tc := range []struct{ name, data, path string }{
+				{"valid", `{"credentials":[{"id":"a","secret":"sensitive-value"},{"policy":{"name":"reader","allow":["read"],"enabled":true}}],"by_name":{"tenant":{"id":"b"}}}`, ""},
+				{"root", `{"credentials":[{"id":"a","secret":"sensitive-value"}],"unknown":"sensitive-value"}`, "unknown"},
+				{"excluded", `{"credentials":[{"id":"a"}],"Source":"sensitive-value"}`, "Source"},
+				{"entry", `{"credentials":[{"id":"a","secrett":"sensitive-value"}]}`, "credentials[0].secrett"},
+				{"later entry", `{"credentials":[{"id":"a","secret":"sensitive-value"},{"id":"b","secrett":"sensitive-value"}]}`, "credentials[1].secrett"},
+				{"nested", `{"credentials":[{}, {"policy":{"unknown":"sensitive-value"}}]}`, "credentials[1].policy.unknown"},
+				{"map", `{"credentials":[{"id":"a"}],"by_name":{"tenant":{"unknown":"sensitive-value"}}}`, "by_name.tenant.unknown"},
+			} {
+				t.Run(tc.name, func(t *testing.T) {
+					var fields map[string]any
+					if err := json.Unmarshal([]byte(tc.data), &fields); err != nil {
+						t.Fatal(err)
+					}
+					encoded, err := format.encode(fields)
+					if err != nil {
+						t.Fatal(err)
+					}
+					path := writeConfig(t, format.ext, encoded)
+					data := Config{Source: path}
+					err = (boa.Cmd[Config]{Params: &data, RawArgs: []string{}, RejectUnknown: true}).Validate()
+					if tc.path == "" {
+						native := Config{Source: path}
+						if nativeErr := format.decode(encoded, &native); err != nil || nativeErr != nil || !reflect.DeepEqual(data, native) {
+							t.Fatalf("strict=%+v native=%+v errors=%v/%v", data, native, err, nativeErr)
+						}
+						return
+					}
+					if err == nil || !boa.IsUserInputError(err) || !strings.Contains(err.Error(), path) || !strings.Contains(err.Error(), tc.path) || strings.Contains(err.Error(), "sensitive-value") {
+						t.Fatalf("expected safe error identifying %q and file: %v", tc.path, err)
+					}
+					if data.Credentials != nil || data.ByName != nil {
+						t.Fatal("rejected registry mutated the target")
+					}
+					permissive := Config{Source: path}
+					if err := (boa.Cmd[Config]{Params: &permissive, RawArgs: []string{}}).Validate(); err != nil {
+						t.Fatalf("default must remain permissive: %v", err)
+					}
+				})
+			}
+		})
+	}
+}
+
+func TestRejectUnknownYAMLEmbedding(t *testing.T) {
+	type Embedded struct {
+		Count int `optional:"true"`
+	}
+	type Config struct {
+		Source string `configfile:"true" boa:"configonly" yaml:"-"`
+		*Embedded
+		Inline Embedded          `yaml:",inline"`
+		Extra  map[string]string `boa:"configonly" optional:"true" yaml:",inline"`
+	}
+	boa.RegisterConfigFormat(".yaml", yaml.Unmarshal)
+	for _, tc := range []struct{ data, want string }{
+		{"embedded:\n  count: 1\ncount: 2\ndynamic: valid\n", ""},
+		{"embedded:\n  typo: wrong\n", "embedded.typo"},
+	} {
+		data := Config{Source: writeConfig(t, ".yaml", []byte(tc.data))}
+		err := (boa.Cmd[Config]{Params: &data, RawArgs: []string{}, RejectUnknown: true}).Validate()
+		native := Config{Source: data.Source}
+		if tc.want == "" && (err != nil || yaml.Unmarshal([]byte(tc.data), &native) != nil || !reflect.DeepEqual(data, native)) || tc.want != "" && (err == nil || !strings.Contains(err.Error(), tc.want)) {
+			t.Fatalf("data=%q err=%v", tc.data, err)
+		}
+	}
+}
+
+func writeConfig(t *testing.T, ext string, data []byte) string {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "config"+ext)
+	if err := os.WriteFile(path, data, 0600); err != nil {
+		t.Fatal(err)
+	}
+	return path
 }
