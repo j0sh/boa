@@ -439,11 +439,11 @@ func TestSecretTags_InvalidRelationships(t *testing.T) {
 		}
 		assertSetupError(t, Cmd[P]{Use: "test"}, "invalid secret value")
 	})
-	t.Run("non-string secret", func(t *testing.T) {
+	t.Run("non-scalar secret", func(t *testing.T) {
 		type P struct {
-			Token int `secret:"true"`
+			Token []string `secret:"true"`
 		}
-		assertSetupError(t, Cmd[P]{Use: "test"}, "secret tag requires a string field")
+		assertSetupError(t, Cmd[P]{Use: "test"}, "secret tag requires a text scalar field")
 	})
 	t.Run("missing sibling", func(t *testing.T) {
 		type P struct {

@@ -89,6 +89,10 @@ type paramMeta struct {
 	// Initialized from the tag before Init hooks, which can override it with SetNoConfig.
 	noConfig bool
 
+	// secretName identifies secret fields before flag names are enriched and
+	// marks parameters whose parser errors must not expose their input.
+	secretName string
+
 	// ignored marks the mirror as fully ignored by boa: skip CLI flag,
 	// skip env reading, skip required/min/max/pattern validation. The
 	// only remaining write path is config-file unmarshal, which writes

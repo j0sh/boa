@@ -25,6 +25,26 @@ func hasFileTag(tags reflect.StructTag) bool {
 	return tags.Get("file") == "true" || tags.Get("secretfor") != ""
 }
 
+// parseParamText keeps parser diagnostics from revealing secret input. Do not
+// wrap the original error: callers could recover the input through Unwrap.
+func parseParamText(param parameter, text string) (any, error) {
+	value, err := handlerFor(param).parse(param.GetName(), text)
+	if err != nil {
+		if meta, ok := param.(*paramMeta); ok && meta.secretName != "" {
+			return nil, fmt.Errorf("invalid secret value for param %s (type %s)", cmp.Or(param.GetName(), meta.secretName), param.GetType())
+		}
+	}
+	return value, err
+}
+
+func secretValueText(secret parameter) string {
+	value := reflect.ValueOf(secret.valuePtrF()).Elem()
+	if handler := handlerFor(secret); handler.format != nil {
+		return handler.format(value)
+	}
+	return ptrToAnyToString(secret.valuePtrF())
+}
+
 // registerSecretFile validates and records a secretfor relationship. Target
 // names deliberately resolve only among direct siblings in the declaring
 // struct; promoted or qualified names would make relationships ambiguous.
@@ -95,10 +115,10 @@ func resolveSecretFiles(ctx *processingContext) error {
 			continue
 		}
 
-		// Tags ensure string mirrors; an empty appliedPath means no successful read yet.
+		// The path is always a string; an empty appliedPath means no successful read yet.
 		path := reflect.Indirect(reflect.ValueOf(file.valuePtrF())).String()
 		fileName := cmp.Or(file.GetName(), entry.fileName)
-		if secret.HasValue() && (entry.appliedPath == "" || reflect.Indirect(reflect.ValueOf(secret.valuePtrF())).String() != entry.appliedValue) {
+		if secret.HasValue() && (entry.appliedPath == "" || secretValueText(secret) != entry.appliedValue) {
 			return fmt.Errorf("secret %q and secret file %q cannot both be set", cmp.Or(secret.GetName(), entry.secretName), fileName)
 		}
 		if entry.appliedPath != "" && path == entry.appliedPath {
@@ -109,15 +129,20 @@ func resolveSecretFiles(ctx *processingContext) error {
 		if err != nil {
 			return fmt.Errorf("secret file %q: %w", fileName, err)
 		}
+		parsed, err := parseParamText(secret, contents)
+		if err != nil {
+			return fmt.Errorf("secret file %q: %w", fileName, err)
+		}
 		// Update the field and mirror together so sync cannot restore an old value.
-		if field.Kind() == reflect.Pointer {
+		// Exact pointer scalars such as *url.URL already own their pointer semantics.
+		if meta, ok := secret.(*paramMeta); ok && meta.isPointer {
 			field.Set(reflect.New(field.Type().Elem()))
 			field = field.Elem()
 		}
-		field.SetString(contents)
+		reinterpretAs(field, secret.GetType()).Set(reflect.ValueOf(parsed).Elem())
 		secret.injectValuePtr(reinterpretAs(field, secret.GetType()).Addr().Interface())
 		entry.appliedPath = path
-		entry.appliedValue = contents
+		entry.appliedValue = secretValueText(secret)
 	}
 	return nil
 }

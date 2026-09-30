@@ -1194,6 +1194,9 @@ func readEnv(f parameter) error {
 
 	err := readFrom(f, envVal)
 	if err != nil {
+		if meta, ok := f.(*paramMeta); ok && meta.secretName != "" {
+			return fmt.Errorf("environment %s: %w", f.GetEnv(), err)
+		}
 		return err
 	}
 
@@ -1203,7 +1206,7 @@ func readEnv(f parameter) error {
 
 func readFrom(f parameter, strVal string) error {
 
-	ptr, err := handlerFor(f).parse(f.GetName(), strVal)
+	ptr, err := parseParamText(f, strVal)
 	if err != nil {
 		return err
 	}
@@ -2283,11 +2286,16 @@ func newParam(field *reflect.StructField, t reflect.Type) parameter {
 		}
 	}
 
+	var secretName string
+	if field.Tag.Get("secret") == "true" {
+		secretName = field.Name
+	}
 	return &paramMeta{
 		fieldType:       valueType,
 		isPointer:       isPtr,
 		defaultRequired: isRequired,
 		noConfig:        slices.Contains(getBoaTags(*field), "noconfig") || field.Tag.Get("secret") == "true",
+		secretName:      secretName,
 	}
 }
 

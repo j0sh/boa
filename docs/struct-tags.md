@@ -189,7 +189,7 @@ type Params struct {
 
 ## Secrets and secret files
 
-`secret:"true"` marks a string secret and implies `boa:"noflag,noconfig"`: direct values can come from environment variables or code, but not flags or config files. Enabled environment bindings appear under `Environment Variables` in help:
+`secret:"true"` marks a secret and implies `boa:"noflag,noconfig"`. Secret values can come from environment variables or code, but not flags or config files. Secrets need to be represented as strings, but these can decode to Go types including built-in scalars such as `*url.URL` and `time.Duration`, `boa.Text[T]`, types implementing `encoding.TextUnmarshaler`, and `boa.RegisterType` registrations. Enabled environment bindings (including implicit bindings derived by `ParamEnricherEnv` when enabled) appear under `Environment Variables` in help:
 
 ```go
 type Params struct {
@@ -210,11 +210,28 @@ type Params struct {
 
 `secret:"false"` disables the tag. Other values are rejected during command construction.
 
-When the path is set, BOA verifies that it names a regular file and copies its exact bytes into the secret before PreValidate. Whitespace, trailing newlines, invalid UTF-8 bytes, and empty files are preserved. The resulting value satisfies required checks and is validated using the secret field's validators. If both the direct secret and its file companion have values—from any sources, including defaults—BOA returns a user-input error instead of choosing one.
+When a secret file path is supplied, BOA checks that it names a regular file and parses its contents before `PreValidate`:
 
-After PreValidate, BOA resolves paths supplied or changed by hooks and checks for direct/file conflicts again. Disabled or programmatically ignored secret fields are skipped.
+- **String secrets** preserve the file's exact contents, including whitespace, trailing newlines, invalid UTF-8 bytes, and empty files.
+- **Typed secrets** use the same parser as environment variables and defaults. BOA does not trim whitespace, so a URL file ending in a newline fails URL parsing.
+- **Required checks** are satisfied by supplying a secret file whose contents parse successfully. To reject an empty secret field, add a validator.
+- **Parser errors** will identify the secret and source without exposing the input or underlying error.
+- **Conflicting sources** cause an error. Supply either the secret value or its file path; setting `TOKEN` and passing `--token-file` together is invalid. A default secret value also conflicts with a supplied file path.
 
-Source-aware dumps omit the secret because it is `noconfig`, but emit the companion path under the ordinary field rules. Reload rereads the secret file when invoked. Secret files are deliberately not added to `WatchedConfigFiles`; applications that want edits to trigger reload should watch or register them explicitly.
+A `PreValidate` hook can set or change a secret file path; BOA loads that file before validation. Disabled or ignored secret fields are skipped.
+
+For a typed secret URL, use a sibling string path field:
+
+```go
+type Params struct {
+    Endpoint     *url.URL `secret:"true" env:"API_URL"`
+    EndpointFile string   `secretfor:"Endpoint" env:"API_URL_FILE"`
+}
+```
+
+See the [runnable example](https://github.com/j0sh/boa/tree/main/internal/example_secret) for more usage details.
+
+Source-aware dumps include the secret file path when supplied and omit the secret value. Reload rereads the secret file when invoked. Secret files are deliberately not added to `WatchedConfigFiles`; applications that want edits to trigger reload should watch or register them explicitly.
 
 For application logic, install typed validators in `InitFuncCtx`:
 

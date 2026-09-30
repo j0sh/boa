@@ -16,8 +16,8 @@ func (ctx *processingContext) applyTags(param parameter, tags reflect.StructTag)
 		return fmt.Errorf("param %s cannot use both secret:\"true\" and secretfor", param.GetName())
 	}
 	if secret == "true" {
-		if param.GetKind() != reflect.String {
-			return fmt.Errorf("secret tag requires a string field, got %s", param.GetType())
+		if lookupHandler(param.GetType()) == nil {
+			return fmt.Errorf("secret tag requires a text scalar field, got %s", param.GetType())
 		}
 		param.SetNoFlag(true)
 		param.SetNoConfig(true)
@@ -88,7 +88,7 @@ func (ctx *processingContext) applyTags(param parameter, tags reflect.StructTag)
 	}
 	if !param.hasDefaultValue() {
 		if value, ok := tags.Lookup("default"); ok {
-			parsed, err := handlerFor(param).parse(param.GetName(), value)
+			parsed, err := parseParamText(param, value)
 			if err != nil {
 				return fmt.Errorf("invalid default value for param %s: %w", param.GetName(), err)
 			}
