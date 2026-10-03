@@ -141,9 +141,9 @@ var (
 
 	// ParamEnricherEnv sets an environment variable name for a parameter
 	// based on its flag name. Converts from kebab-case to UPPER_SNAKE_CASE.
-	// Only applies to non-positional parameters.
+	// Only applies to non-positional parameters with environment input enabled.
 	ParamEnricherEnv ParamEnricher = func(alreadyProcessed []Parameter, param Parameter, paramFieldName string) error {
-		if param.GetEnv() == "" && param.GetName() != "" && !param.IsPositional() {
+		if param.GetEnv() == "" && param.GetName() != "" && !param.IsPositional() && !param.IsNoEnv() {
 			param.SetEnv(kebabCaseToUpperSnakeCase(param.GetName()))
 		}
 		return nil

@@ -698,7 +698,7 @@ func validate(ctx *processingContext, structPtr any) error {
 		}
 
 		envHint := ""
-		if param.GetEnv() != "" {
+		if param.GetEnv() != "" && !param.IsNoEnv() {
 			envHint = fmt.Sprintf(" (env: %s)", param.GetEnv())
 		}
 
@@ -999,7 +999,7 @@ func connect(f parameter, cmd *cobra.Command, posArgs []parameter, ctx *processi
 	extraInfos := make([]string, 0)
 
 	descr := f.getDescr()
-	if f.GetEnv() != "" {
+	if f.GetEnv() != "" && !f.IsNoEnv() {
 		extraInfos = append(extraInfos, fmt.Sprintf("env: %s", f.GetEnv()))
 	}
 
