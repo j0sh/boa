@@ -16,6 +16,8 @@ func (b command) prepareReload(ctx *processingContext, cmd *cobra.Command, args 
 		return
 	}
 	args = slices.Clone(args)
+	directory, dirErr := ctx.pathInvocation.directory, ctx.pathInvocation.dirErr
+	inheritedBase := ctx.inheritedBaseDir
 	type flagValue struct {
 		name, text string
 		items      []string
@@ -38,6 +40,8 @@ func (b command) prepareReload(ctx *processingContext, cmd *cobra.Command, args 
 		if err != nil {
 			return nil, err
 		}
+		freshCtx.pathInvocation = &pathInvocation{directory: directory, dirErr: dirErr}
+		freshCtx.inheritedBaseDir = inheritedBase
 		for _, value := range flags {
 			flag := replay.Flags().Lookup(value.name)
 			if flag == nil {
@@ -65,7 +69,7 @@ func (b command) prepareReload(ctx *processingContext, cmd *cobra.Command, args 
 		if err := replay.ValidateArgs(args); err != nil {
 			return nil, err
 		}
-		if err := next.loadAndValidate(freshCtx, replay, args); err != nil {
+		if err := next.loadAndValidate(freshCtx, replay, args, false); err != nil {
 			return nil, err
 		}
 		ctx.watchMu.Lock()

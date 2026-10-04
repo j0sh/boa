@@ -123,10 +123,13 @@ A config-file field must be `string` or `[]string`. See [Configuration Files](co
 | `boa:"configonly"` | `SetNoFlag(true)` + `SetNoEnv(true)` |
 | `boa:"ignore"` | `SetIgnored(true)` |
 | `configfile` | `SetConfigFile(true)` |
+| `basedir:"true"` | `SetBaseDir(true)` |
+| `basedir:"required"` | `SetBaseDirRequired(true)` |
+| `basedir:"autocreate"` | `SetBaseDirAutoCreate(true)` |
 
 Use typed `SetCustomValidator` for checks that cannot be expressed by tags.
 
-`SetNoConfig` applies to command-managed `configfile:"true"` loads and reloads. Standalone `LoadConfigFile`, `LoadConfigFiles`, and `LoadConfigBytes` calls have no command metadata and therefore enforce only `boa:"noconfig"` struct tags.
+`SetNoConfig` applies to command-managed `configfile:"true"` loads and reloads. Standalone `LoadConfigFile`, `LoadConfigFiles`, and `LoadConfigBytes` calls enforce config restrictions from struct tags (`noconfig`, `secret`, and `basedir`).
 
 `SetNoConfig(false)` in an init hook overrides the field's `noconfig` tag. Managed dumps use the same effective setting as managed loads.
 

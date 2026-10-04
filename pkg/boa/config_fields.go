@@ -17,7 +17,11 @@ func (ctx *processingContext) noConfig(path fieldPath, sf reflect.StructField) b
 			return mirror.IsNoConfig()
 		}
 	}
-	return slices.Contains(getBoaTags(sf), "noconfig") || sf.Tag.Get("secret") == "true"
+	var options baseDirOptions
+	if value, ok := sf.Tag.Lookup("basedir"); ok && !isBoaIgnored(sf) {
+		options, _ = parseBaseDirTag(value)
+	}
+	return slices.Contains(getBoaTags(sf), "noconfig") || sf.Tag.Get("secret") == "true" || options.enabled
 }
 
 type configField struct {

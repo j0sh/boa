@@ -109,6 +109,7 @@ type paramMeta struct {
 	// path to a config file that's unmarshaled into the enclosing struct.
 	// Set either via the tag or programmatically via SetConfigFile(true).
 	isConfigFile bool
+	baseDir      baseDirOptions
 }
 
 var _ parameter = &paramMeta{}
@@ -393,12 +394,35 @@ func (f *paramMeta) IsNoFlag() bool         { return f.noFlag }
 func (f *paramMeta) SetNoFlag(val bool)     { f.noFlag = val }
 func (f *paramMeta) IsNoEnv() bool          { return f.noEnv }
 func (f *paramMeta) SetNoEnv(val bool)      { f.noEnv = val }
-func (f *paramMeta) IsNoConfig() bool       { return f.noConfig }
+func (f *paramMeta) IsNoConfig() bool       { return f.noConfig || f.IsBaseDir() && !f.IsIgnored() }
 func (f *paramMeta) SetNoConfig(val bool)   { f.noConfig = val }
 func (f *paramMeta) IsIgnored() bool        { return f.ignored }
 func (f *paramMeta) SetIgnored(val bool)    { f.ignored = val }
 func (f *paramMeta) IsConfigFile() bool     { return f.isConfigFile }
 func (f *paramMeta) SetConfigFile(val bool) { f.isConfigFile = val }
+
+func (f *paramMeta) IsBaseDir() bool           { return f.baseDir.enabled }
+func (f *paramMeta) IsBaseDirRequired() bool   { return f.baseDir.required }
+func (f *paramMeta) IsBaseDirAutoCreate() bool { return f.baseDir.autoCreate }
+
+// Disabling the designation clears its options, preserving explicit noconfig.
+func (f *paramMeta) SetBaseDir(enabled bool) {
+	if !enabled {
+		f.baseDir = baseDirOptions{}
+	}
+	f.baseDir.enabled = enabled
+}
+
+// Enabling either directory option also enables the designation.
+func (f *paramMeta) SetBaseDirRequired(required bool) {
+	f.baseDir.required = required
+	f.baseDir.enabled = f.baseDir.enabled || required
+}
+
+func (f *paramMeta) SetBaseDirAutoCreate(autoCreate bool) {
+	f.baseDir.autoCreate = autoCreate
+	f.baseDir.enabled = f.baseDir.enabled || autoCreate
+}
 
 // --- min / max / pattern ---
 

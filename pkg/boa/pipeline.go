@@ -9,7 +9,7 @@ import (
 
 // loadAndValidate is shared by execution, Validate, and reload. Source loading
 // and validation complete before any action hook is eligible to run.
-func (b command) loadAndValidate(ctx *processingContext, cmd *cobra.Command, args []string) error {
+func (b command) loadAndValidate(ctx *processingContext, cmd *cobra.Command, args []string, createDirs bool) error {
 	if b.Params == nil {
 		return nil
 	}
@@ -29,18 +29,7 @@ func (b command) loadAndValidate(ctx *processingContext, cmd *cobra.Command, arg
 
 	syncMirrors(ctx)
 
-	if err := b.loadConfigs(ctx); err != nil {
-		return err
-	}
-
-	// Clean up preallocated struct pointers that had no fields set.
-	// This must happen after all value sources (CLI, env, config) and before
-	// validation, so that required-field checks don't fire for unused struct groups.
-	if len(ctx.PreallocatedPtrs) > 0 {
-		cleanupPreallocatedPtrs(ctx)
-	}
-
-	// Finish string-backed flag conversion before hooks inspect the Go fields.
+	// Finish string-backed flag conversion before base selection or config loading.
 	// Native pflag values and env/config values are already typed.
 	for _, path := range ctx.pathOrder {
 		param := ctx.mirrorByPath[path]
@@ -56,6 +45,23 @@ func (b command) loadAndValidate(ctx *processingContext, cmd *cobra.Command, arg
 		}
 	}
 	syncMirrors(ctx)
+	if err := ctx.selectBaseDir(createDirs); err != nil {
+		return err
+	}
+
+	if err := b.loadConfigs(ctx); err != nil {
+		return err
+	}
+
+	// Clean up preallocated struct pointers that had no fields set.
+	// This must happen after all value sources (CLI, env, config) and before
+	// validation, so that required-field checks don't fire for unused struct groups.
+	if len(ctx.PreallocatedPtrs) > 0 {
+		cleanupPreallocatedPtrs(ctx)
+	}
+
+	syncMirrors(ctx)
+	ctx.normalizePaths(false)
 	if err := resolveSecretFiles(ctx); err != nil {
 		return NewUserInputError(err)
 	}
@@ -99,6 +105,10 @@ func (b command) loadAndValidate(ctx *processingContext, cmd *cobra.Command, arg
 		}
 	}
 
+	if err := ctx.checkFrozenBaseDir(); err != nil {
+		return err
+	}
+	ctx.normalizePaths(true)
 	syncMirrors(ctx)
 	if err = resolveSecretFiles(ctx); err != nil {
 		return NewUserInputError(err)
@@ -178,6 +188,9 @@ func (ctx *processingContext) configTarget(path fieldPath) (any, error) {
 }
 
 func (b command) loadConfigs(ctx *processingContext) error {
+	for _, entry := range ctx.ConfigFiles {
+		ctx.normalizePath(entry.mirror, false)
+	}
 	snapshots := snapshotPreallocatedStructs(ctx)
 	override := b.ConfigFormat
 	type loadedConfig struct {
@@ -191,6 +204,7 @@ func (b command) loadConfigs(ctx *processingContext) error {
 			if (entry.targetPath == "") != root || !entry.mirror.HasValue() {
 				continue
 			}
+			ctx.normalizePath(entry.mirror, false)
 			for _, file := range configFilePathsFromMirror(entry.mirror) {
 				if file == "" {
 					continue

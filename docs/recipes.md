@@ -12,6 +12,7 @@ The repository's complete examples live under `internal/example*` and are compil
 | [`example_readme_slices`](https://github.com/j0sh/boa/tree/main/internal/example_readme_slices) | Slice flags and arguments |
 | [`example_readme_conditional`](https://github.com/j0sh/boa/tree/main/internal/example_readme_conditional) | Conditional requirements |
 | [`example_readme_config_file`](https://github.com/j0sh/boa/tree/main/internal/example_readme_config_file) | Automatic JSON config loading |
+| [`example_basedir`](https://github.com/j0sh/boa/tree/main/internal/example_basedir) | Base directory for config and input files |
 | [`example_access_to_cobra`](https://github.com/j0sh/boa/tree/main/internal/example_access_to_cobra) | Cobra access from hooks |
 | [`example_raw_params_ctx`](https://github.com/j0sh/boa/tree/main/internal/example_raw_params_ctx) | Programmatic field policy |
 | [`example_custom_config_format`](https://github.com/j0sh/boa/tree/main/internal/example_custom_config_format) | Full custom format and key-presence probe |

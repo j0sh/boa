@@ -110,7 +110,7 @@ func resolveSecretFiles(ctx *processingContext) error {
 		if !secret.IsEnabled() || !file.IsEnabled() || secret.IsIgnored() || file.IsIgnored() {
 			continue
 		}
-		field, ok := ctx.resolveFieldValue(entry.secretPath)
+		_, ok := ctx.resolveFieldValue(entry.secretPath)
 		if !ok {
 			continue
 		}
@@ -133,14 +133,8 @@ func resolveSecretFiles(ctx *processingContext) error {
 		if err != nil {
 			return fmt.Errorf("secret file %q: %w", fileName, err)
 		}
-		// Update the field and mirror together so sync cannot restore an old value.
-		// Exact pointer scalars such as *url.URL already own their pointer semantics.
-		if meta, ok := secret.(*paramMeta); ok && meta.isPointer {
-			field.Set(reflect.New(field.Type().Elem()))
-			field = field.Elem()
-		}
-		reinterpretAs(field, secret.GetType()).Set(reflect.ValueOf(parsed).Elem())
-		secret.injectValuePtr(reinterpretAs(field, secret.GetType()).Addr().Interface())
+		ctx.storeValue(secret, reflect.ValueOf(parsed).Elem())
+		secret.injectValuePtr(secret.valuePtrF())
 		entry.appliedPath = path
 		entry.appliedValue = secretValueText(secret)
 	}

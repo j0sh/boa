@@ -151,5 +151,8 @@ func (ctx *processingContext) applyTags(param parameter, tags reflect.StructTag)
 		}
 		ctx.ConfigFiles = append(ctx.ConfigFiles, configFileEntry{mirror: param, targetPath: path})
 	}
+	if param.IsConfigFile() || hasFileTag(tags) {
+		ctx.pathParams = append(ctx.pathParams, param)
+	}
 	return nil
 }

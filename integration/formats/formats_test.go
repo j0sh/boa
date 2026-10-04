@@ -51,7 +51,7 @@ func TestPortableTextAndNativeDates(t *testing.T) {
 	}
 }
 
-var rejected = errors.New("limit must not exceed 10")
+var errRejected = errors.New("limit must not exceed 10")
 
 type yamlConfig struct {
 	Limit   int           `yaml:"limit"`
@@ -66,7 +66,7 @@ func (c *yamlConfig) UnmarshalYAML(node *yaml.Node) error {
 		return err
 	}
 	if c.Limit > 10 {
-		return rejected
+		return errRejected
 	}
 	return nil
 }
@@ -79,7 +79,7 @@ func TestYAMLValidationCannotBeBypassed(t *testing.T) {
 		if err == nil || c.Calls != 1 {
 			t.Fatalf("calls=%d error=%v", c.Calls, err)
 		}
-		if timeout == "2.5h" && !errors.Is(err, rejected) {
+		if timeout == "2.5h" && !errors.Is(err, errRejected) {
 			t.Fatalf("lost validation error: %v", err)
 		}
 	}
@@ -90,11 +90,11 @@ type tomlConfig struct {
 	Timeout time.Duration
 }
 
-func (c *tomlConfig) UnmarshalTOML(any) error { c.Calls++; return rejected }
+func (c *tomlConfig) UnmarshalTOML(any) error { c.Calls++; return errRejected }
 func TestTOMLValidationCannotBeBypassed(t *testing.T) {
 	var c tomlConfig
 	err := boa.LoadConfigBytes([]byte("limit = 11\ntimeout = \"2.5h\""), ".toml", &c, burnttoml.Unmarshal)
-	if err == nil || !strings.Contains(err.Error(), rejected.Error()) || c.Calls != 1 {
+	if err == nil || !strings.Contains(err.Error(), errRejected.Error()) || c.Calls != 1 {
 		t.Fatalf("calls=%d error=%v", c.Calls, err)
 	}
 }

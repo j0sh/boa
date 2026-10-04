@@ -33,6 +33,7 @@ BOA tracks whether a source supplied a value separately from the value itself. A
 | `min`, `max` | Numeric bound or collection/string length | `min:"1" max:"65535"` |
 | `pattern` | Regular expression for a string | `pattern:"^[a-z][a-z0-9-]*$"` |
 | `file` | Require an existing regular file | `file:"true"` |
+| `basedir` | Supply the base for relative file paths | `basedir:"required,autocreate"` |
 | `secret` | Hide and exclude a secret value from config | `secret:"true"` |
 | `secretfor` | Read a file into a sibling secret field | `secretfor:"Token"` |
 | `collection` | Slice occurrence mode: `slice` or `array` | `collection:"array"` |
@@ -186,6 +187,35 @@ type Params struct {
 ```
 
 `file:"true"` accepts string paths that resolve to existing regular files. Symlinks are followed. Validation of an absent optional pointer is skipped; when present, its pointed-to value is validated normally.
+
+## Base directories
+
+Use `basedir` on one string field per command to resolve `file`, `configfile`, and `secretfor` paths relative to that directory:
+
+```go
+type Params struct {
+    DataDir    string `basedir:"true" default:"." env:"APP_DATA_DIR"`
+    ConfigFile string `configfile:"true" default:"config.json"`
+    Input      string `file:"true" default:"input.txt"`
+}
+```
+
+`--data-dir /srv/app` makes those defaults `/srv/app/config.json` and `/srv/app/input.txt`. Paths read from config files use the same base. Absolute paths are unchanged.
+
+| Value | Behavior |
+|---|---|
+| `true` | Use the directory without checking that it exists |
+| `required` | Require an existing directory |
+| `autocreate` | Create the directory and missing parents before loading config |
+| `false` | Disable the tag |
+
+Combine options as `basedir:"required,autocreate"`. Directory creation runs only during command execution; help, completion, `Validate()`, and reload never create directories. With `required`, validation and reload fail if the directory is missing.
+
+The base directory cannot be set in config files or changed in PreValidate. A relative base uses the command's original working directory; an empty value uses that directory itself. BOA does not change the process's working directory.
+
+Add `persistent:"true"` to share the base with child commands. A child's own `basedir` field overrides it.
+
+See the [runnable example](https://github.com/j0sh/boa/tree/main/internal/example_basedir) and [programmatic equivalents](external-structs.md#tag-to-method-mapping).
 
 ## Secrets and secret files
 

@@ -156,6 +156,13 @@ type Parameter interface {
 	SetIgnored(bool)
 	IsConfigFile() bool
 	SetConfigFile(bool)
+	// Base-directory metadata must be configured during Init.
+	IsBaseDir() bool
+	SetBaseDir(bool)
+	IsBaseDirRequired() bool
+	SetBaseDirRequired(bool)
+	IsBaseDirAutoCreate() bool
+	SetBaseDirAutoCreate(bool)
 	GetDescription() string
 	SetDescription(string)
 	IsPositional() bool
@@ -222,20 +229,18 @@ type configFileEntry struct {
 // entries are the caller's responsibility to skip). Any other type indicates
 // a bug — the traversal-time guard should have rejected it already.
 func configFilePathsFromMirror(mirror parameter) []string {
-	ptr := mirror.valuePtrF()
-	switch v := ptr.(type) {
-	case *string:
-		if v == nil || *v == "" {
-			return nil
-		}
-		return []string{*v}
-	case *[]string:
-		if v == nil {
-			return nil
-		}
-		return *v
+	value := reflect.Indirect(reflect.ValueOf(mirror.valuePtrF()))
+	if !value.IsValid() || value.IsZero() {
+		return nil
 	}
-	return nil
+	if value.Kind() == reflect.String {
+		return []string{value.String()}
+	}
+	paths := make([]string, value.Len())
+	for i := range paths {
+		paths[i] = value.Index(i).String()
+	}
+	return paths
 }
 
 // fieldPath is the dot-separated sequence of struct-field declaration indices
@@ -312,7 +317,13 @@ type processingContext struct {
 	// SecretFiles links real secretfor path fields to their same-struct secret
 	// targets. Runtime state on each entry makes pre/post-PreValidate resolution
 	// idempotent without treating a derived secret as a direct-source conflict.
-	SecretFiles []secretFileEntry
+	SecretFiles      []secretFileEntry
+	baseDirProvider  *paramMeta
+	selectedBaseDir  *paramMeta
+	pathParams       []parameter
+	baseDir          baseDirState
+	inheritedBaseDir baseDirState
+	pathInvocation   *pathInvocation
 	// PreallocatedPtrs tracks struct pointer fields that were nil and got preallocated.
 	// Ordered depth-first (innermost first) so cleanup processes leaves before parents.
 	PreallocatedPtrs []preallocatedPtrInfo
@@ -375,6 +386,9 @@ func preallocateStructPtrs(ctx *processingContext, structPtr any, path []int) er
 			if isBoaIgnored(field) || isSupportedType(field.Type) {
 				continue
 			}
+			if tag, ok := field.Tag.Lookup("basedir"); ok && strings.TrimSpace(tag) != "false" {
+				return fmt.Errorf("basedir on field %s requires a string field", field.Name)
+			}
 			current := value.Field(i)
 			childPath := append(slices.Clone(path), i)
 			allocated := false
@@ -415,25 +429,13 @@ func cleanupPreallocatedPtrs(ctx *processingContext) {
 			continue
 		}
 
-		structPtr := field.Interface()
-		anySet := false
-
-		// Check if this struct was explicitly mentioned in a config file
-		if ctx.ConfigPresentPtrs[info.path] {
-			anySet = true
-		}
-
-		// Walk the struct's fields and check if any mirror was explicitly set.
-		// Use the preallocation's recorded path so we resolve via mirrorByPath.
-		if !anySet {
-			collectAndCheck(ctx, structPtr, splitPath(info.path), &anySet)
-		}
+		anySet := ctx.groupHasInput(info.path)
 
 		if !anySet {
 			// Check if any nested struct pointer survived cleanup (is still non-nil).
 			// This handles the case where a deeply nested field was set, which keeps
 			// the nested ptr alive — the parent should also survive.
-			structVal := reflect.ValueOf(structPtr).Elem()
+			structVal := field.Elem()
 			for i := 0; i < structVal.NumField(); i++ {
 				f := structVal.Field(i)
 				if f.Kind() == reflect.Pointer && !f.IsNil() && f.Elem().Kind() == reflect.Struct {
@@ -581,53 +583,20 @@ func markAllMirrorsInSubtree(ctx *processingContext, structPtr any, path []int) 
 	}
 }
 
-// collectAndCheck walks a struct's fields and checks if any mirror was explicitly set
-// by the user (CLI, env var, or config file). Default values alone don't count.
-// path is the path-from-root of structPtr (empty for root).
-func collectAndCheck(ctx *processingContext, structPtr any, path []int, anySet *bool) {
-	val := reflect.ValueOf(structPtr).Elem()
-	typ := val.Type()
-	for i := 0; i < typ.NumField(); i++ {
-		if *anySet {
-			return
-		}
-		field := typ.Field(i)
-		if isBoaIgnored(field) {
-			continue
-		}
-		childPath := append(append([]int(nil), path...), i)
-		fieldVal := val.Field(i)
-		if isSupportedType(field.Type) {
-			if mirror, ok := ctx.mirrorByPath[joinPath(childPath)]; ok {
-				pm, isPM := mirror.(*paramMeta)
-				// A mirror marked ignored (the programmatic equivalent of
-				// `boa:"ignore"`) must not keep a substruct pointer alive,
-				// even if CLI/env/config-side state slipped through earlier.
-				// Parallels the tag path, where the mirror never exists.
-				if isPM && pm.ignored {
-					continue
-				}
-				if mirror.wasSetOnCli() || mirror.wasSetByEnv() {
-					*anySet = true
-					return
-				}
-				if isPM && pm.setByConfig {
-					*anySet = true
-					return
-				}
+// groupHasInput excludes defaults and ignores fields in cleared pointer groups.
+// The same presence rule governs cleanup and early base-directory requiredness.
+func (ctx *processingContext) groupHasInput(group fieldPath) bool {
+	if ctx.ConfigPresentPtrs[group] {
+		return true
+	}
+	for path, param := range ctx.mirrorByPath {
+		if path.hasSubtreePrefix(group) && !param.IsIgnored() {
+			if _, live := ctx.resolveFieldValue(path); live && (param.wasSetOnCli() || param.wasSetByEnv() || param.(*paramMeta).setByConfig) {
+				return true
 			}
-			continue
-		}
-		// Recurse into non-pointer structs
-		if field.Type.Kind() == reflect.Struct {
-			collectAndCheck(ctx, fieldVal.Addr().Interface(), childPath, anySet)
-			continue
-		}
-		// Recurse into non-nil pointer structs
-		if field.Type.Kind() == reflect.Pointer && !fieldVal.IsNil() && field.Type.Elem().Kind() == reflect.Struct {
-			collectAndCheck(ctx, fieldVal.Interface(), childPath, anySet)
 		}
 	}
+	return false
 }
 
 // removeMirrorsForSubtree removes all mirrors whose path is equal to or descends from
@@ -1431,7 +1400,11 @@ func traverseAt(
 				pathKey := joinPath(childPath)
 				var ok bool
 				if param, ok = ctx.mirrorByPath[pathKey]; !ok {
-					param = newParam(&field, field.Type)
+					var err error
+					param, err = newParam(&field, field.Type)
+					if err != nil {
+						return err
+					}
 					// Set prefix for named struct nesting, and stash the path
 					// key on the mirror so callers that have a *paramMeta can
 					// read it without scanning pathOrder.
@@ -1699,9 +1672,11 @@ func (b command) toCobraBase() (*cobra.Command, *processingContext, error) {
 
 	// build mirrors
 	if b.Params != nil {
-		_ = traverse(ctx, b.Params, nil, func(innerParams any) error {
+		if err := traverse(ctx, b.Params, nil, func(innerParams any) error {
 			return nil
-		})
+		}); err != nil {
+			return nil, nil, err
+		}
 	}
 
 	syncMirrors(ctx)
@@ -1805,6 +1780,16 @@ func (b command) toCobraBase() (*cobra.Command, *processingContext, error) {
 		}
 
 		for _, param := range processed {
+			if param.IsBaseDir() && !param.IsIgnored() {
+				meta := param.(*paramMeta)
+				if meta.GetKind() != reflect.String || meta.IsConfigFile() || slices.Contains(ctx.pathParams, param) || meta.secretName != "" {
+					return nil, nil, fmt.Errorf("basedir %s requires a string field without file, configfile, secret, or secretfor", param.GetName())
+				}
+				if ctx.baseDirProvider != nil {
+					return nil, nil, fmt.Errorf("multiple basedir fields: %s and %s", ctx.baseDirProvider.GetName(), param.GetName())
+				}
+				ctx.baseDirProvider = meta
+			}
 			if param.isPersistent() {
 				hasPersistentParams = true
 			}
@@ -1926,12 +1911,13 @@ func (b command) toCobraBase() (*cobra.Command, *processingContext, error) {
 		}
 	}
 
-	paramPipeline := func(cmd *cobra.Command, args []string) error {
-		if isCompletionCommand(cmd) {
+	paramPipeline := func(executed *cobra.Command, args []string) error {
+		if isCompletionCommand(executed) {
 			return nil
 		}
-		b.prepareReload(ctx, cmd, args)
-		return b.loadAndValidate(ctx, cmd, args)
+		ctx.beginPathInvocation(executed, cmd)
+		b.prepareReload(ctx, executed, args)
+		return b.loadAndValidate(ctx, executed, args, !b.validateOnly && !isCompletionCommand(executed))
 	}
 
 	if hasPersistentParams {
@@ -2104,6 +2090,25 @@ func reinterpretAs(rawFieldVal reflect.Value, target reflect.Type) reflect.Value
 	return reflect.NewAt(target, rawFieldVal.Addr().UnsafePointer()).Elem()
 }
 
+// storeValue writes a typed field and an independent mirror, preserving source
+// flags. Keeping separate storage lets CLI/env values survive config decoding.
+func (ctx *processingContext) storeValue(param parameter, value reflect.Value) {
+	meta := param.(*paramMeta)
+	field, ok := ctx.resolveFieldValue(meta.pathKey)
+	if !ok {
+		return
+	}
+	if meta.isPointer {
+		field.Set(reflect.New(field.Type().Elem()))
+		field = field.Elem()
+	}
+	value = value.Convert(param.GetType())
+	reinterpretAs(field, param.GetType()).Set(value)
+	ptr := reflect.New(param.GetType())
+	ptr.Elem().Set(value)
+	param.setValuePtr(ptr.Interface())
+}
+
 func syncMirrors(ctx *processingContext) {
 	// 1. First, copy non-zero values from the raw fields -> mirrors as injected values.
 	// 2. Then copy back cli & env set values to the raw fields
@@ -2267,7 +2272,7 @@ func normalizeType(t reflect.Type) reflect.Type {
 	return t
 }
 
-func newParam(field *reflect.StructField, t reflect.Type) parameter {
+func newParam(field *reflect.StructField, t reflect.Type) (parameter, error) {
 	// Determine if this is a pointer-to-value field (e.g., *string, *int)
 	// Exact registered pointer types own their pointer semantics.
 	isPtr := t.Kind() == reflect.Pointer && exactTypeHandlers[t] == nil
@@ -2303,13 +2308,22 @@ func newParam(field *reflect.StructField, t reflect.Type) parameter {
 	if field.Tag.Get("secret") == "true" {
 		secretName = field.Name
 	}
+	var baseDir baseDirOptions
+	if value, ok := field.Tag.Lookup("basedir"); ok {
+		var err error
+		baseDir, err = parseBaseDirTag(value)
+		if err != nil {
+			return nil, fmt.Errorf("basedir on field %s: %w", field.Name, err)
+		}
+	}
 	return &paramMeta{
 		fieldType:       valueType,
 		isPointer:       isPtr,
 		defaultRequired: isRequired,
 		noConfig:        slices.Contains(getBoaTags(*field), "noconfig") || field.Tag.Get("secret") == "true",
 		secretName:      secretName,
-	}
+		baseDir:         baseDir,
+	}, nil
 }
 
 var timeType = reflect.TypeOf(time.Time{})

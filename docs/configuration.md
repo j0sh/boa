@@ -21,7 +21,11 @@ The path itself can come from a flag, environment variable, or default. An empty
 CLI > environment > root config > nested config > default > zero value
 ```
 
-Use `boa:"configonly"` for fields that should still be mirrored and validated but must not be exposed through flags or environment variables. Use `boa:"noconfig"` for fields that may be available from other sources but should cause an error when present in a config file. `secret:"true"` implies `noconfig`; a real sibling field tagged `secretfor:"FieldName"` may hold a file path in config without exposing the secret itself. Use `boa:"ignore"` for opaque data the decoder may populate but BOA should not process.
+Use [`basedir`](struct-tags.md#base-directories) to set a common directory for relative paths.
+
+`boa:"configonly"` disables flags and environment variables for a field while keeping config loading and validation. `boa:"noconfig"` rejects config files that contain the field. `boa:"ignore"` leaves the field to the config decoder, with no flags, environment variables, or BOA validation.
+
+Fields marked `secret:"true"` cannot appear in config files. To store a path to a secret file instead, add a string field in the same struct tagged `secretfor:"FieldName"`, where `FieldName` names the secret field. See [Secrets and secret files](struct-tags.md#secrets-and-secret-files) for examples.
 
 ## Rejecting unknown fields
 

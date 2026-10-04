@@ -48,6 +48,8 @@ A reload:
 
 The saved invocation is independent of later changes to `os.Args`. Reload does not route through child commands or reparent the original Cobra tree. Calls through the same `HookContext` are serialized.
 
+With [`basedir`](struct-tags.md#base-directories), reload uses the original working directory and keeps any base directory inherited from a parent command.
+
 On a returned error, `Reload` returns `(nil, err)` and the caller should keep the previous snapshot. Setup and PreValidate hooks may affect external systems; those effects cannot be rolled back. Panics from application hooks or invalid API use are not recovered.
 
 ## Hook behavior on reload
