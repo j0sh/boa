@@ -1927,6 +1927,9 @@ func (b command) toCobraBase() (*cobra.Command, *processingContext, error) {
 	}
 
 	paramPipeline := func(cmd *cobra.Command, args []string) error {
+		if isCompletionCommand(cmd) {
+			return nil
+		}
 		b.prepareReload(ctx, cmd, args)
 		return b.loadAndValidate(ctx, cmd, args)
 	}
@@ -1942,6 +1945,16 @@ func (b command) toCobraBase() (*cobra.Command, *processingContext, error) {
 	}
 
 	return cmd, ctx, nil
+}
+
+func isCompletionCommand(cmd *cobra.Command) bool {
+	for current := cmd; current != nil; current = current.Parent() {
+		switch current.Name() {
+		case cobra.ShellCompRequestCmd, cobra.ShellCompNoDescRequestCmd, "completion":
+			return true
+		}
+	}
+	return false
 }
 
 // validateRunFuncs checks that at most one run function is set and returns an error if more than one is configured.

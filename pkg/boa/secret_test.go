@@ -95,7 +95,7 @@ func TestSecretFor_SourcesAndExactContents(t *testing.T) {
 func TestSecret_DirectEnvironmentAndHiddenFlag(t *testing.T) {
 	type Params struct {
 		Token     string `secret:"true" env:"BOA_SECRET_DIRECT_TOKEN" descr:"API token"`
-		TokenFile string `secretfor:"Token"`
+		TokenFile string `secretfor:"Token" persistent:"true"`
 	}
 
 	t.Setenv("BOA_SECRET_DIRECT_TOKEN", "direct")
@@ -126,6 +126,48 @@ func TestSecret_DirectEnvironmentAndHiddenFlag(t *testing.T) {
 	}
 	if strings.Contains(usage, "--token string") || strings.Contains(usage, "direct") {
 		t.Errorf("direct secret flag or value appeared in help:\n%s", usage)
+	}
+
+	cmd.PreValidateFunc = func(*Params, *cobra.Command, []string) error {
+		return NewUserInputErrorf("completion ran PreValidate")
+	}
+	missing := filepath.Join(t.TempDir(), "missing")
+	secretFile := writeSecretTestFile(t, "token", []byte("from-file"))
+	for _, source := range []struct{ name, token, path string }{
+		{"missing file", "", missing},
+		{"conflicting sources", "direct", secretFile},
+		{"valid file", "", secretFile},
+	} {
+		for _, completion := range []struct {
+			args []string
+			want string
+		}{
+			{[]string{cobra.ShellCompRequestCmd, "--token-f"}, "--token-file\n:4\n"},
+			{[]string{cobra.ShellCompNoDescRequestCmd, "--token-f"}, "--token-file\n:4\n"},
+			{[]string{"completion", "bash"}, cobra.ShellCompRequestCmd},
+			{[]string{"completion", "zsh"}, cobra.ShellCompRequestCmd},
+			{[]string{"completion", "fish"}, cobra.ShellCompRequestCmd},
+			{[]string{"completion", "powershell"}, cobra.ShellCompRequestCmd},
+		} {
+			t.Run(source.name+"/"+strings.Join(completion.args, " "), func(t *testing.T) {
+				t.Setenv("BOA_SECRET_DIRECT_TOKEN", source.token)
+				cmd.Params = &Params{TokenFile: source.path}
+				cobraCmd := cmd.ToCobra()
+				var output strings.Builder
+				cobraCmd.SetOut(&output)
+				cobraCmd.SetErr(&strings.Builder{})
+				cobraCmd.SetArgs(completion.args)
+				if err := cobraCmd.Execute(); err != nil {
+					t.Fatalf("completion failed: %v", err)
+				}
+				if !strings.Contains(output.String(), completion.want) {
+					t.Fatalf("completion output = %q, want %q", output.String(), completion.want)
+				}
+				if cmd.Params.Token != "" {
+					t.Fatal("completion loaded a secret")
+				}
+			})
+		}
 	}
 }
 
