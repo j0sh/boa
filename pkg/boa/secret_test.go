@@ -279,13 +279,23 @@ func TestSecretFor_Conflicts(t *testing.T) {
 func TestSecretFor_FileErrorsAreUserInput(t *testing.T) {
 	type Params struct {
 		Token     string `secret:"true"`
-		TokenFile string `secretfor:"Token"`
+		TokenFile string `secretfor:"Token" file:"optional"`
 	}
 	for _, path := range []string{filepath.Join(t.TempDir(), "missing"), t.TempDir()} {
-		err := (Cmd[Params]{Use: "test", RunFunc: func(*Params, *cobra.Command, []string) {}}).
+		err := (Cmd[Params]{Use: "test", RunFunc: func(*Params, *cobra.Command, []string) {}, InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
+			file := Param(ctx, &p.TokenFile)
+			file.SetFile(false)
+			file.SetFileOptional(true)
+			if !file.IsFile() || file.IsFileOptional() {
+				t.Fatal("secretfor setters must remain strict")
+			}
+			return nil
+		}}).
 			RunArgsE([]string{"--token-file", path})
-		if err == nil || !IsUserInputError(err) || !strings.Contains(err.Error(), path) {
-			t.Fatalf("path %q: expected identifying UserInputError, got %v", path, err)
+		if filepath.Base(path) == "missing" {
+			assertUserInputError(t, err, os.ErrNotExist, "token-file", path)
+		} else {
+			assertUserInputError(t, err, nil, "token-file", path, "regular file")
 		}
 	}
 }

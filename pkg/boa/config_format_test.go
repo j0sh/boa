@@ -6,6 +6,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"slices"
 	"sort"
 	"strconv"
 	"strings"
@@ -531,75 +532,39 @@ func TestCustomConfigFormat_CmdConfigFormatOverridesExtension(t *testing.T) {
 	}
 }
 
-// TestCustomConfigFormat_MultipleFormatsOneBinary covers the headline scenario:
-// a single compiled program registers a non-JSON format at init/startup and
-// is then able to load EITHER a .json or a .fmtMulti file — picked per-run by
-// --config-file extension — with no per-command override and no code changes
-// between deployments.
-func TestCustomConfigFormat_MultipleFormatsOneBinary(t *testing.T) {
-	registerFormatCleanup(t, ".fmtMulti", ConfigFormat{
-		Unmarshal: fakeUnmarshal,
-		KeyTree:   fakeKeyTree,
-	})
-
+func TestConfigFile_PointerPrecedence(t *testing.T) {
 	type Inner struct {
-		Host string `descr:"host" default:"localhost"`
-		Port int    `descr:"port" default:"5432"`
+		Host string `default:"localhost"`
+		Port int    `default:"5432"`
 	}
 	type Params struct {
 		ConfigFile string `configfile:"true" optional:"true"`
 		DB         *Inner
+		Count      *int `env:"BOA_POINTER_COUNT"`
 	}
-
-	newCmd := func(captured **Inner, ctxCapture *bool, _ **HookContext) Cmd[Params] {
-		return Cmd[Params]{
-			Use:         "test",
-			ParamEnrich: ParamEnricherName,
-			RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
-				*captured = p.DB
-				if p.DB != nil {
-					*ctxCapture = ctx.HasValue(&p.DB.Host) && ctx.HasValue(&p.DB.Port)
-				}
-			},
-		}
-	}
-
-	dir := t.TempDir()
-
-	// Pass 1: load a .json file. Uses the built-in JSON handler, including its KeyTree.
-	jsonPath := filepath.Join(dir, "cfg.json")
-	if err := os.WriteFile(jsonPath, []byte(`{"DB":{"Host":"","Port":5432}}`), 0o644); err != nil {
-		t.Fatalf("write json: %v", err)
-	}
-	var gotDB *Inner
-	var ctxHasBoth bool
-	if err := newCmd(&gotDB, &ctxHasBoth, nil).RunArgsE([]string{"--config-file", jsonPath}); err != nil {
-		t.Fatalf("json run: %v", err)
-	}
-	if gotDB == nil {
-		t.Fatal("json run: expected DB pointer group to survive (KeyTree detects zero-value + default writes)")
-	}
-	if !ctxHasBoth {
-		t.Error("json run: expected both DB.Host and DB.Port to report HasValue=true")
-	}
-
-	// Pass 2: SAME command struct, same process, different file extension.
-	// Dispatch goes through the registered .fmtMulti handler — no per-command
-	// override, no rebuild, just a different --config-file argument.
-	altPath := filepath.Join(dir, "cfg.fmtMulti")
-	if err := os.WriteFile(altPath, []byte(`{"DB":{"Host":"","Port":5432}}`), 0o644); err != nil {
-		t.Fatalf("write alt: %v", err)
-	}
-	gotDB = nil
-	ctxHasBoth = false
-	if err := newCmd(&gotDB, &ctxHasBoth, nil).RunArgsE([]string{"--config-file", altPath}); err != nil {
-		t.Fatalf("alt run: %v", err)
-	}
-	if gotDB == nil {
-		t.Fatal("alt run: expected DB pointer group to survive under registered custom format")
-	}
-	if !ctxHasBoth {
-		t.Error("alt run: expected both DB.Host and DB.Port to report HasValue=true via custom KeyTree")
+	path := writeFile(t, t.TempDir(), "config.json", `{"DB":{"Host":"","Port":5432},"Count":1}`)
+	for _, tc := range []struct {
+		name, env string
+		args      []string
+		want      int
+	}{
+		{name: "config", want: 1},
+		{name: "env", env: "2", want: 2},
+		{name: "CLI zero", env: "2", args: []string{"--count", "0"}, want: 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Setenv("BOA_POINTER_COUNT", tc.env)
+			var p Params
+			var hasBoth bool
+			err := (Cmd[Params]{Params: &p, RejectUnknown: true,
+				RunFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command, _ []string) {
+					hasBoth = p.DB != nil && ctx.HasValue(&p.DB.Host) && ctx.HasValue(&p.DB.Port)
+				},
+			}).RunArgsE(append([]string{"--config-file", path}, tc.args...))
+			if err != nil || !hasBoth || p.DB.Host != "" || p.DB.Port != 5432 || p.Count == nil || *p.Count != tc.want {
+				t.Fatalf("params=%+v presence=%v error=%v, want Count=%d and explicit DB fields", p, hasBoth, err, tc.want)
+			}
+		})
 	}
 }
 
@@ -1732,4 +1697,154 @@ func TestConfigFile_Deep_MiniKV_PartialPayload(t *testing.T) {
 		[]string{"port", "tls"},
 		[]string{"app_name", "svc_name", "retries", "host", "origins", "labels"},
 	)
+}
+
+func TestOptionalConfigFile(t *testing.T) {
+	type Params struct {
+		Dir    string `basedir:"true"`
+		Config string `configfile:"optional-default" default:"config.json" env:"BOA_OPTIONAL_CONFIG"`
+		Value  string `optional:"true"`
+	}
+	for _, tc := range []struct {
+		name, contents, env, want string
+		args                      []string
+		wantError                 string
+	}{
+		{name: "missing default"},
+		{name: "missing CLI", args: []string{"--config", "other.json"}, wantError: "other.json"},
+		{name: "missing env", env: "other.json", wantError: "other.json"},
+		{name: "explicit default CLI", args: []string{"--config", "./config.json"}},
+		{name: "explicit default env", env: "config.json"},
+		{name: "disable", args: []string{"--config="}},
+		{name: "present", contents: `{"Value":"config"}`, want: "config"},
+		{name: "CLI precedence", contents: `{"Value":"config"}`, want: "cli", args: []string{"--value", "cli"}},
+		{name: "invalid", contents: `{`, wantError: "unexpected EOF"},
+		{name: "unknown", contents: `{"Unknown":1}`, wantError: `unknown config field "Unknown"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			t.Setenv("BOA_OPTIONAL_CONFIG", tc.env)
+			if tc.contents != "" {
+				writeFile(t, dir, "config.json", tc.contents)
+			}
+			cmd := (Cmd[Params]{RejectUnknown: true, RunFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command, _ []string) {
+				if p.Value != tc.want {
+					t.Fatalf("value=%q; want %q", p.Value, tc.want)
+				}
+				var want []string
+				if tc.contents != "" {
+					want = []string{filepath.Join(dir, "config.json")}
+				}
+				if !slices.Equal(ctx.WatchedConfigFiles(), want) {
+					t.Fatalf("watched=%v; want %v", ctx.WatchedConfigFiles(), want)
+				}
+			}}).ToCobra()
+			cmd.SetArgs(append([]string{"--dir", dir}, tc.args...))
+			for range 2 {
+				err := cmd.Execute()
+				if tc.wantError == "" {
+					baseDirOK(t, err)
+				} else if tc.contents == "" {
+					assertUserInputError(t, err, os.ErrNotExist, "configfile config", filepath.Join(dir, tc.wantError))
+				} else {
+					assertUserInputError(t, err, nil, "configfile config", filepath.Join(dir, "config.json"), tc.wantError)
+				}
+			}
+		})
+	}
+	t.Run("absolute explicit default without base", func(t *testing.T) {
+		type Params struct {
+			Config string `configfile:"true,optional-default" default:"./absent.json"`
+		}
+		dir := t.TempDir()
+		t.Chdir(dir)
+		if err := (Cmd[Params]{RawArgs: []string{"--config", filepath.Join(dir, "absent.json")}}).Validate(); err != nil {
+			t.Fatal(err)
+		}
+	})
+}
+
+func TestConfigFile_SelectedByConfig(t *testing.T) {
+	type Params struct {
+		Dir   string   `basedir:"true"`
+		First string   `configfile:"true"`
+		Next  []string `env:"BOA_CONFIG_NEXT" optional:"true"`
+		Value string   `default:"fallback"`
+	}
+	for _, tc := range []struct {
+		name, next, env, want string
+		args                  []string
+		noDefault, noBase     bool
+		wantError             string
+	}{
+		{name: "existing", next: `["next.json"]`, want: "loaded"},
+		{name: "without default", next: `["next.json"]`, noDefault: true, want: "loaded"},
+		{name: "default overlay", next: `["absent.json","next.json"]`, want: "loaded"},
+		{name: "explicit default", next: `["./absent.json"]`, want: "fallback"},
+		{name: "empty", next: `[]`, want: "fallback"},
+		{name: "missing", next: `["other.json"]`, wantError: "other.json"},
+		{name: "missing without base", next: `["other.json"]`, noBase: true, wantError: "other.json"},
+		{name: "no default missing", next: `["absent.json"]`, noDefault: true, wantError: "absent.json"},
+		{name: "directory", next: `["."]`, wantError: "."},
+		{name: "CLI precedence", next: `["other.json"]`, args: []string{"--next", "next.json"}, want: "loaded"},
+		{name: "env precedence", next: `["other.json"]`, env: "next.json", want: "loaded"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tc.noBase {
+				t.Chdir(dir)
+			}
+			first := writeFile(t, dir, "first.json", `{"Next":`+tc.next+`}`)
+			next := writeFile(t, dir, "next.json", `{"Value":"loaded"}`)
+			t.Setenv("BOA_CONFIG_NEXT", tc.env)
+			var p Params
+			var watched []string
+			cmd := Cmd[Params]{Params: &p, InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
+				Param(ctx, &p.Next).SetConfigFileOptionalDefault(true)
+				if tc.noBase {
+					Param(ctx, &p.Dir).SetBaseDir(false)
+				}
+				if !tc.noDefault {
+					Param(ctx, &p.Next).SetDefault([]string{"absent.json"})
+				}
+				return nil
+			}, RunFuncCtx: func(ctx *HookContext, _ *Params, _ *cobra.Command, _ []string) { watched = ctx.WatchedConfigFiles() }}
+			err := cmd.RunArgsE(append([]string{"--dir", dir, "--first", first}, tc.args...))
+			if tc.wantError != "" {
+				if tc.wantError == "." {
+					assertUserInputError(t, err, nil, "configfile next", dir, "regular file")
+				} else {
+					path := tc.wantError
+					if !tc.noBase {
+						path = resolvePath(dir, path)
+					}
+					assertUserInputError(t, err, os.ErrNotExist, "configfile next", path)
+				}
+				return
+			}
+			baseDirOK(t, err)
+			want := []string{first}
+			if tc.want == "loaded" {
+				want = append(want, next)
+			}
+			if p.Value != tc.want || !slices.Equal(watched, want) {
+				t.Fatalf("params=%+v watched=%v; want value=%s files=%v", p, watched, tc.want, want)
+			}
+		})
+	}
+}
+
+func TestOptionalConfig_Unreadable(t *testing.T) {
+	type Params struct {
+		Config string `configfile:"optional"`
+	}
+	path := writeFile(t, t.TempDir(), "config.json", `{}`)
+	if err := os.Chmod(path, 0); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+	if _, err := os.ReadFile(path); err == nil {
+		t.Skip("process can read files without read permission")
+	}
+	assertUserInputError(t, (Cmd[Params]{RawArgs: []string{"--config", path}}).Validate(), os.ErrPermission, "configfile config", path, "failed to read config file")
 }

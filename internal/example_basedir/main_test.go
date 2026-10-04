@@ -24,7 +24,7 @@ func TestRelativeConfigAndInput(t *testing.T) {
 
 func TestCreateEmptyBase(t *testing.T) {
 	base := filepath.Join(t.TempDir(), "new", "data")
-	if err := command(&bytes.Buffer{}).RunArgsE([]string{"--data-dir", base, "--config-file="}); err != nil {
+	if err := command(&bytes.Buffer{}).RunArgsE([]string{"--data-dir", base}); err != nil {
 		t.Fatal(err)
 	}
 	info, err := os.Stat(base)

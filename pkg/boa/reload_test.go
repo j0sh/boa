@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -550,5 +551,57 @@ func TestReload_TypeMismatchProducesClearError(t *testing.T) {
 	}
 	if !strings.Contains(reloadErr.Error(), "not *") {
 		t.Errorf("expected type mismatch hint, got: %v", reloadErr)
+	}
+}
+
+func TestOptionalConfig_Reload(t *testing.T) {
+	type Params struct {
+		Dir     string `basedir:"true"`
+		Config  string `default:"optional.json"`
+		Default string `default:"config.json" env:"BOA_RELOAD_DEFAULT"`
+		Value   string `default:"fallback"`
+	}
+	t.Setenv("BOA_RELOAD_DEFAULT", "")
+	dir := t.TempDir()
+	cmd := Cmd[Params]{InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
+		Param(ctx, &p.Config).SetConfigFileOptional(true)
+		Param(ctx, &p.Default).SetConfigFileOptionalDefault(true)
+		return nil
+	}, RunFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command, _ []string) {
+		if p.Value != "fallback" || len(ctx.WatchedConfigFiles()) != 0 {
+			t.Fatal("missing config was loaded")
+		}
+		for _, name := range []string{"optional.json", "config.json"} {
+			path := writeFile(t, dir, name, `{"Value":"loaded"}`)
+			fresh, err := Reload[Params](ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fresh.Value != "loaded" || !slices.Equal(ctx.WatchedConfigFiles(), []string{path}) {
+				t.Fatalf("reload=%+v watched=%v", fresh, ctx.WatchedConfigFiles())
+			}
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+			fresh, err = Reload[Params](ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if fresh.Value != "fallback" || len(ctx.WatchedConfigFiles()) != 0 {
+				t.Fatalf("reload=%+v watched=%v", fresh, ctx.WatchedConfigFiles())
+			}
+			writeFile(t, dir, name, `{`)
+			_, err = Reload[Params](ctx)
+			assertUserInputError(t, err, nil, path, "failed to unmarshal config file", "unexpected EOF")
+			if err := os.Remove(path); err != nil {
+				t.Fatal(err)
+			}
+		}
+		t.Setenv("BOA_RELOAD_DEFAULT", "other.json")
+		_, err := Reload[Params](ctx)
+		assertUserInputError(t, err, os.ErrNotExist, "configfile default", filepath.Join(dir, "other.json"))
+	}}
+	if err := cmd.RunArgsE([]string{"--dir", dir}); err != nil {
+		t.Fatal(err)
 	}
 }

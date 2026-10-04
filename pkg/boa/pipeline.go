@@ -1,8 +1,13 @@
 package boa
 
 import (
+	"cmp"
+	"errors"
 	"fmt"
+	"os"
+	"path/filepath"
 	"reflect"
+	"slices"
 
 	"github.com/spf13/cobra"
 )
@@ -201,13 +206,43 @@ func (b command) loadConfigs(ctx *processingContext) error {
 	// Root files override nested files; each list of paths overlays left to right.
 	for _, root := range []bool{false, true} {
 		for _, entry := range ctx.ConfigFiles {
-			if (entry.targetPath == "") != root || !entry.mirror.HasValue() {
+			if (entry.targetPath == "") != root {
+				continue
+			}
+			// Earlier files can supply or clear a later config path, including
+			// one without a default. CLI/env selections keep their priority.
+			if p := entry.mirror; !p.wasSetOnCli() && !p.wasSetByEnv() {
+				field, _ := ctx.resolveFieldValue(p.(*paramMeta).pathKey)
+				field = reflect.Indirect(field)
+				if !field.IsValid() {
+					continue
+				}
+				if !field.IsZero() || p.HasValue() {
+					p.injectValuePtr(reinterpretAs(field, p.GetType()).Addr().Interface())
+				}
+			}
+			if !entry.mirror.HasValue() {
 				continue
 			}
 			ctx.normalizePath(entry.mirror, false)
-			for _, file := range configFilePathsFromMirror(entry.mirror) {
+
+			for _, file := range configFilePaths(entry.mirror.valuePtrF()) {
 				if file == "" {
 					continue
+				}
+				if err := validateFile(file); err != nil {
+					optional := entry.mirror.IsConfigFileOptional()
+					if entry.mirror.IsConfigFileOptionalDefault() {
+						base := cmp.Or(ctx.baseDir.dir, ctx.pathInvocation.directory)
+						optional = slices.ContainsFunc(configFilePaths(entry.mirror.defaultValuePtr()), func(path string) bool {
+							return path != "" && filepath.Clean(resolvePath(base, path)) == filepath.Clean(resolvePath(base, file))
+						})
+					}
+					if errors.Is(err, os.ErrNotExist) && optional {
+						continue
+					}
+					syncMirrors(ctx)
+					return NewUserInputError(fmt.Errorf("configfile %s: %w", entry.mirror.GetName(), err))
 				}
 				target, err := ctx.configTarget(entry.targetPath)
 				if err != nil {
@@ -219,8 +254,19 @@ func (b command) loadConfigs(ctx *processingContext) error {
 					}
 					return ctx.noConfig(path, sf)
 				}
+				// Isolate decoder writes, including private scalar storage, from CLI/env values.
+				seen := make(map[configCopyKey]reflect.Value)
+				for _, path := range ctx.pathOrder {
+					param := ctx.mirrorByPath[path]
+					if !param.IsIgnored() && (param.wasSetOnCli() || param.wasSetByEnv()) {
+						if field, ok := ctx.resolveFieldValue(path); ok {
+							field.Set(cloneConfigValue(field, seen))
+						}
+					}
+				}
 				present, err := loadConfigFileInto(file, target, override, predicate, b.RejectUnknown)
 				if err != nil {
+					syncMirrors(ctx)
 					return NewUserInputError(fmt.Errorf("configfile %s: %w", entry.mirror.GetName(), err))
 				}
 				loaded = append(loaded, loadedConfig{entry.targetPath, present})

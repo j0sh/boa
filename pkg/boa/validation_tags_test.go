@@ -1,123 +1,167 @@
 package boa
 
 import (
+	"errors"
+	"net"
 	"os"
 	"path/filepath"
+	"reflect"
 	"strings"
+	"syscall"
 	"testing"
 
 	"github.com/spf13/cobra"
 )
 
+func assertUserInputError(t *testing.T, err, cause error, want ...string) {
+	t.Helper()
+	if !IsUserInputError(err) || cause != nil && !errors.Is(err, cause) {
+		t.Fatalf("expected UserInputError wrapping %v, got: %v", cause, err)
+	}
+	for _, text := range want {
+		if !strings.Contains(err.Error(), text) {
+			t.Fatalf("expected error containing %q, got: %v", text, err)
+		}
+	}
+}
+
 func TestValidationTag_File(t *testing.T) {
-	type Params struct {
-		Input string `file:"true"`
-	}
-
-	run := func(path string) error {
-		return (Cmd[Params]{
-			Use:         "test",
-			ParamEnrich: ParamEnricherName,
-			RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
-		}).RunArgsE([]string{"--input", path})
-	}
-
 	dir := t.TempDir()
-	regular := filepath.Join(dir, "input.txt")
-	if err := os.WriteFile(regular, []byte("input"), 0o600); err != nil {
-		t.Fatalf("write regular file: %v", err)
+	regular := writeFile(t, dir, "input", "{}")
+	type pathCase struct {
+		name, path, message string
+		cause               error
 	}
-
-	t.Run("regular file", func(t *testing.T) {
-		if err := run(regular); err != nil {
-			t.Fatalf("expected regular file to pass validation, got: %v", err)
-		}
-	})
-
-	t.Run("symlink to regular file", func(t *testing.T) {
-		link := filepath.Join(dir, "input-link")
-		if err := os.Symlink(regular, link); err != nil {
-			t.Skipf("symlinks unavailable: %v", err)
-		}
-		if err := run(link); err != nil {
-			t.Fatalf("expected symlink to regular file to pass validation, got: %v", err)
-		}
-	})
-
-	t.Run("missing file", func(t *testing.T) {
-		missing := filepath.Join(dir, "missing.txt")
-		err := run(missing)
-		if err == nil {
-			t.Fatal("expected missing file to fail validation")
-		}
-		if !IsUserInputError(err) {
-			t.Fatalf("expected UserInputError, got %T: %v", err, err)
-		}
-		if !strings.Contains(err.Error(), "input") || !strings.Contains(err.Error(), missing) {
-			t.Errorf("expected error to identify the parameter and path, got: %v", err)
-		}
-	})
-
-	t.Run("directory", func(t *testing.T) {
-		err := run(dir)
-		if err == nil {
-			t.Fatal("expected directory to fail validation")
-		}
-		if !IsUserInputError(err) {
-			t.Fatalf("expected UserInputError, got %T: %v", err, err)
-		}
-		if !strings.Contains(err.Error(), "input") || !strings.Contains(err.Error(), "regular file") {
-			t.Errorf("expected error to identify the parameter and regular-file requirement, got: %v", err)
-		}
-	})
-}
-
-func TestValidationTag_File_OptionalPointerAbsent(t *testing.T) {
-	type Params struct {
-		Input *string `file:"true"`
+	paths := []pathCase{
+		{"regular", regular, "", nil},
+		{"missing", filepath.Join(dir, "missing"), "", os.ErrNotExist},
+		{"directory", dir, "regular file", nil},
+		{"invalid parent", filepath.Join(regular, "child"), "", syscall.ENOTDIR},
 	}
-
-	err := (Cmd[Params]{
-		Use:         "test",
-		ParamEnrich: ParamEnricherName,
-		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
-	}).RunArgsE(nil)
-	if err != nil {
-		t.Fatalf("expected absent optional file to skip validation, got: %v", err)
+	for _, tc := range paths[:3] {
+		link := filepath.Join(dir, "link-"+tc.name)
+		if err := os.Symlink(tc.path, link); err != nil {
+			t.Logf("symlink unavailable: %v", err)
+			continue
+		}
+		tc.name, tc.path = "symlink/"+tc.name, link
+		paths = append(paths, tc)
+	}
+	t.Chdir(dir) // Keep the Unix socket name below platform path-length limits.
+	if listener, err := net.Listen("unix", "socket"); err == nil {
+		defer func() { _ = listener.Close() }()
+		paths = append(paths, pathCase{"socket", "socket", "regular file", nil})
+	} else {
+		t.Logf("Unix socket unavailable: %v", err)
+	}
+	for _, tag := range []string{"file", "configfile"} {
+		for _, option := range []string{"true", "optional", "false"} {
+			t.Run(tag+"/"+option, func(t *testing.T) {
+				typ := reflect.StructOf([]reflect.StructField{{Name: "Input", Type: reflect.TypeFor[*string](), Tag: reflect.StructTag(tag + `:"` + option + `"`)}})
+				for _, tc := range paths {
+					t.Run(tc.name, func(t *testing.T) {
+						p := reflect.New(typ)
+						err := (command{Params: p.Interface(), RawArgs: []string{"--input", tc.path}}).Validate()
+						fail := option != "false" && (tc.cause != nil || tc.message != "") && (option == "true" || tc.cause != os.ErrNotExist)
+						if fail {
+							assertUserInputError(t, err, tc.cause, "input", tc.path, tc.message)
+						} else if err != nil || p.Elem().Field(0).Elem().String() != tc.path {
+							t.Fatalf("path=%s params=%v error=%v", tc.path, p, err)
+						}
+					})
+				}
+				baseDirOK(t, (command{Params: reflect.New(typ).Interface(), RawArgs: []string{}}).Validate())
+			})
+		}
+		typ := reflect.StructOf([]reflect.StructField{{Name: "Input", Type: reflect.TypeFor[string](), Tag: reflect.StructTag(tag + `:"optional"`)}})
+		assertUserInputError(t, (command{Params: reflect.New(typ).Interface(), RawArgs: []string{}}).Validate(), nil, "missing required param 'input'")
 	}
 }
 
-func TestValidationTag_File_NonStringRejected(t *testing.T) {
-	type Params struct {
-		Input int `file:"true"`
+func TestFileTags_Declaration(t *testing.T) {
+	for _, tag := range []string{"file", "configfile"} {
+		for value, valid := range map[string]bool{
+			"true,optional": true, " optional, true ": true,
+			"optional-default": tag == "configfile", "true,optional-default": tag == "configfile",
+			"": false, "yes": false, "true,": false, "true,true": false,
+			"optional,optional": false, "false,true": false, "false,optional": false,
+			"optional-default,optional-default": false, "false,optional-default": false, "optional,optional-default": false,
+		} {
+			typ := reflect.StructOf([]reflect.StructField{{Name: "Path", Type: reflect.TypeFor[string](), Tag: reflect.StructTag(tag + `:"` + value + `"`)}})
+			_, err := (command{Params: reflect.New(typ).Interface()}).ToCobraE()
+			if (err == nil) != valid {
+				t.Fatalf("%s:%q: %v", tag, value, err)
+			}
+			if err != nil && (IsUserInputError(err) || !strings.Contains(err.Error(), tag+" on field Path")) {
+				t.Fatalf("expected %s declaration error for Path: %v", tag, err)
+			}
+		}
+		for _, typ := range []reflect.Type{reflect.TypeFor[int](), reflect.TypeFor[[]int]()} {
+			params := reflect.New(reflect.StructOf([]reflect.StructField{{Name: "Path", Type: typ, Tag: reflect.StructTag(`name:"path" ` + tag + `:"optional"`)}})).Interface()
+			want := "file tag requires a string field, got " + typ.String()
+			if tag == "configfile" {
+				want = "configfile on param path: must be a string or []string field"
+			}
+			if _, err := (command{Params: params}).ToCobraE(); err == nil || IsUserInputError(err) || !strings.Contains(err.Error(), want) {
+				t.Fatalf("expected %s type error for %s: %v", tag, typ, err)
+			}
+		}
 	}
-
-	_, err := (Cmd[Params]{
-		Use:         "test",
-		ParamEnrich: ParamEnricherName,
-		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
-	}).ToCobraE()
-	if err == nil {
-		t.Fatal("expected file tag on non-string field to fail command construction")
+	type Slice struct {
+		Input []string `file:"optional"`
 	}
-	if !strings.Contains(err.Error(), "file tag requires a string field") {
-		t.Errorf("expected string-field error, got: %v", err)
+	if _, err := (Cmd[Slice]{}).ToCobraE(); err == nil || IsUserInputError(err) || !strings.Contains(err.Error(), "file tag requires a string field, got []string") {
+		t.Fatalf("expected file type error for Input: %v", err)
 	}
 }
 
-func TestValidationTag_File_FalseDisabled(t *testing.T) {
+func TestFileMetadata_Overrides(t *testing.T) {
 	type Params struct {
-		Input string `file:"false"`
+		Path   string `file:"optional" configfile:"optional-default" default:"default.json"`
+		Config string `configfile:"optional" file:"true" optional:"true"`
 	}
-
-	err := (Cmd[Params]{
-		Use:         "test",
-		ParamEnrich: ParamEnricherName,
-		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
-	}).RunArgsE([]string{"--input", t.TempDir()})
-	if err != nil {
-		t.Fatalf("expected file:false to disable validation, got: %v", err)
+	t.Chdir(t.TempDir())
+	for _, tc := range []struct {
+		name, path string
+		set        func(Parameter)
+		want       [5]bool // file, optional file, config, optional config, optional default
+		fail       bool
+	}{
+		{"strict file", "default.json", func(p Parameter) { p.SetFileOptional(false) }, [5]bool{true, false, true, false, true}, true},
+		{"disable file", "default.json", func(p Parameter) { p.SetFile(false) }, [5]bool{false, false, true, false, true}, false},
+		{"reset file", "default.json", func(p Parameter) { p.SetFile(false); p.SetFile(true) }, [5]bool{true, false, true, false, true}, true},
+		{"strict config", "default.json", func(p Parameter) { p.SetConfigFileOptionalDefault(false) }, [5]bool{true, true, true, false, false}, true},
+		{"disable config", "other.json", func(p Parameter) { p.SetConfigFile(false) }, [5]bool{true, true, false, false, false}, false},
+		{"reset config", "default.json", func(p Parameter) { p.SetConfigFile(false); p.SetConfigFile(true) }, [5]bool{true, true, true, false, false}, true},
+		{"optional config", "other.json", func(p Parameter) { p.SetConfigFileOptional(true); p.SetConfigFileOptionalDefault(false) }, [5]bool{true, true, true, true, false}, false},
+		{"optional default", "other.json", func(p Parameter) {
+			p.SetConfigFileOptional(true)
+			p.SetConfigFileOptionalDefault(true)
+			p.SetConfigFileOptional(false)
+		}, [5]bool{true, true, true, false, true}, true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := (Cmd[Params]{RawArgs: []string{"--path", tc.path}, InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
+				path := Param(ctx, &p.Path)
+				if !path.IsFile() || !path.IsFileOptional() || !path.IsConfigFile() || path.IsConfigFileOptional() || !path.IsConfigFileOptionalDefault() {
+					t.Fatal("tags were not available during Init")
+				}
+				tc.set(path.Parameter)
+				got := [5]bool{path.IsFile(), path.IsFileOptional(), path.IsConfigFile(), path.IsConfigFileOptional(), path.IsConfigFileOptionalDefault()}
+				if got != tc.want {
+					t.Fatalf("metadata=%v; want %v", got, tc.want)
+				}
+				return nil
+			}}).Validate()
+			if (err != nil) != tc.fail {
+				t.Fatalf("error=%v; want failure %v", err, tc.fail)
+			}
+			if tc.fail {
+				assertUserInputError(t, err, os.ErrNotExist, "path", tc.path)
+			}
+		})
 	}
+	assertUserInputError(t, (Cmd[Params]{RawArgs: []string{"--config", "missing.json"}}).Validate(), os.ErrNotExist, "config", "missing.json")
 }
 
 // --- min/max for numeric types ---

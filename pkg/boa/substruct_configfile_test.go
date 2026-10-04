@@ -474,29 +474,35 @@ func TestProgrammaticSetConfigFile(t *testing.T) {
 	}
 }
 
-func TestProgrammaticSetConfigFile_NonStringRejected(t *testing.T) {
-	// SetConfigFile on a non-string field should surface a clean error from
-	// the tag-processing pass rather than panicking.
+func TestFileSetters_RejectInvalidFields(t *testing.T) {
 	type Params struct {
-		ConfigFile int
-		Host       string
+		Path int
+		Base string `basedir:"true"`
 	}
-
-	err := (Cmd[Params]{
-		Use:         "test",
-		ParamEnrich: ParamEnricherName,
-		InitFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command) error {
-			Param(ctx, &p.ConfigFile).SetConfigFile(true)
-			return nil
-		},
-		RunFunc: func(p *Params, cmd *cobra.Command, args []string) {},
-	}).RunArgsE([]string{})
-
-	if err == nil {
-		t.Fatal("expected error for SetConfigFile on int field, got nil")
-	}
-	if !strings.Contains(err.Error(), "must be a string or []string field") {
-		t.Errorf("expected 'must be a string or []string field' error, got %v", err)
+	for name, set := range map[string]func(Parameter, bool){
+		"file": Parameter.SetFile, "optional file": Parameter.SetFileOptional,
+		"config": Parameter.SetConfigFile, "optional config": Parameter.SetConfigFileOptional,
+		"optional default": Parameter.SetConfigFileOptionalDefault,
+	} {
+		for _, conflict := range []bool{false, true} {
+			t.Run(name+"/"+strconv.FormatBool(conflict), func(t *testing.T) {
+				want := "string"
+				if conflict {
+					want = "basedir"
+				}
+				_, err := (Cmd[Params]{InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
+					field := Param(ctx, &p.Path).Parameter
+					if conflict {
+						field = Param(ctx, &p.Base).Parameter
+					}
+					set(field, true)
+					return nil
+				}}).ToCobraE()
+				if err == nil || !strings.Contains(err.Error(), want) {
+					t.Fatalf("expected %s error, got %v", want, err)
+				}
+			})
+		}
 	}
 }
 

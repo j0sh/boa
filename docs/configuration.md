@@ -4,18 +4,28 @@ BOA loads JSON by default and can dispatch additional formats by file extension.
 
 ## Automatic loading
 
-Mark a `string` field with `configfile:"true"`. Its value names a file to decode into the enclosing struct:
+Mark a `string` field with `configfile` to decode a file into the enclosing struct. This example allows the default config file to be missing:
 
 ```go
 type Params struct {
-    ConfigFile string `configfile:"true" optional:"true" default:"config.json"`
+    ConfigFile string `configfile:"optional-default" default:"config.json"`
     Host       string `env:"HOST" default:"localhost"`
     Port       int    `env:"PORT" default:"8080"`
     Routes     []Route `boa:"configonly"`
 }
 ```
 
-The path itself can come from a flag, environment variable, or default. An empty path is skipped. Values loaded from the file remain below CLI and environment values:
+The path can come from CLI, environment, defaults, application code, or a config file loaded before this field. An empty path is skipped.
+
+| Tag | Missing-file behavior |
+|---|---|
+| `configfile:"true"` | Fail |
+| `configfile:"optional"` | Skip any missing path |
+| `configfile:"optional-default"` | Skip paths matching a resolved default; fail for other paths |
+
+An explicitly supplied path matching the resolved default is also skipped when missing. Existing paths must be regular files; unreadable files, invalid configs, and other filesystem errors still fail. File existence is independent of [parameter requiredness](struct-tags.md#required-and-optional).
+
+Values loaded from the file remain below CLI and environment values:
 
 ```text
 CLI > environment > root config > nested config > default > zero value
@@ -66,7 +76,7 @@ type Params struct {
 // app --config-files base.json,production.json
 ```
 
-Later files replace keys they mention; absent keys preserve earlier values. Collection behavior follows the selected decoder. With built-in JSON, slices are replaced and map members merge according to `encoding/json` semantics. Empty path entries are skipped.
+Later files replace keys they mention; absent keys preserve earlier values. Collection behavior follows the selected decoder. With built-in JSON, slices are replaced and map members merge according to `encoding/json` semantics. Empty path entries are skipped. The missing-file policy above applies to each path; `optional-default` matches against any path in the default list.
 
 Each nested struct may have its own overlay chain. All nested chains load before the root chain. If strict checking rejects a file, earlier files remain applied.
 
@@ -138,7 +148,7 @@ The helpers are:
 | `LoadConfigFiles(paths, target, decoder)` | Load a left-to-right chain |
 | `LoadConfigBytes(data, ext, target, decoder)` | Decode embedded, remote, stdin, or test data |
 
-A non-nil decoder argument overrides registry selection. Otherwise file extension or `ext` selects the registered format, with JSON as the fallback. Empty paths and empty byte slices are no-ops.
+A non-nil decoder argument overrides registry selection. Otherwise file extension or `ext` selects the registered format, with JSON as the fallback. Empty paths and empty byte slices are no-ops. These helpers always fail on missing files.
 
 With `boa:"noconfig"` fields, a decoder override must also support `map[string]any` for key inspection.
 

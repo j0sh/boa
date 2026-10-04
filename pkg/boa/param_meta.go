@@ -103,13 +103,11 @@ type paramMeta struct {
 	// noFlag+noEnv, so validation and required checks still run.
 	ignored bool
 
-	// isConfigFile marks this string parameter as the config-file path for
-	// its parent struct. Mirrors `configfile:"true"`. When set, the field
-	// must be a string and its value (CLI / env / default) is used as a
-	// path to a config file that's unmarshaled into the enclosing struct.
-	// Set either via the tag or programmatically via SetConfigFile(true).
-	isConfigFile bool
-	baseDir      baseDirOptions
+	// Path tags are seeded before Init so hooks can override them.
+	file, configFile fileOptions
+	baseDir          baseDirOptions
+	// Secret companions always require an existing regular file.
+	secretFile bool
 }
 
 var _ parameter = &paramMeta{}
@@ -243,45 +241,16 @@ func (f *paramMeta) SetDefault(val any) {
 		return
 	}
 
-	valRef := reflect.ValueOf(val)
-
-	// val should be a pointer (*T) — dereference to get the value
-	if valRef.Kind() == reflect.Pointer && !valRef.IsNil() {
-		elem := valRef.Elem()
-
-		// Direct type match
-		if elem.Type() == f.fieldType {
-			v := reflect.New(f.fieldType).Elem()
-			v.Set(elem)
-			f.defaultVal = &v
-			return
-		}
-
-		// Handle named primitive types (for example, MyString → string).
-		if elem.Type().ConvertibleTo(f.fieldType) {
-			converted := elem.Convert(f.fieldType)
-			v := reflect.New(f.fieldType).Elem()
-			v.Set(converted)
-			f.defaultVal = &v
-			return
-		}
+	value := reflect.ValueOf(val)
+	if value.Kind() == reflect.Pointer && !value.IsNil() && value.Elem().Type().ConvertibleTo(f.fieldType) {
+		value = value.Elem()
 	}
-
-	// Fallback: try to use the value directly (non-pointer)
-	if valRef.Type() == f.fieldType {
-		v := reflect.New(f.fieldType).Elem()
-		v.Set(valRef)
-		f.defaultVal = &v
-		return
+	if !value.Type().ConvertibleTo(f.fieldType) {
+		panic(fmt.Errorf("paramMeta.SetDefault: cannot set default of type %T for field type %s", val, f.fieldType))
 	}
-	if valRef.Type().ConvertibleTo(f.fieldType) {
-		v := reflect.New(f.fieldType).Elem()
-		v.Set(valRef.Convert(f.fieldType))
-		f.defaultVal = &v
-		return
-	}
-
-	panic(fmt.Errorf("paramMeta.SetDefault: cannot set default of type %T for field type %s", val, f.fieldType))
+	copy := reflect.New(f.fieldType).Elem()
+	copy.Set(value.Convert(f.fieldType))
+	f.defaultVal = &copy
 }
 
 func (f *paramMeta) hasDefaultValue() bool {
@@ -295,6 +264,10 @@ func (f *paramMeta) defaultValuePtr() any {
 	// Return a pointer to a copy of the default value
 	ptr := reflect.New(f.fieldType)
 	ptr.Elem().Set(*f.defaultVal)
+	// Decoders can reuse a slice's backing array; keep the declared default intact.
+	if f.fieldType.Kind() == reflect.Slice && !ptr.Elem().IsNil() {
+		ptr.Elem().Set(cloneConfigValue(ptr.Elem(), make(map[configCopyKey]reflect.Value)))
+	}
 	return ptr.Interface()
 }
 
@@ -390,16 +363,53 @@ func (f *paramMeta) SetCustomValidator(validator func(any) error) {
 
 // --- noFlag / ignored ---
 
-func (f *paramMeta) IsNoFlag() bool         { return f.noFlag }
-func (f *paramMeta) SetNoFlag(val bool)     { f.noFlag = val }
-func (f *paramMeta) IsNoEnv() bool          { return f.noEnv }
-func (f *paramMeta) SetNoEnv(val bool)      { f.noEnv = val }
-func (f *paramMeta) IsNoConfig() bool       { return f.noConfig || f.IsBaseDir() && !f.IsIgnored() }
-func (f *paramMeta) SetNoConfig(val bool)   { f.noConfig = val }
-func (f *paramMeta) IsIgnored() bool        { return f.ignored }
-func (f *paramMeta) SetIgnored(val bool)    { f.ignored = val }
-func (f *paramMeta) IsConfigFile() bool     { return f.isConfigFile }
-func (f *paramMeta) SetConfigFile(val bool) { f.isConfigFile = val }
+func (f *paramMeta) IsNoFlag() bool       { return f.noFlag }
+func (f *paramMeta) SetNoFlag(val bool)   { f.noFlag = val }
+func (f *paramMeta) IsNoEnv() bool        { return f.noEnv }
+func (f *paramMeta) SetNoEnv(val bool)    { f.noEnv = val }
+func (f *paramMeta) IsNoConfig() bool     { return f.noConfig || f.IsBaseDir() && !f.IsIgnored() }
+func (f *paramMeta) SetNoConfig(val bool) { f.noConfig = val }
+func (f *paramMeta) IsIgnored() bool      { return f.ignored }
+func (f *paramMeta) SetIgnored(val bool)  { f.ignored = val }
+
+func (f *paramMeta) IsFile() bool                      { return f.file.enabled || f.secretFile }
+func (f *paramMeta) IsFileOptional() bool              { return f.file.optional && !f.secretFile }
+func (f *paramMeta) IsConfigFile() bool                { return f.configFile.enabled }
+func (f *paramMeta) IsConfigFileOptional() bool        { return f.configFile.optional }
+func (f *paramMeta) IsConfigFileOptionalDefault() bool { return f.configFile.optionalDefault }
+
+func (f *paramMeta) SetFile(enabled bool) {
+	if !enabled {
+		f.file = fileOptions{}
+	}
+	f.file.enabled = enabled
+}
+
+func (f *paramMeta) SetFileOptional(optional bool) {
+	f.file.optional = optional
+	f.file.enabled = f.file.enabled || optional
+}
+
+func (f *paramMeta) SetConfigFile(enabled bool) {
+	if !enabled {
+		f.configFile = fileOptions{}
+	}
+	f.configFile.enabled = enabled
+}
+
+func (f *paramMeta) SetConfigFileOptional(optional bool) {
+	f.configFile.optional = optional
+	if optional {
+		f.configFile.enabled, f.configFile.optionalDefault = true, false
+	}
+}
+
+func (f *paramMeta) SetConfigFileOptionalDefault(optional bool) {
+	f.configFile.optionalDefault = optional
+	if optional {
+		f.configFile.enabled, f.configFile.optional = true, false
+	}
+}
 
 func (f *paramMeta) IsBaseDir() bool           { return f.baseDir.enabled }
 func (f *paramMeta) IsBaseDirRequired() bool   { return f.baseDir.required }

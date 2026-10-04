@@ -12,13 +12,17 @@ import (
 
 type Params struct {
 	DataDir    string `basedir:"required,autocreate" default:"." env:"APP_DATA_DIR" descr:"base directory for relative file paths"`
-	ConfigFile string `configfile:"true" optional:"true" default:"config.json"`
+	ConfigFile string `default:"config.json"`
 	Input      string `file:"true" optional:"true"`
 }
 
 func command(out io.Writer) boa.Cmd[Params] {
 	return boa.Cmd[Params]{
 		Use: "basedir-example",
+		InitFuncCtx: func(ctx *boa.HookContext, p *Params, _ *cobra.Command) error {
+			boa.Param(ctx, &p.ConfigFile).SetConfigFileOptionalDefault(true)
+			return nil
+		},
 		RunFuncE: func(p *Params, _ *cobra.Command, _ []string) error {
 			_, err := fmt.Fprintf(out, "Data directory: %s\nConfig: %s\nInput: %s\n", p.DataDir, p.ConfigFile, p.Input)
 			return err

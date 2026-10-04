@@ -47,13 +47,13 @@ func TestBaseDir_Declaration(t *testing.T) {
 			t.Fatalf("accepted %q", tag)
 		}
 	}
-	for _, tag := range []string{`basedir:"invalid"`, `basedir:"true" file:"true"`, `basedir:"true" configfile:"true"`, `basedir:"true" secret:"true"`, `basedir:"true" secretfor:"Token"`} {
+	for _, tag := range []string{`basedir:"invalid"`, `basedir:"true" file:"true"`, `basedir:"true" file:"optional"`, `basedir:"true" configfile:"true"`, `basedir:"true" configfile:"optional"`, `basedir:"true" secret:"true"`, `basedir:"true" secretfor:"Token"`} {
 		typ := reflect.StructOf([]reflect.StructField{
 			{Name: "Dir", Type: reflect.TypeFor[string](), Tag: reflect.StructTag(tag)},
 			{Name: "Token", Type: reflect.TypeFor[string](), Tag: `secret:"true" optional:"true"`},
 		})
-		if _, err := (command{Params: reflect.New(typ).Interface()}).ToCobraE(); err == nil {
-			t.Fatalf("accepted %s", tag)
+		if _, err := (command{Params: reflect.New(typ).Interface()}).ToCobraE(); err == nil || IsUserInputError(err) || !strings.Contains(err.Error(), "basedir") || !strings.Contains(err.Error(), "dir") && !strings.Contains(err.Error(), "Dir") {
+			t.Fatalf("expected basedir declaration error for Dir with %s: %v", tag, err)
 		}
 	}
 	for _, typ := range []reflect.Type{reflect.TypeFor[int](), reflect.TypeFor[[]string](), reflect.TypeFor[struct{}]()} {
@@ -114,22 +114,36 @@ func TestBaseDir_SourcesAndSecrets(t *testing.T) {
 	}
 	baseDirFile(t, dir, "token", "secret\n")
 	baseDirFile(t, dir, "config.json", `{"Input":"config"}`)
+	missingConfig := baseDirFile(t, dir, "missing-config.json", `{"Input":"config-missing"}`)
 	absolute := baseDirFile(t, t.TempDir(), "absolute", "data")
 	for _, tc := range []struct {
-		name, env, base string
-		args            []string
+		name, env, base, initial string
+		args                     []string
+		optional                 bool
 	}{
-		{"default", "", "", []string{"--config="}},
-		{"config", "", dir, nil},
-		{"env", "env", dir, nil},
-		{"cli", "env", "wrong", []string{"--dir", dir, "--input", "cli"}},
-		{absolute, "", "missing", []string{"--input", absolute, "--config=", "--token-file", filepath.Join(dir, "token")}},
+		{"default", "", "", "", []string{"--config="}, false},
+		{"config", "", dir, "", nil, false},
+		{"env", "env", dir, "", nil, false},
+		{"cli", "env", "wrong", "", []string{"--dir", dir, "--input", "cli"}, false},
+		{absolute, "", "missing", "", []string{"--input", absolute, "--config=", "--token-file", filepath.Join(dir, "token")}, false},
+		{"default-missing", "", dir, "", []string{"--config="}, true},
+		{"config-missing", "", dir, "", []string{"--config", missingConfig}, true},
+		{"env-missing", "env-missing", dir, "", nil, true},
+		{"cli-missing", "env-missing", "wrong", "", []string{"--dir", dir, "--input", "cli-missing"}, true},
+		{"application-missing", "", dir, "application-missing", []string{"--config="}, true},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("BOA_TEST_BASE", tc.base)
 			t.Setenv("BOA_TEST_INPUT", tc.env)
 			want := resolvePath(dir, tc.name)
-			baseDirOK(t, (Cmd[Params]{RunFunc: baseDirNoop[Params], PreValidateFunc: func(p *Params, _ *cobra.Command, _ []string) error {
+			p := Params{Input: tc.initial}
+			baseDirOK(t, (Cmd[Params]{Params: &p, RunFunc: baseDirNoop[Params], InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
+				if tc.optional {
+					Param(ctx, &p.Input).SetFileOptional(true)
+					Param(ctx, &p.Input).SetDefault("default-missing")
+				}
+				return nil
+			}, PreValidateFunc: func(p *Params, _ *cobra.Command, _ []string) error {
 				if p.Input != want || p.Token != "secret\n" {
 					t.Fatalf("hook values: %+v", p)
 				}
@@ -142,13 +156,13 @@ func TestBaseDir_SourcesAndSecrets(t *testing.T) {
 func TestBaseDir_OverlaysAndConfigPaths(t *testing.T) {
 	type Path string
 	type Group struct {
-		Config string `configfile:"true" default:"nested.json"`
+		Config string `configfile:"optional" default:"nested.json"`
 		Input  string `file:"true" default:"input"`
 		Value  string `optional:"true"`
 	}
 	type Params struct {
 		Dir     string      `basedir:"true"`
-		Configs []Path      `configfile:"true" default:"[base.json,overlay.json]"`
+		Configs []Path      `configfile:"true,optional" default:"[base.json,missing.json,overlay.json]"`
 		Last    baseDirText `configfile:"true" default:"absent.json" env:"BOA_TEST_LAST"`
 		Group   Group
 	}
@@ -161,15 +175,18 @@ func TestBaseDir_OverlaysAndConfigPaths(t *testing.T) {
 	for _, source := range []string{"cli", "env"} {
 		t.Run(source, func(t *testing.T) {
 			args := []string{"--dir", dir, "--last", "path:" + last}
+			watched := []string{nested, base, overlay, last}
 			if source == "env" {
+				baseDirOK(t, os.Remove(nested))
+				watched = watched[1:]
 				t.Setenv("BOA_TEST_LAST", "path:"+last)
 				args = args[:2]
 			}
 			baseDirOK(t, (Cmd[Params]{RunFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command, _ []string) {
-				if string(p.Last) != last || p.Group.Value != "overlay" || p.Group.Input != input || p.Group.Config != nested || !slices.Equal(p.Configs, []Path{Path(base), Path(overlay)}) {
+				if string(p.Last) != last || p.Group.Value != "overlay" || p.Group.Input != input || p.Group.Config != nested || !slices.Equal(p.Configs, []Path{Path(base), Path(filepath.Join(dir, "missing.json")), Path(overlay)}) {
 					t.Fatalf("merged paths: %+v", p)
 				}
-				if !slices.Equal(ctx.WatchedConfigFiles(), []string{nested, base, overlay, last}) {
+				if !slices.Equal(ctx.WatchedConfigFiles(), watched) {
 					t.Fatalf("watches: %v", ctx.WatchedConfigFiles())
 				}
 				data, err := ctx.DumpBytes(".json", nil)
@@ -182,6 +199,10 @@ func TestBaseDir_OverlaysAndConfigPaths(t *testing.T) {
 			}}).RunArgsE(args))
 		})
 	}
+	t.Run("strict sibling", func(t *testing.T) {
+		err := (Cmd[Params]{RawArgs: []string{"--dir", dir, "--last", "missing.json"}}).Validate()
+		assertUserInputError(t, err, os.ErrNotExist, "configfile last", filepath.Join(dir, "missing.json"))
+	})
 }
 
 func TestBaseDir_DirectoryLifecycle(t *testing.T) {

@@ -68,7 +68,7 @@ Keep Init, PostCreate, and PreValidate repeatable. Put one-time resource startup
 
 ## Watched files
 
-`ctx.WatchedConfigFiles()` returns files loaded through `configfile:"true"`, including nested paths, overlay chains, registered formats, and a command-level format override. A successful reload refreshes this list; a failed reload leaves the previous list intact.
+`ctx.WatchedConfigFiles()` returns successfully loaded `configfile` paths, excluding missing optional files and including nested paths, overlay chains, registered formats, and a command-level format override. Execution, `Validate()`, and reload use the same [missing-file policy](configuration.md#automatic-loading). A successful reload refreshes this list; a failed reload leaves the previous list intact.
 
 Files loaded manually with `LoadConfigFile`, `LoadConfigFiles`, or `LoadConfigBytes` are outside the automatic pipeline. Register filesystem paths explicitly in a context-aware PreValidate hook:
 

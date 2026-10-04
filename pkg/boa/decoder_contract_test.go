@@ -5,6 +5,7 @@ import (
 	jsonv2 "encoding/json/v2"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"testing"
 	"time"
@@ -58,6 +59,58 @@ func TestCustomConfigDecoderIsAuthoritative(t *testing.T) {
 	err := LoadConfigBytes([]byte(`{"Timeout":"2.5h"}`), ".custom", &p, decoder)
 	if !errors.Is(err, sentinel) || calls != 1 {
 		t.Fatalf("calls=%d error=%v", calls, err)
+	}
+}
+
+type pointerInputConfig struct {
+	Config string         `configfile:"true"`
+	Count  *int           `env:"BOA_DECODER_COUNT"`
+	State  map[string]any `env:"BOA_DECODER_STATE" json:"-"`
+	Seen   int            `boa:"ignore" json:"-"`
+}
+
+func (p *pointerInputConfig) UnmarshalJSON(data []byte) error {
+	if p.Count == nil {
+		return errors.New("missing initialized Count")
+	}
+	p.Seen = *p.Count
+	// Exercise a custom decoder that mutates private storage through a cyclic graph.
+	p.State["self"].(map[string]any)["rates"].([1]*big.Rat)[0].SetFrac64(1, 2)
+	type plain pointerInputConfig
+	return json.Unmarshal(data, (*plain)(p))
+}
+
+func TestConfigDecoder_PreservesPointerInputs(t *testing.T) {
+	t.Setenv("BOA_DECODER_COUNT", "2")
+	t.Setenv("BOA_DECODER_STATE", "2/3")
+	registerTypeCleanup(t, TypeDef[map[string]any]{Parse: func(text string) (map[string]any, error) {
+		rate, _ := new(big.Rat).SetString(text)
+		state := map[string]any{"rates": [1]*big.Rat{rate}}
+		state["self"] = state
+		return state, nil
+	}, Format: func(map[string]any) string { return "2/3" }})
+	for _, tc := range []struct {
+		contents string
+		fail     bool
+	}{
+		{`{}`, false}, {`{"Count":1}`, false}, {`{"Count":1,"Config":{}}`, true},
+	} {
+		var p pointerInputConfig
+		path := writeFile(t, t.TempDir(), "config.json", tc.contents)
+		err := (Cmd[pointerInputConfig]{Params: &p, RawArgs: []string{"--config", path}}).Validate()
+		if (err != nil) != tc.fail || p.Count == nil || *p.Count != 2 || p.Seen != 2 {
+			t.Fatalf("Count=%v Seen=%d error=%v; want failure %v", p.Count, p.Seen, err, tc.fail)
+		}
+		if p.State["rates"].([1]*big.Rat)[0].RatString() != "2/3" {
+			t.Fatal("decoder mutated the saved source graph")
+		}
+		if tc.fail {
+			assertUserInputError(t, err, nil, "configfile config", path, "cannot unmarshal object", "Config")
+			var typeError *json.UnmarshalTypeError
+			if !errors.As(err, &typeError) || typeError.Field != "Config" {
+				t.Fatalf("expected Config type error: %v", err)
+			}
+		}
 	}
 }
 

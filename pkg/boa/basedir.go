@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
-	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -17,30 +16,11 @@ type baseDirOptions struct {
 }
 
 func parseBaseDirTag(value string) (baseDirOptions, error) {
-	var options baseDirOptions
-	seen := map[string]bool{}
-	for _, item := range strings.Split(value, ",") {
-		item = strings.TrimSpace(item)
-		if seen[item] {
-			return options, fmt.Errorf("repeated option %q", item)
-		}
-		seen[item] = true
-		switch item {
-		case "true":
-			options.enabled = true
-		case "false":
-		case "required":
-			options.enabled, options.required = true, true
-		case "autocreate":
-			options.enabled, options.autoCreate = true, true
-		default:
-			return options, fmt.Errorf("invalid option %q (expected true, false, required, or autocreate)", item)
-		}
+	options, err := parsePathTag(value, "true", "false", "required", "autocreate")
+	if err != nil {
+		return baseDirOptions{}, err
 	}
-	if seen["false"] && len(seen) != 1 {
-		return options, fmt.Errorf("false cannot be combined with other options")
-	}
-	return options, nil
+	return baseDirOptions{enabled: !options["false"], required: options["required"], autoCreate: options["autocreate"]}, nil
 }
 
 type baseDirState struct {

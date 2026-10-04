@@ -32,7 +32,7 @@ BOA tracks whether a source supplied a value separately from the value itself. A
 | `strict` | Enforce alternatives; defaults to true | `strict:"false"` |
 | `min`, `max` | Numeric bound or collection/string length | `min:"1" max:"65535"` |
 | `pattern` | Regular expression for a string | `pattern:"^[a-z][a-z0-9-]*$"` |
-| `file` | Require an existing regular file | `file:"true"` |
+| `file` | Validate a regular-file path; optionally allow missing files | `file:"true"` |
 | `basedir` | Supply the base for relative file paths | `basedir:"required,autocreate"` |
 | `secret` | Hide and exclude a secret value from config | `secret:"true"` |
 | `secretfor` | Read a file into a sibling secret field | `secretfor:"Token"` |
@@ -186,7 +186,9 @@ type Params struct {
 }
 ```
 
-`file:"true"` accepts string paths that resolve to existing regular files. Symlinks are followed. Validation of an absent optional pointer is skipped; when present, its pointed-to value is validated normally.
+`file:"true"` requires string paths to resolve to existing regular files; `file:"optional"` also accepts missing paths. Symlinks are followed, and other filesystem errors still fail. An absent optional pointer skips validation; a present pointer is validated normally. Paths are preserved except for [base-directory resolution](#base-directories), and validation does not create files. `secretfor` remains strict even with `file:"optional"`.
+
+Both `file` and [`configfile`](configuration.md#automatic-loading) accept `true`, `false` (disabled), or `optional`; `true,optional` is equivalent to `optional`. `configfile` also accepts [`optional-default`](configuration.md#automatic-loading), optionally combined with `true`. Unknown or repeated options, combining `false` with other options, or combining `optional` with `optional-default` are setup errors. These options do not change [whether a parameter is required](#required-and-optional). When both file tags are present, both constraints apply, so `file:"true"` still requires existence with `configfile:"optional"`.
 
 ## Base directories
 

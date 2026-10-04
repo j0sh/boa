@@ -154,8 +154,26 @@ type Parameter interface {
 	SetNoConfig(bool)
 	IsIgnored() bool
 	SetIgnored(bool)
+	// File metadata must be configured during Init; Init settings override tags.
+	// IsFile includes the regular-file requirement implied by secretfor.
+	IsFile() bool
+	// SetFile enables file validation. Disabling clears its optional policy;
+	// secretfor fields remain strict regardless of these settings.
+	SetFile(bool)
+	IsFileOptional() bool
+	// SetFileOptional(true) also enables file validation. False clears only the policy.
+	SetFileOptional(bool)
 	IsConfigFile() bool
+	// SetConfigFile enables config loading. Disabling clears both missing-file policies.
 	SetConfigFile(bool)
+	IsConfigFileOptional() bool
+	// SetConfigFileOptional(true) enables loading and selects skipping any missing file.
+	// False clears this policy without disabling loading or changing optional-default.
+	SetConfigFileOptional(bool)
+	IsConfigFileOptionalDefault() bool
+	// SetConfigFileOptionalDefault(true) enables loading and selects skipping missing
+	// paths that match a resolved default. False clears only this policy.
+	SetConfigFileOptionalDefault(bool)
 	// Base-directory metadata must be configured during Init.
 	IsBaseDir() bool
 	SetBaseDir(bool)
@@ -217,19 +235,15 @@ const (
 	CollectionArray CollectionMode = "array"
 )
 
-// configFileEntry tracks a configfile:"true" field and the struct it should load into.
+// configFileEntry tracks a configfile field and the struct it should load into.
 type configFileEntry struct {
 	mirror     parameter // the string / []string param holding the file path(s)
 	targetPath fieldPath // path from root to the target struct (empty for root)
 }
 
-// configFilePathsFromMirror reads the current value of a configfile mirror and
-// returns the ordered list of file paths to load. A string-typed mirror yields
-// at most one path; a []string-typed mirror yields the slice verbatim (empty
-// entries are the caller's responsibility to skip). Any other type indicates
-// a bug — the traversal-time guard should have rejected it already.
-func configFilePathsFromMirror(mirror parameter) []string {
-	value := reflect.Indirect(reflect.ValueOf(mirror.valuePtrF()))
+// configFilePaths reads a string or []string value/default through its pointer.
+func configFilePaths(ptr any) []string {
+	value := reflect.Indirect(reflect.ValueOf(ptr))
 	if !value.IsValid() || value.IsZero() {
 		return nil
 	}
@@ -311,7 +325,7 @@ type processingContext struct {
 	// unconditionally — cheap, zero-cost for production code.
 	walkFallbackCount int
 	cacheRebuildCount int
-	// ConfigFiles tracks all configfile:"true" fields and their target structs.
+	// ConfigFiles tracks config-file fields and their target structs.
 	// Ordered: substruct entries first, root entry last (so root overrides inner).
 	ConfigFiles []configFileEntry
 	// SecretFiles links real secretfor path fields to their same-struct secret
@@ -652,7 +666,7 @@ func parseEnv(ctx *processingContext, structPtr any) error {
 
 func validate(ctx *processingContext, structPtr any) error {
 
-	err := traverse(ctx, structPtr, func(param parameter, _ string, tags reflect.StructTag) error {
+	err := traverse(ctx, structPtr, func(param parameter, _ string, _ reflect.StructTag) error {
 
 		if !param.IsEnabled() {
 			return nil
@@ -721,9 +735,9 @@ func validate(ctx *processingContext, structPtr any) error {
 				}
 			}
 
-			if hasFileTag(tags) {
+			if param.IsFile() {
 				value := reflect.Indirect(reflect.ValueOf(param.valuePtrF()))
-				if err := validateFile(value.String()); err != nil {
+				if err := validateFile(value.String()); err != nil && (!param.IsFileOptional() || !errors.Is(err, os.ErrNotExist)) {
 					return fmt.Errorf("invalid value for param '%s': %w", param.GetName(), err)
 				}
 			}
@@ -2080,14 +2094,68 @@ func (ctx *processingContext) findPathByAddr(addr unsafe.Pointer) (fieldPath, bo
 // reconstructing a Value at the same memory with the target type. If the types
 // already match, the input is returned unchanged.
 //
-// This is the one legitimate use of unsafe in the sync path — cobra's flag system
-// only knows underlying types, so mirror storage and mirror → raw writes must go
-// through the underlying view of the memory.
+// Cobra binds underlying types, so mirrors and raw fields must share that view.
 func reinterpretAs(rawFieldVal reflect.Value, target reflect.Type) reflect.Value {
 	if rawFieldVal.Type() == target {
 		return rawFieldVal
 	}
 	return reflect.NewAt(target, rawFieldVal.Addr().UnsafePointer()).Elem()
+}
+
+// configCopyKey preserves cycles and repeated references while copying decoder input.
+type configCopyKey struct {
+	typ reflect.Type
+	ptr unsafe.Pointer
+	len int
+}
+
+func cloneConfigValue(value reflect.Value, seen map[configCopyKey]reflect.Value) reflect.Value {
+	copy := reflect.New(value.Type()).Elem()
+	copy.Set(value)
+	if kind := value.Kind(); kind == reflect.Pointer || kind == reflect.Map || kind == reflect.Slice {
+		if value.IsNil() {
+			return copy
+		}
+		key := configCopyKey{typ: value.Type(), ptr: value.UnsafePointer()}
+		if kind == reflect.Slice {
+			key.len = value.Len()
+		}
+		if prior, ok := seen[key]; ok {
+			return prior
+		}
+		seen[key] = copy
+	}
+	switch value.Kind() {
+	case reflect.Pointer:
+		copy.Set(reflect.New(value.Type().Elem()))
+		copy.Elem().Set(cloneConfigValue(value.Elem(), seen))
+	case reflect.Interface:
+		if !value.IsNil() {
+			copy.Set(cloneConfigValue(value.Elem(), seen))
+		}
+	case reflect.Slice:
+		copy.Set(reflect.MakeSlice(value.Type(), value.Len(), value.Len()))
+		for i := range value.Len() {
+			copy.Index(i).Set(cloneConfigValue(value.Index(i), seen))
+		}
+	case reflect.Map:
+		copy.Set(reflect.MakeMapWithSize(value.Type(), value.Len()))
+		for it := value.MapRange(); it.Next(); {
+			copy.SetMapIndex(cloneConfigValue(it.Key(), seen), cloneConfigValue(it.Value(), seen))
+		}
+	case reflect.Struct:
+		for i := range copy.NumField() {
+			field := copy.Field(i)
+			// Native scalar decoders such as big.Rat mutate unexported storage too.
+			field = reflect.NewAt(field.Type(), field.Addr().UnsafePointer()).Elem()
+			field.Set(cloneConfigValue(field, seen))
+		}
+	case reflect.Array:
+		for i := range value.Len() {
+			copy.Index(i).Set(cloneConfigValue(value.Index(i), seen))
+		}
+	}
+	return copy
 }
 
 // storeValue writes a typed field and an independent mirror, preserving source
@@ -2316,12 +2384,28 @@ func newParam(field *reflect.StructField, t reflect.Type) (parameter, error) {
 			return nil, fmt.Errorf("basedir on field %s: %w", field.Name, err)
 		}
 	}
+	var file, config fileOptions
+	for _, tag := range []struct {
+		name    string
+		options *fileOptions
+	}{{"file", &file}, {"configfile", &config}} {
+		if value, ok := field.Tag.Lookup(tag.name); ok {
+			parsed, err := parseFileTag(tag.name, value)
+			if err != nil {
+				return nil, fmt.Errorf("%s on field %s: %w", tag.name, field.Name, err)
+			}
+			*tag.options = parsed
+		}
+	}
 	return &paramMeta{
 		fieldType:       valueType,
 		isPointer:       isPtr,
 		defaultRequired: isRequired,
 		noConfig:        slices.Contains(getBoaTags(*field), "noconfig") || field.Tag.Get("secret") == "true",
 		secretName:      secretName,
+		secretFile:      field.Tag.Get("secretfor") != "",
+		file:            file,
+		configFile:      config,
 		baseDir:         baseDir,
 	}, nil
 }

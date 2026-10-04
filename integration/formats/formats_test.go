@@ -3,6 +3,7 @@ package formats_test
 import (
 	"encoding/json"
 	"errors"
+	"math/big"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -18,34 +19,42 @@ import (
 )
 
 func TestPortableTextAndNativeDates(t *testing.T) {
+	t.Setenv("BOA_WEI_PER_USD", "2/3")
 	type Config struct {
-		Source  string                  `configfile:"true" boa:"configonly" json:"-" yaml:"-" toml:"-"`
-		At      time.Time               `json:"at" yaml:"at" toml:"at"`
-		Timeout boa.Text[time.Duration] `json:"timeout" yaml:"timeout" toml:"timeout"`
+		Source    string                  `configfile:"true" boa:"configonly" json:"-" yaml:"-" toml:"-"`
+		At        time.Time               `json:"at" yaml:"at" toml:"at"`
+		Timeout   boa.Text[time.Duration] `json:"timeout" yaml:"timeout" toml:"timeout"`
+		Pointer   *big.Rat                `json:"pointer" yaml:"pointer" toml:"pointer" env:"BOA_WEI_PER_USD"`
+		WeiPerUSD big.Rat                 `env:"BOA_WEI_PER_USD"`
 	}
 	for _, tc := range []struct {
 		name, ext, data string
 		decode          func([]byte, any) error
 	}{
-		{"json", ".json", `{"at":"2026-09-17","timeout":"2.5h"}`, boa.UnmarshalJSON},
-		{"yaml", ".yaml", "at: 2026-09-17\ntimeout: 2.5h\n", yaml.Unmarshal},
-		{"burntsushi", ".toml", "at = 2026-09-17\ntimeout = \"2.5h\"\n", burnttoml.Unmarshal},
-		{"pelletier", ".toml", "at = 2026-09-17\ntimeout = \"2.5h\"\n", toml.Unmarshal},
+		{"json", ".json", `{"at":"2026-09-17","timeout":"2.5h","pointer":"1/2","WeiPerUSD":"1/2"}`, boa.UnmarshalJSON},
+		{"yaml", ".yaml", "at: 2026-09-17\ntimeout: 2.5h\npointer: 1/2\nweiperusd: 1/2\n", yaml.Unmarshal},
+		{"burntsushi", ".toml", "at = 2026-09-17\ntimeout = \"2.5h\"\npointer = \"1/2\"\nWeiPerUSD = \"1/2\"\n", burnttoml.Unmarshal},
+		{"pelletier", ".toml", "at = 2026-09-17\ntimeout = \"2.5h\"\npointer = \"1/2\"\nWeiPerUSD = \"1/2\"\n", toml.Unmarshal},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			var p Config
 			if err := boa.LoadConfigBytes([]byte(tc.data), ".custom", &p, tc.decode); err != nil {
 				t.Fatal(err)
 			}
-			if p.At.Format(time.DateOnly) != "2026-09-17" || p.Timeout.Value != 150*time.Minute {
+			if p.At.Format(time.DateOnly) != "2026-09-17" || p.Timeout.Value != 150*time.Minute || p.WeiPerUSD.RatString() != "1/2" || p.Pointer == nil || p.Pointer.RatString() != "1/2" {
 				t.Fatalf("p=%+v", p)
 			}
-			strict := Config{Source: writeConfig(t, tc.ext, []byte(tc.data))}
-			if err := (boa.Cmd[Config]{Params: &strict, RawArgs: []string{}, RejectUnknown: true, ConfigFormat: boa.UniversalConfigFormat(tc.decode)}).Validate(); err != nil {
-				t.Fatal(err)
-			}
-			if !strict.At.Equal(p.At) || strict.Timeout != p.Timeout {
-				t.Fatalf("strict loading changed native values: strict=%+v want=%+v", strict, p)
+			path := writeConfig(t, tc.ext, []byte(tc.data))
+			for _, want := range []string{"2/3", "3/4"} {
+				args := []string{}
+				if want == "3/4" {
+					args = []string{"--wei-per-usd", want, "--pointer", want}
+				}
+				strict := Config{Source: path}
+				err := (boa.Cmd[Config]{Params: &strict, RawArgs: args, RejectUnknown: true, ConfigFormat: boa.UniversalConfigFormat(tc.decode)}).Validate()
+				if err != nil || !strict.At.Equal(p.At) || strict.Timeout != p.Timeout || strict.Pointer == nil || strict.Pointer.RatString() != want || strict.WeiPerUSD.RatString() != want {
+					t.Fatalf("strict=%+v error=%v; want native date/duration and rates=%s", strict, err, want)
+				}
 			}
 		})
 	}

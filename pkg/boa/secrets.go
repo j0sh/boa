@@ -21,10 +21,6 @@ type secretFileEntry struct {
 	appliedValue string
 }
 
-func hasFileTag(tags reflect.StructTag) bool {
-	return tags.Get("file") == "true" || tags.Get("secretfor") != ""
-}
-
 // parseParamText keeps parser diagnostics from revealing secret input. Do not
 // wrap the original error: callers could recover the input through Unwrap.
 func parseParamText(param parameter, text string) (any, error) {

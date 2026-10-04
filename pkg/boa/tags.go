@@ -3,6 +3,7 @@ package boa
 import (
 	"fmt"
 	"reflect"
+	"slices"
 	"strings"
 )
 
@@ -114,7 +115,7 @@ func (ctx *processingContext) applyTags(param parameter, tags reflect.StructTag)
 			meta.pattern = pattern
 		}
 	}
-	if hasFileTag(tags) && param.GetKind() != reflect.String {
+	if param.IsFile() && param.GetKind() != reflect.String {
 		return fmt.Errorf("file tag requires a string field, got %s", param.GetType())
 	}
 	for _, directive := range strings.Split(tags.Get("boa"), ",") {
@@ -135,9 +136,6 @@ func (ctx *processingContext) applyTags(param parameter, tags reflect.StructTag)
 		}
 		return positionalSkipError(param.GetName(), kind)
 	}
-	if tags.Get("configfile") == "true" {
-		param.SetConfigFile(true)
-	}
 	if param.IsConfigFile() {
 		t := param.GetType()
 		if t.Kind() != reflect.String && (t.Kind() != reflect.Slice || t.Elem().Kind() != reflect.String) {
@@ -151,8 +149,45 @@ func (ctx *processingContext) applyTags(param parameter, tags reflect.StructTag)
 		}
 		ctx.ConfigFiles = append(ctx.ConfigFiles, configFileEntry{mirror: param, targetPath: path})
 	}
-	if param.IsConfigFile() || hasFileTag(tags) {
+	if param.IsConfigFile() || param.IsFile() {
 		ctx.pathParams = append(ctx.pathParams, param)
 	}
 	return nil
+}
+
+type fileOptions struct {
+	enabled, optional, optionalDefault bool
+}
+
+// parsePathTag handles the shared boolean/modifier syntax of file and basedir tags.
+func parsePathTag(value string, allowed ...string) (map[string]bool, error) {
+	options := map[string]bool{}
+	for _, item := range strings.Split(value, ",") {
+		item = strings.TrimSpace(item)
+		if options[item] {
+			return nil, fmt.Errorf("repeated option %q", item)
+		}
+		if !slices.Contains(allowed, item) {
+			return nil, fmt.Errorf("invalid option %q", item)
+		}
+		options[item] = true
+	}
+	if options["false"] && len(options) != 1 {
+		return nil, fmt.Errorf("false cannot be combined with other options")
+	}
+	return options, nil
+}
+
+func parseFileTag(tag, value string) (fileOptions, error) {
+	options, err := parsePathTag(value, "true", "false", "optional", "optional-default")
+	if err != nil {
+		return fileOptions{}, err
+	}
+	if options["optional-default"] && tag != "configfile" {
+		return fileOptions{}, fmt.Errorf("optional-default requires configfile")
+	}
+	if options["optional"] && options["optional-default"] {
+		return fileOptions{}, fmt.Errorf("optional and optional-default cannot be combined")
+	}
+	return fileOptions{enabled: !options["false"], optional: options["optional"], optionalDefault: options["optional-default"]}, nil
 }

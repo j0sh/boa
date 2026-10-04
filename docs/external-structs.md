@@ -93,12 +93,14 @@ The path can also be designated programmatically:
 
 ```go
 type Params struct {
-    ConfigFile string `optional:"true"`
+    ConfigFile string
     external.Settings
 }
 
 InitFuncCtx: func(ctx *boa.HookContext, p *Params, _ *cobra.Command) error {
-    boa.Param(ctx, &p.ConfigFile).SetConfigFile(true)
+    config := boa.Param(ctx, &p.ConfigFile)
+    config.SetDefault("config.json")
+    config.SetConfigFileOptionalDefault(true)
     return nil
 },
 ```
@@ -122,14 +124,20 @@ A config-file field must be `string` or `[]string`. See [Configuration Files](co
 | `boa:"noconfig"` | `SetNoConfig` |
 | `boa:"configonly"` | `SetNoFlag(true)` + `SetNoEnv(true)` |
 | `boa:"ignore"` | `SetIgnored(true)` |
-| `configfile` | `SetConfigFile(true)` |
+| `file:"true"` | `SetFile(true)` |
+| `file:"optional"` | `SetFileOptional(true)` |
+| `configfile:"true"` | `SetConfigFile(true)` |
+| `configfile:"optional"` | `SetConfigFileOptional(true)` |
+| `configfile:"optional-default"` | `SetConfigFileOptionalDefault(true)` |
 | `basedir:"true"` | `SetBaseDir(true)` |
 | `basedir:"required"` | `SetBaseDirRequired(true)` |
 | `basedir:"autocreate"` | `SetBaseDirAutoCreate(true)` |
 
+File setters in Init override the corresponding tags. Enabling an optional policy also enables validation or loading; choosing a config policy replaces the other policy. Passing `false` to a policy setter clears only that policy. `SetFile(false)` disables file validation, and `SetConfigFile(false)` disables loading; both clear their optional policies. `secretfor` remains strict. Matching `IsFile*` and `IsConfigFile*` methods report the effective settings.
+
 Use typed `SetCustomValidator` for checks that cannot be expressed by tags.
 
-`SetNoConfig` applies to command-managed `configfile:"true"` loads and reloads. Standalone `LoadConfigFile`, `LoadConfigFiles`, and `LoadConfigBytes` calls enforce config restrictions from struct tags (`noconfig`, `secret`, and `basedir`).
+`SetNoConfig` applies to command-managed config loads and reloads. Standalone `LoadConfigFile`, `LoadConfigFiles`, and `LoadConfigBytes` calls enforce config restrictions from struct tags (`noconfig`, `secret`, and `basedir`).
 
 `SetNoConfig(false)` in an init hook overrides the field's `noconfig` tag. Managed dumps use the same effective setting as managed loads.
 
