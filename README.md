@@ -4,7 +4,7 @@
 [![Go Report Card](https://goreportcard.com/badge/github.com/j0sh/boa)](https://goreportcard.com/report/github.com/j0sh/boa)
 [![Docs](https://img.shields.io/badge/docs-j0sh.github.io%2Fboa-blue)](https://j0sh.github.io/boa/)
 
-BOA is a declarative Go CLI framework built on [Cobra](https://github.com/spf13/cobra). Define a parameter struct once and BOA derives flags, positional arguments, environment bindings, validation, config-file loading, and help text.
+BOA is a declarative Go CLI framework built on [Cobra](https://github.com/spf13/cobra). Define a parameter struct and BOA derives flags, positional arguments, environment bindings, validation, config-file loading, and help text.
 
 This fork is based on [GiGurra/boa](https://github.com/GiGurra/boa). See the [migration guide](https://j0sh.github.io/boa/migration/) for the API differences.
 
