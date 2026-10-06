@@ -104,3 +104,8 @@ Values resolve in the following order:
 - [Migrating from GiGurra/boa](https://j0sh.github.io/boa/migration/)
 
 API documentation is available on [pkg.go.dev](https://pkg.go.dev/github.com/j0sh/boa/pkg/boa).
+
+## Releasing
+
+* Increment the `VERSION` file
+* Run `./release.sh <remote>` where `remote` is the Git remote name, eg `origin`
