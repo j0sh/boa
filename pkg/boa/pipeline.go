@@ -52,6 +52,9 @@ func (b command) loadAndValidate(ctx *processingContext, cmd *cobra.Command, arg
 	syncMirrors(ctx)
 	if b.PreConfigFuncCtx != nil {
 		if err := b.PreConfigFuncCtx(newHookContext(ctx), b.Params, cmd, args); err != nil {
+			if IsUserInputError(err) {
+				return err
+			}
 			return fmt.Errorf("error in PreConfigFuncCtx: %w", err)
 		}
 		syncMirrors(ctx)
@@ -65,6 +68,9 @@ func (b command) loadAndValidate(ctx *processingContext, cmd *cobra.Command, arg
 	}
 	if b.PostConfigFuncCtx != nil {
 		if err := b.PostConfigFuncCtx(newHookContext(ctx), b.Params, cmd, args); err != nil {
+			if IsUserInputError(err) {
+				return err
+			}
 			return fmt.Errorf("error in PostConfigFuncCtx: %w", err)
 		}
 		syncMirrors(ctx)

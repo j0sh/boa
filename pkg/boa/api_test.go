@@ -1,6 +1,7 @@
 package boa
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"reflect"
@@ -646,6 +647,41 @@ func TestNewUserInputErrorInHook(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "start port") {
 		t.Errorf("Expected error message about start port, got: %s", err.Error())
+	}
+}
+
+func TestConfigHookErrors(t *testing.T) {
+	inputErr := NewUserInputErrorf("config network %q does not match discovery network %q", "arbitrum-one-mainnet", "offchain")
+	for _, phase := range []string{"PreConfigFuncCtx", "PostConfigFuncCtx"} {
+		for _, tc := range []struct {
+			name string
+			err  error
+		}{
+			{"user input", inputErr},
+			{"wrapped user input", fmt.Errorf("config: %w", inputErr)},
+			{"internal", errors.New("hook failed")},
+		} {
+			t.Run(phase+"/"+tc.name, func(t *testing.T) {
+				hook := func(*HookContext, *NoParams, *cobra.Command, []string) error { return tc.err }
+				cmd := Cmd[NoParams]{RunFunc: func(*NoParams, *cobra.Command, []string) { t.Fatal("action ran after hook error") }}
+				if phase == "PreConfigFuncCtx" {
+					cmd.PreConfigFuncCtx = hook
+				} else {
+					cmd.PostConfigFuncCtx = hook
+				}
+				err := cmd.RunArgsE(nil)
+				if !errors.Is(err, tc.err) || IsUserInputError(err) != IsUserInputError(tc.err) {
+					t.Fatalf("error classification or cause lost: %v", err)
+				}
+				want := tc.err.Error()
+				if !IsUserInputError(tc.err) {
+					want = "error in " + phase + ": " + want
+				}
+				if err.Error() != want {
+					t.Fatalf("got %q, want %q", err, want)
+				}
+			})
+		}
 	}
 }
 

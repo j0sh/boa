@@ -84,6 +84,8 @@ PostConfigFuncCtx: func(ctx *boa.HookContext, p *Params, _ *cobra.Command, _ []s
 
 `HasInput` preserves operator-supplied values; `HasValue` also counts defaults and application-generated values. See [source precedence](struct-tags.md#source-precedence) for empty-value behavior. Set `basedir` here; it cannot change in PreValidate.
 
+User input errors returned by these config hooks pass through unchanged, without adding the hook name.
+
 The runnable [base-directory example](https://github.com/j0sh/boa/tree/main/internal/example_basedir) sets `basedir` to `data/<network>` using the loaded `Network` setting. It uses a `default` tag for the state filename and a PostConfig hook to choose `basedir`.
 
 ## PreValidate: inspect final values
