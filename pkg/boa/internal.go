@@ -181,6 +181,10 @@ type Parameter interface {
 	SetBaseDirRequired(bool)
 	IsBaseDirAutoCreate() bool
 	SetBaseDirAutoCreate(bool)
+	// Path-base metadata must be configured during Init. An explicit policy
+	// enables path resolution for string and []string fields without file checks.
+	GetBasePath() BasePath
+	SetBasePath(BasePath)
 	GetDescription() string
 	SetDescription(string)
 	IsPositional() bool
@@ -336,6 +340,7 @@ type processingContext struct {
 	selectedBaseDir  *paramMeta
 	pathParams       []parameter
 	baseDir          baseDirState
+	initialBaseDir   string
 	inheritedBaseDir baseDirState
 	pathInvocation   *pathInvocation
 	// PreallocatedPtrs tracks struct pointer fields that were nil and got preallocated.
@@ -493,62 +498,6 @@ func splitPath(p fieldPath) []int {
 	return out
 }
 
-// snapshotPreallocatedStructs takes a shallow copy of each preallocated struct's value.
-// Used as fallback for non-JSON config formats where key-presence detection can't work.
-func snapshotPreallocatedStructs(ctx *processingContext) []reflect.Value {
-	snapshots := make([]reflect.Value, len(ctx.PreallocatedPtrs))
-	for i, info := range ctx.PreallocatedPtrs {
-		field, ok := ctx.resolveFieldValue(info.path)
-		if !ok || field.IsNil() {
-			continue
-		}
-		orig := field.Elem()
-		cp := reflect.New(orig.Type()).Elem()
-		cp.Set(orig)
-		snapshots[i] = cp
-	}
-	return snapshots
-}
-
-// markConfigChangedStructs compares preallocated struct values against pre-config
-// snapshots. If any struct changed, marks all its mirrors as setByConfig.
-// This is the fallback for formats whose KeyTree cannot describe the literal
-// key structure (no KeyTree set, or the KeyTree returned an error).
-//
-// The fallback is scoped per-load via fallbackRoots: a preallocated pointer
-// is only considered if its path lies within one of those subtrees. This
-// prevents a failing sub-load from blanket-marking fields that a *separate*
-// load already covered precisely via its own KeyTree. An empty fieldPath in
-// the list means "the entire root" (the legacy whole-tree behaviour, used
-// when the root config itself has no KeyTree).
-//
-// An empty fallbackRoots slice is a no-op.
-func markConfigChangedStructs(ctx *processingContext, snapshots []reflect.Value, fallbackRoots []fieldPath) {
-	if len(fallbackRoots) == 0 {
-		return
-	}
-	for i, info := range ctx.PreallocatedPtrs {
-		field, ok := ctx.resolveFieldValue(info.path)
-		if !ok || field.IsNil() || !snapshots[i].IsValid() {
-			continue
-		}
-		if !pathWithinAny(info.path, fallbackRoots) {
-			continue
-		}
-		current := field.Elem()
-		if !reflect.DeepEqual(current.Interface(), snapshots[i].Interface()) {
-			markAllMirrorsInSubtree(ctx, field.Interface(), splitPath(info.path))
-		}
-	}
-}
-
-// pathWithinAny reports whether child lies within (or equals) any of roots.
-// Uses fieldPath.hasSubtreePrefix so segment boundaries are respected (i.e.,
-// path "12" is NOT considered within root "1"; only "1", "1.X", "1.X.Y"... are).
-func pathWithinAny(child fieldPath, roots []fieldPath) bool {
-	return slices.ContainsFunc(roots, child.hasSubtreePrefix)
-}
-
 // markStructPtrPresentByConfig records that a preallocated struct pointer was
 // explicitly mentioned in a config file. This ensures the pointer survives
 // cleanup even if no individual child fields were set (e.g., "DB": {}).
@@ -560,45 +509,8 @@ func markStructPtrPresentByConfig(ctx *processingContext, path fieldPath) {
 	ctx.ConfigPresentPtrs[path] = true
 }
 
-// markAllMirrorsInSubtree marks every mirror within the given subtree as set by config.
-// The subtree is identified by its path from the root (empty path == entire root).
-// Only direct-descendant mirrors are marked; nested pointer-to-struct boundaries are
-// handled separately by key-presence tracking in markConfigKeysPresent.
-//
-// We iterate mirrorByPath looking for entries whose path starts with prefix and does
-// NOT cross a pointer-struct boundary further down (i.e., they're the immediate
-// flat-descendant leaves reachable by struct-walking without ptr indirection).
-// For simplicity — and to match the prior reflect-walking semantics — we walk the
-// actual struct at `structPtr` and compute child paths to look up.
-func markAllMirrorsInSubtree(ctx *processingContext, structPtr any, path []int) {
-	val := reflect.ValueOf(structPtr).Elem()
-	typ := val.Type()
-	for i := 0; i < typ.NumField(); i++ {
-		field := typ.Field(i)
-		if isBoaIgnored(field) {
-			continue
-		}
-		childPath := append(append([]int(nil), path...), i)
-		fieldVal := val.Field(i)
-		if isSupportedType(field.Type) {
-			if mirror, ok := ctx.mirrorByPath[joinPath(childPath)]; ok {
-				if pm, isPM := mirror.(*paramMeta); isPM && !pm.ignored {
-					pm.setByConfig = true
-				}
-			}
-			continue
-		}
-		if field.Type.Kind() == reflect.Struct {
-			markAllMirrorsInSubtree(ctx, fieldVal.Addr().Interface(), childPath)
-			continue
-		}
-		// Do NOT recurse into pointer-to-struct fields here.
-		// Key-presence detection handles them.
-	}
-}
-
 // groupHasInput excludes defaults and ignores fields in cleared pointer groups.
-// The same presence rule governs cleanup and early base-directory requiredness.
+// Defaults alone do not keep preallocated groups alive.
 func (ctx *processingContext) groupHasInput(group fieldPath) bool {
 	if ctx.ConfigPresentPtrs[group] {
 		return true
@@ -2384,6 +2296,13 @@ func newParam(field *reflect.StructField, t reflect.Type) (parameter, error) {
 			return nil, fmt.Errorf("basedir on field %s: %w", field.Name, err)
 		}
 	}
+	var basePath BasePath
+	if value, ok := field.Tag.Lookup("basepath"); ok {
+		basePath = BasePath(value)
+		if basePath != BasePathDir && basePath != BasePathSource {
+			return nil, fmt.Errorf("basepath on field %s: invalid value %q", field.Name, value)
+		}
+	}
 	var file, config fileOptions
 	for _, tag := range []struct {
 		name    string
@@ -2407,6 +2326,7 @@ func newParam(field *reflect.StructField, t reflect.Type) (parameter, error) {
 		file:            file,
 		configFile:      config,
 		baseDir:         baseDir,
+		basePath:        basePath,
 	}, nil
 }
 

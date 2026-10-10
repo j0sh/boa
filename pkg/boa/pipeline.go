@@ -50,12 +50,24 @@ func (b command) loadAndValidate(ctx *processingContext, cmd *cobra.Command, arg
 		}
 	}
 	syncMirrors(ctx)
-	if err := ctx.selectBaseDir(createDirs); err != nil {
+	if b.PreConfigFuncCtx != nil {
+		if err := b.PreConfigFuncCtx(newHookContext(ctx), b.Params, cmd, args); err != nil {
+			return fmt.Errorf("error in PreConfigFuncCtx: %w", err)
+		}
+		syncMirrors(ctx)
+	}
+	if err := ctx.selectInitialBaseDir(); err != nil {
 		return err
 	}
 
 	if err := b.loadConfigs(ctx); err != nil {
 		return err
+	}
+	if b.PostConfigFuncCtx != nil {
+		if err := b.PostConfigFuncCtx(newHookContext(ctx), b.Params, cmd, args); err != nil {
+			return fmt.Errorf("error in PostConfigFuncCtx: %w", err)
+		}
+		syncMirrors(ctx)
 	}
 
 	// Clean up preallocated struct pointers that had no fields set.
@@ -66,6 +78,9 @@ func (b command) loadAndValidate(ctx *processingContext, cmd *cobra.Command, arg
 	}
 
 	syncMirrors(ctx)
+	if err := ctx.finalizeBaseDir(createDirs); err != nil {
+		return err
+	}
 	ctx.normalizePaths(false)
 	if err := resolveSecretFiles(ctx); err != nil {
 		return NewUserInputError(err)
@@ -196,13 +211,7 @@ func (b command) loadConfigs(ctx *processingContext) error {
 	for _, entry := range ctx.ConfigFiles {
 		ctx.normalizePath(entry.mirror, false)
 	}
-	snapshots := snapshotPreallocatedStructs(ctx)
 	override := b.ConfigFormat
-	type loadedConfig struct {
-		path    fieldPath
-		present []fieldPath
-	}
-	var loaded []loadedConfig
 	// Root files override nested files; each list of paths overlays left to right.
 	for _, root := range []bool{false, true} {
 		for _, entry := range ctx.ConfigFiles {
@@ -233,7 +242,7 @@ func (b command) loadConfigs(ctx *processingContext) error {
 				if err := validateFile(file); err != nil {
 					optional := entry.mirror.IsConfigFileOptional()
 					if entry.mirror.IsConfigFileOptionalDefault() {
-						base := cmp.Or(ctx.baseDir.dir, ctx.pathInvocation.directory)
+						base := cmp.Or(ctx.defaultBasePath(entry.mirror), ctx.pathInvocation.directory)
 						optional = slices.ContainsFunc(configFilePaths(entry.mirror.defaultValuePtr()), func(path string) bool {
 							return path != "" && filepath.Clean(resolvePath(base, path)) == filepath.Clean(resolvePath(base, file))
 						})
@@ -269,19 +278,12 @@ func (b command) loadConfigs(ctx *processingContext) error {
 					syncMirrors(ctx)
 					return NewUserInputError(fmt.Errorf("configfile %s: %w", entry.mirror.GetName(), err))
 				}
-				loaded = append(loaded, loadedConfig{entry.targetPath, present})
+				markConfigKeysPresent(ctx, entry.targetPath, present, resolvePath(ctx.pathInvocation.directory, file))
+				syncMirrors(ctx)
 				ctx.LoadedConfigFiles = append(ctx.LoadedConfigFiles, file)
 			}
 		}
 	}
 	syncMirrors(ctx)
-	var fallback []fieldPath
-	for _, item := range loaded {
-		if item.present == nil {
-			fallback = append(fallback, item.path)
-		}
-		markConfigKeysPresent(ctx, item.path, item.present)
-	}
-	markConfigChangedStructs(ctx, snapshots, fallback)
 	return nil
 }

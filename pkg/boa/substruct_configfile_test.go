@@ -16,10 +16,14 @@ import (
 )
 
 // iniUnmarshal is a minimal INI-style deserializer (key=value per line).
-// Supports string, int, and bool fields. For testing config format registry.
+// Supports string, int, bool, and a key-tree map for config inspection.
 func iniUnmarshal(data []byte, target any) error {
+	keys, probe := target.(*map[string]any)
+	if probe {
+		*keys = make(map[string]any)
+	}
 	v := reflect.ValueOf(target)
-	if v.Kind() != reflect.Pointer || v.Elem().Kind() != reflect.Struct {
+	if !probe && (v.Kind() != reflect.Pointer || v.Elem().Kind() != reflect.Struct) {
 		return fmt.Errorf("ini: target must be a pointer to struct")
 	}
 	v = v.Elem()
@@ -37,6 +41,10 @@ func iniUnmarshal(data []byte, target any) error {
 		}
 		key := strings.TrimSpace(parts[0])
 		val := strings.TrimSpace(parts[1])
+		if probe {
+			(*keys)[key] = val
+			continue
+		}
 
 		for i := 0; i < t.NumField(); i++ {
 			field := t.Field(i)

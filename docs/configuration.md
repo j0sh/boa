@@ -31,7 +31,7 @@ Values loaded from the file remain below CLI and environment values:
 CLI > environment > root config > nested config > default > zero value
 ```
 
-Use [`basedir`](struct-tags.md#base-directories) to set a common directory for relative paths.
+Use [`basedir`](struct-tags.md#base-directories) to set the directory for relative paths. With [`basepath:"source"`](struct-tags.md#source-relative-paths), paths read from config are relative to the config file. [Config hooks](lifecycle.md#config-hooks-derive-directories-and-defaults) can set `basedir` and calculate defaults from loaded settings.
 
 `boa:"configonly"` disables flags and environment variables for a field while keeping config loading and validation. `boa:"noconfig"` rejects config files that contain the field. `boa:"ignore"` leaves the field to the config decoder, with no flags, environment variables, or BOA validation.
 
@@ -94,9 +94,9 @@ Format selection is per file, so one binary—and even one overlay chain—may a
 
 When an unregistered extension falls back to JSON, field-name matching uses `json` tags too.
 
-`RegisterConfigFormat` also uses the decoder to track supplied keys, including explicit zero or default values. Most parsers support the required `map[string]any` target.
+Automatic config loading requires `ConfigFormat.KeyTree` to identify supplied fields for `HasInput`, path resolution, and config restrictions. `RegisterConfigFormat` supplies it using the decoder's `map[string]any` support. For a command-level decoder, use `UniversalConfigFormat` as shown below.
 
-A usable `KeyTree` is required to enforce `RejectUnknown` or `boa:"noconfig"`. For a parser that only understands concrete structs, supply a separate probe:
+A decoder that only accepts concrete structs needs a separate key probe. Missing or failed probes reject the load before decoding:
 
 ```go
 boa.RegisterConfigFormatFull(".kv", boa.ConfigFormat{
@@ -148,7 +148,7 @@ The helpers are:
 | `LoadConfigFiles(paths, target, decoder)` | Load a left-to-right chain |
 | `LoadConfigBytes(data, ext, target, decoder)` | Decode embedded, remote, stdin, or test data |
 
-A non-nil decoder argument overrides registry selection. Otherwise file extension or `ext` selects the registered format, with JSON as the fallback. Empty paths and empty byte slices are no-ops. These helpers always fail on missing files.
+A non-nil decoder argument overrides registry selection. Otherwise file extension or `ext` selects the registered format, with JSON as the fallback. Empty paths and empty byte slices are no-ops. These helpers fail on missing files and decode values without resolving paths or creating directories.
 
 With `boa:"noconfig"` fields, a decoder override must also support `map[string]any` for key inspection.
 
@@ -163,7 +163,7 @@ BOA provides two output models:
 | `DumpConfigBytes`, `DumpConfigFile` | Every exported field, including zero values |
 | `HookContext.DumpBytes`, `HookContext.DumpFile` | Only fields for which `HasValue` is true |
 
-Source-aware dumping includes defaults so a saved config pins the current behavior across future application upgrades. It omits untouched zero values, the config-file path field itself, and `boa:"noconfig"` fields. The intentionally naive `DumpConfig*` helpers serialize the raw struct and do not enforce BOA source policies.
+The `HookContext` helpers include defaults so a saved config pins the current behavior across future application upgrades. They omit untouched zero values, the config-file path field itself, and `boa:"noconfig"` fields. They include `basedir` when set or given a default, unless explicitly excluded. The `DumpConfig*` helpers serialize the raw struct without applying BOA config restrictions.
 
 JSON marshaling is built in. Register a marshaler for other formats:
 

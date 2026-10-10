@@ -6,24 +6,27 @@ BOA separates command construction, value sourcing, validation, and action execu
 
 | Phase | State available | Typical use |
 |---|---|---|
-| Init | Field mirrors exist; flags are not bound | Configure metadata, defaults, validators, completion |
+| Init | Before flag setup | Configure fields, defaults, validators, completion |
 | PostCreate | Cobra flags exist; arguments are not parsed | Inspect or customize generated flags |
-| Source loading | CLI, env, nested config, root config, defaults | Automatic BOA pipeline |
-| PreValidate | Final parsed values are in the parameter struct | Cross-field checks, explicit config loading |
+| PreConfig | CLI/env values and defaults | Choose where to find config files |
+| PostConfig | Config merged; paths and secrets not resolved | Set `basedir` or calculate defaults |
+| PreValidate | Parsed values, resolved paths, and loaded secrets | Cross-field checks |
 | Validation | Required/alternatives/bounds/pattern/custom validators | Automatic BOA pipeline |
 | PreExecute | Values are valid | Establish action-specific resources |
 | Run | Command action | Application logic |
 
-Struct-method hooks run before the corresponding command function. `Init`, `PostCreate`, `PreValidate`, and validation run during `Validate` and live-reload reconstruction as applicable. PreExecute and Run are action hooks and are skipped by validation-only and reload operations.
+Struct methods run before their corresponding command callbacks. `Validate()` and reload run setup, config, and validation hooks; they skip PreExecute and Run.
 
 ## Hook forms
 
-Every lifecycle phase has command function fields. Parameter structs may implement equivalent interfaces:
+Use command callbacks or the corresponding parameter-struct methods:
 
 | Phase | Command fields | Struct methods |
 |---|---|---|
 | Init | `InitFunc`, `InitFuncCtx` | `Init()`, `InitCtx(ctx)` |
 | PostCreate | `PostCreateFunc`, `PostCreateFuncCtx` | `PostCreate()`, `PostCreateCtx(ctx)` |
+| PreConfig | `PreConfigFuncCtx` | — |
+| PostConfig | `PostConfigFuncCtx` | — |
 | PreValidate | `PreValidateFunc`, `PreValidateFuncCtx` | `PreValidate()`, `PreValidateCtx(ctx)` |
 | PreExecute | `PreExecuteFunc`, `PreExecuteFuncCtx` | `PreExecute()`, `PreExecuteCtx(ctx)` |
 
@@ -65,6 +68,23 @@ PostCreateFunc: func(_ *Params, cmd *cobra.Command) error {
 ```
 
 Use it for Cobra operations that require an existing flag. It is too late to change BOA metadata such as a field's name or environment binding.
+
+## Config hooks: derive directories and defaults
+
+Use `PreConfigFuncCtx` to set config paths or `basedir` from CLI/environment settings. Use `PostConfigFuncCtx` to set `basedir` or calculate defaults from config, before BOA resolves paths and reads secrets:
+
+```go
+PostConfigFuncCtx: func(ctx *boa.HookContext, p *Params, _ *cobra.Command, _ []string) error {
+    if !ctx.HasInput(&p.DataDir) {
+        p.DataDir = filepath.Join("data", p.Network)
+    }
+    return nil
+},
+```
+
+`HasInput` preserves operator-supplied values; `HasValue` also counts defaults and application-generated values. See [source precedence](struct-tags.md#source-precedence) for empty-value behavior. Set `basedir` here; it cannot change in PreValidate.
+
+The runnable [base-directory example](https://github.com/j0sh/boa/tree/main/internal/example_basedir) sets `basedir` to `data/<network>` using the loaded `Network` setting. It uses a `default` tag for the state filename and a PostConfig hook to choose `basedir`.
 
 ## PreValidate: inspect final values
 
@@ -146,7 +166,7 @@ if boa.IsUserInputError(err) {
 | `ToCobra()` | `*cobra.Command` | panic |
 | `ToCobraE()` | `(*cobra.Command, error)` | return |
 
-Both methods perform construction, including Init and PostCreate. PreValidate, validation, PreExecute, and Run happen when the resulting Cobra command executes.
+Both methods construct the command and run Init and PostCreate. Config loading and later phases run when the Cobra command executes.
 
 Use `boa.Execute(cmd)` when you want BOA's usage/error output around an assembled Cobra tree.
 
@@ -161,7 +181,7 @@ err := boa.Cmd[Params]{
 }.Validate()
 ```
 
-Init, PostCreate, source loading, PreValidate, and field validation still run.
+Init, PostCreate, source loading with both config hooks, PreValidate, and field validation still run.
 
 ## Testing
 
@@ -188,4 +208,4 @@ func TestCommand(t *testing.T) {
 
 Use `Validate` when the test concerns only sourcing and validation. Use `ToCobraE` when a test needs Cobra's output buffers or command-tree APIs.
 
-Live reload intentionally reuses only the setup and validation side of this lifecycle. See [Live Config Reload](live-reload.md#hook-behavior-on-reload) for the exact replay matrix.
+See [Live Config Reload](live-reload.md) for replay and watch behavior.

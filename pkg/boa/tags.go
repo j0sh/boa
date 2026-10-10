@@ -149,7 +149,17 @@ func (ctx *processingContext) applyTags(param parameter, tags reflect.StructTag)
 		}
 		ctx.ConfigFiles = append(ctx.ConfigFiles, configFileEntry{mirror: param, targetPath: path})
 	}
-	if param.IsConfigFile() || param.IsFile() {
+	meta := param.(*paramMeta)
+	if meta.basePath != "" {
+		if meta.GetBasePath() != BasePathDir && meta.GetBasePath() != BasePathSource {
+			return fmt.Errorf("basepath on param %s: invalid value %q", param.GetName(), meta.basePath)
+		}
+		t := param.GetType()
+		if t.Kind() != reflect.String && (t.Kind() != reflect.Slice || t.Elem().Kind() != reflect.String) {
+			return fmt.Errorf("basepath on param %s: must be a string or []string field", param.GetName())
+		}
+	}
+	if param.IsConfigFile() || param.IsFile() || meta.basePath != "" && !param.IsBaseDir() {
 		ctx.pathParams = append(ctx.pathParams, param)
 	}
 	return nil

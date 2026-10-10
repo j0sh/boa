@@ -70,6 +70,6 @@ the standard encoding interfaces avoids a registry altogether. Register custom
 types before constructing commands or decoding config, not concurrently with
 running commands.
 
-Cross-field checks can live in a native format's custom unmarshaler. Put checks
-that must see the final CLI/environment/config combination in a BOA PreValidate
-hook or parameter validator, after source precedence has produced effective values.
+Cross-field checks can live in a native format's custom unmarshaler. Use a BOA
+PreValidate hook or parameter validator for checks that need the merged CLI,
+environment, and config values.

@@ -35,6 +35,7 @@ boa.Cmd[Params]{
 - Metadata changed programmatically must be set in `InitFunc` or `InitFuncCtx`, before flags and environment values are bound.
 - Pointer substructures are allocated for traversal, then restored to `nil` unless an input source populated them. Defaults alone do not keep them alive.
 - `boa:"ignore"` removes a field from BOA processing. `boa:"configonly"` keeps validation while disabling CLI and environment input. `boa:"noconfig"` rejects an explicit config key while retaining other sources.
+- Use `basedir` for relative paths. With `basepath:"source"`, config paths are relative to the config file and CLI/environment paths are relative to the original working directory.
 - Config formats normally dispatch by file extension. `Cmd.ConfigFormat` deliberately bypasses that registry for one command.
 
 ## Install
@@ -43,4 +44,4 @@ boa.Cmd[Params]{
 go get github.com/j0sh/boa@latest
 ```
 
-BOA requires Go 1.27.1 or later. The public package reference is on [pkg.go.dev](https://pkg.go.dev/github.com/j0sh/boa/pkg/boa).
+BOA requires Go 1.27.2 or later. The public package reference is on [pkg.go.dev](https://pkg.go.dev/github.com/j0sh/boa/pkg/boa).

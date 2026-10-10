@@ -78,6 +78,12 @@ type Cmd[Struct any] struct {
 	InitFuncCtx func(ctx *HookContext, params *Struct, cmd *cobra.Command) error
 	// PostCreateFuncCtx runs after cobra flags are created with access to HookContext
 	PostCreateFuncCtx func(ctx *HookContext, params *Struct, cmd *cobra.Command) error
+	// PreConfigFuncCtx runs after CLI/env conversion, before config loading.
+	// Use it to choose config paths or their base from the parsed settings.
+	PreConfigFuncCtx func(ctx *HookContext, params *Struct, cmd *cobra.Command, args []string) error
+	// PostConfigFuncCtx runs after config merging, before final path and secret resolution.
+	// Use HasInput to derive defaults without replacing operator-supplied values.
+	PostConfigFuncCtx func(ctx *HookContext, params *Struct, cmd *cobra.Command, args []string) error
 	// PreValidateFuncCtx runs after flags are parsed but before validation with HookContext
 	PreValidateFuncCtx func(ctx *HookContext, params *Struct, cmd *cobra.Command, args []string) error
 	// PreExecuteFuncCtx runs after validation but before execution with HookContext
@@ -121,6 +127,8 @@ func (b Cmd[Struct]) command() command {
 		PreExecuteFunc:     adaptPhase(b.PreExecuteFunc),
 		InitFuncCtx:        adaptSetupCtx(b.InitFuncCtx),
 		PostCreateFuncCtx:  adaptSetupCtx(b.PostCreateFuncCtx),
+		PreConfigFuncCtx:   adaptPhaseCtx(b.PreConfigFuncCtx),
+		PostConfigFuncCtx:  adaptPhaseCtx(b.PostConfigFuncCtx),
 		PreValidateFuncCtx: adaptPhaseCtx(b.PreValidateFuncCtx),
 		PreExecuteFuncCtx:  adaptPhaseCtx(b.PreExecuteFuncCtx),
 

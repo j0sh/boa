@@ -14,7 +14,7 @@ This fork is based on [GiGurra/boa](https://github.com/GiGurra/boa). See the [mi
 go get github.com/j0sh/boa@latest
 ```
 
-BOA requires Go 1.27.1 or later.
+BOA requires Go 1.27.2 or later.
 
 ## Quick start
 

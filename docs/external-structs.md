@@ -132,12 +132,16 @@ A config-file field must be `string` or `[]string`. See [Configuration Files](co
 | `basedir:"true"` | `SetBaseDir(true)` |
 | `basedir:"required"` | `SetBaseDirRequired(true)` |
 | `basedir:"autocreate"` | `SetBaseDirAutoCreate(true)` |
+| `basepath:"source"` | `SetBasePath(boa.BasePathSource)` |
+| `basepath:"basedir"` | `SetBasePath(boa.BasePathDir)` |
 
 File setters in Init override the corresponding tags. Enabling an optional policy also enables validation or loading; choosing a config policy replaces the other policy. Passing `false` to a policy setter clears only that policy. `SetFile(false)` disables file validation, and `SetConfigFile(false)` disables loading; both clear their optional policies. `secretfor` remains strict. Matching `IsFile*` and `IsConfigFile*` methods report the effective settings.
 
+See [Base directories](struct-tags.md#base-directories) and [Source-relative paths](struct-tags.md#source-relative-paths) for path behavior, and [config hooks](lifecycle.md#config-hooks-derive-directories-and-defaults) for setting `basedir` and calculating defaults.
+
 Use typed `SetCustomValidator` for checks that cannot be expressed by tags.
 
-`SetNoConfig` applies to command-managed config loads and reloads. Standalone `LoadConfigFile`, `LoadConfigFiles`, and `LoadConfigBytes` calls enforce config restrictions from struct tags (`noconfig`, `secret`, and `basedir`).
+`SetNoConfig` applies to command-managed config loads and reloads. Standalone `LoadConfigFile`, `LoadConfigFiles`, and `LoadConfigBytes` calls enforce config restrictions from struct tags (`noconfig` and `secret`).
 
 `SetNoConfig(false)` in an init hook overrides the field's `noconfig` tag. Managed dumps use the same effective setting as managed loads.
 

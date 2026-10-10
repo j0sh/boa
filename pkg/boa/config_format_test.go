@@ -186,98 +186,32 @@ func TestConfigFormatExtensions_Sorted(t *testing.T) {
 	}
 }
 
-// TestSnapshotFallbackIsScopedPerLoad reproduces the bug CodeRabbit flagged:
-// a sub-load whose format lacks a KeyTree used to trigger a whole-tree
-// snapshot fallback, which over-marked fields in *other* subtrees whose
-// root-level KeyTree load had already covered them precisely.
-//
-// Setup:
-//
-//   - Root config (.json, built-in KeyTree): writes DB.Host to a non-default
-//     value. Precise KeyTree detection should mark DB.Host as set-by-config
-//     and leave DB.Port alone.
-//   - Substruct config (.nokt, no KeyTree): forces a fallback that, with the
-//     old whole-tree behaviour, would blanket-mark everything inside the DB
-//     pointer group — including DB.Port — because snapshot comparison sees
-//     DB changed from the root's write.
-//
-// With the per-subtree scoping fix, the fallback is limited to the substruct's
-// own subtree, so DB.Port correctly reports HasValue=false.
-func TestSnapshotFallbackIsScopedPerLoad(t *testing.T) {
-	// .nokt: valid unmarshal, but deliberately no KeyTree → forces fallback.
-	registerFormatCleanup(t, ".nokt", ConfigFormat{Unmarshal: fakeUnmarshal})
-
+func TestConfigPresenceIsScopedPerLoad(t *testing.T) {
+	registerFormatCleanup(t, ".custom", UniversalConfigFormat(fakeUnmarshal))
 	type DB struct {
-		Host string `descr:"db host" default:"localhost"`
-		Port int    `descr:"db port" default:"5432"`
-	}
-	type SubCfg struct {
-		ConfigFile string `configfile:"true" optional:"true"`
-		Note       string `descr:"sub note" default:"defaultnote"`
+		Host string `default:"localhost"`
+		Port int    `default:"5432"`
 	}
 	type Params struct {
-		ConfigFile string `configfile:"true" optional:"true"`
-		DB         *DB
-		Sub        SubCfg
+		Config string `configfile:"true"`
+		DB     *DB
+		Sub    struct {
+			Config string `configfile:"true"`
+			Note   string `default:"defaultnote"`
+		}
 	}
-
 	dir := t.TempDir()
-
-	// Root config writes DB.Host to a non-default value. KeyTree works.
-	rootPath := filepath.Join(dir, "root.json")
-	if err := os.WriteFile(rootPath, []byte(`{"DB":{"Host":"rootval"}}`), 0o644); err != nil {
-		t.Fatalf("write root cfg: %v", err)
-	}
-
-	// Sub config uses the .nokt format (no KeyTree). Writes Sub.Note to a
-	// non-default value so the sub load actually does something.
-	subPath := filepath.Join(dir, "sub.nokt")
-	if err := os.WriteFile(subPath, []byte(`{"Note":"fromsub"}`), 0o644); err != nil {
-		t.Fatalf("write sub cfg: %v", err)
-	}
-
-	// Check setByConfig directly (we're in-package) instead of HasValue(),
-	// because HasValue() also returns true when a parameter has a default,
-	// which would confound this test — both DB.Host and DB.Port have
-	// defaults, so only the setByConfig flag distinguishes "the config
-	// file wrote this" from "the parameter has a default".
-	var gotDB *DB
-	var hostSetByConfig, portSetByConfig bool
-	err := (Cmd[Params]{
-		Use:         "test",
-		ParamEnrich: ParamEnricherName,
-		RunFuncCtx: func(ctx *HookContext, p *Params, cmd *cobra.Command, args []string) {
-			gotDB = p.DB
-			if p.DB == nil {
-				return
+	root := writeFile(t, dir, "root.json", `{"DB":{"Host":"rootval"}}`)
+	nested := writeFile(t, dir, "nested.custom", `{"Note":"fromsub"}`)
+	baseDirOK(t, (Cmd[Params]{RawArgs: []string{"--config", root, "--sub-config", nested},
+		PostConfigFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command, _ []string) error {
+			if p.DB == nil || p.DB.Host != "rootval" || p.Sub.Note != "fromsub" ||
+				!ctx.HasInput(&p.DB.Host) || ctx.HasInput(&p.DB.Port) || !ctx.HasInput(&p.Sub.Note) {
+				t.Fatalf("incorrect input presence: %+v", p)
 			}
-			if pm, ok := ctx.parameter(&p.DB.Host).(*paramMeta); ok {
-				hostSetByConfig = pm.setByConfig
-			}
-			if pm, ok := ctx.parameter(&p.DB.Port).(*paramMeta); ok {
-				portSetByConfig = pm.setByConfig
-			}
+			return nil
 		},
-	}).RunArgsE([]string{"--config-file", rootPath, "--sub-config-file", subPath})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-
-	if gotDB == nil {
-		t.Fatal("expected DB pointer group to survive (root KeyTree marked Host)")
-	}
-	if gotDB.Host != "rootval" {
-		t.Errorf("DB.Host = %q, want rootval", gotDB.Host)
-	}
-	if !hostSetByConfig {
-		t.Error("DB.Host setByConfig should be true (root KeyTree marked it precisely)")
-	}
-	// The headline assertion: without per-subtree scoping, the sub-load's
-	// fallback would over-mark DB.Port here. With the fix, DB.Port is
-	// correctly reported as NOT set by config.
-	if portSetByConfig {
-		t.Error("DB.Port setByConfig should be false — the sub-load's snapshot fallback must not leak into the DB subtree covered by the root KeyTree")
-	}
+	}).Validate())
 }
 
 // TestRegisterConfigFormatFull_NormalizesDotlessExtension covers the DX
@@ -454,10 +388,7 @@ func TestCustomConfigFormat_KeyTreeDetectsZeroValueWrite(t *testing.T) {
 }
 
 func TestCustomConfigFormat_RegisteredFormatAppliesToCmd(t *testing.T) {
-	// Use a dedicated extension with only Unmarshal — no KeyTree — and verify
-	// the command still runs successfully (format resolution by extension,
-	// graceful snapshot fallback for key-presence detection).
-	registerFormatCleanup(t, ".fmtB", ConfigFormat{Unmarshal: fakeUnmarshal})
+	registerFormatCleanup(t, ".fmtB", UniversalConfigFormat(fakeUnmarshal))
 
 	type Params struct {
 		ConfigFile string `configfile:"true" optional:"true"`
@@ -964,7 +895,7 @@ func TestConfigFile_FormatAwareFieldTag_MiniKV(t *testing.T) {
 
 // TestConfigFile_FormatAwareFieldTag_MiniKV_NonZeroValue is the
 // complement to the zero-value test — with a non-zero value the
-// snapshot fallback can also catch the change, so this test pins the
+// other value checks can also catch the change, so this test pins the
 // "happy path" and guards against a regression where the fix stopped
 // running the key-presence walker for non-zero writes.
 func TestConfigFile_FormatAwareFieldTag_MiniKV_NonZeroValue(t *testing.T) {

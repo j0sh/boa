@@ -13,7 +13,7 @@ When more than one source sets a field, the highest source wins:
 5. defaults
 6. Go zero values
 
-BOA tracks whether a source supplied a value separately from the value itself. An explicit `0`, `false`, empty string, or config value equal to the default is still present.
+`ctx.HasInput(&p.Field)` reports CLI, environment, or automatic config input, including explicit zero and default-equivalent values. Empty CLI/config strings count as input; empty environment variables are ignored. `ctx.HasValue(&p.Field)` also includes defaults and application-generated values.
 
 ## Tag reference
 
@@ -34,6 +34,7 @@ BOA tracks whether a source supplied a value separately from the value itself. A
 | `pattern` | Regular expression for a string | `pattern:"^[a-z][a-z0-9-]*$"` |
 | `file` | Validate a regular-file path; optionally allow missing files | `file:"true"` |
 | `basedir` | Supply the base for relative file paths | `basedir:"required,autocreate"` |
+| `basepath` | Choose how relative paths are resolved | `basepath:"source"` |
 | `secret` | Hide and exclude a secret value from config | `secret:"true"` |
 | `secretfor` | Read a file into a sibling secret field | `secretfor:"Token"` |
 | `collection` | Slice occurrence mode: `slice` or `array` | `collection:"array"` |
@@ -192,7 +193,7 @@ Both `file` and [`configfile`](configuration.md#automatic-loading) accept `true`
 
 ## Base directories
 
-Use `basedir` on one string field per command to resolve `file`, `configfile`, and `secretfor` paths relative to that directory:
+Mark one string field per command with `basedir`. Relative `file`, `configfile`, and `secretfor` paths resolve against it:
 
 ```go
 type Params struct {
@@ -202,22 +203,50 @@ type Params struct {
 }
 ```
 
-`--data-dir /srv/app` makes those defaults `/srv/app/config.json` and `/srv/app/input.txt`. Paths read from config files use the same base. Absolute paths are unchanged.
+`--data-dir /srv/app` makes those defaults `/srv/app/config.json` and `/srv/app/input.txt`. Paths read from config files use the same base unless `basepath:"source"` selects their input source. Absolute paths are unchanged.
 
 | Value | Behavior |
 |---|---|
 | `true` | Use the directory without checking that it exists |
 | `required` | Require an existing directory |
-| `autocreate` | Create the directory and missing parents before loading config |
+| `autocreate` | Create `basedir` and missing parents after loading config |
 | `false` | Disable the tag |
 
 Combine options as `basedir:"required,autocreate"`. Directory creation runs only during command execution; help, completion, `Validate()`, and reload never create directories. With `required`, validation and reload fail if the directory is missing.
 
-The base directory cannot be set in config files or changed in PreValidate. A relative base uses the command's original working directory; an empty value uses that directory itself. BOA does not change the process's working directory.
+A config file can set `basedir` with normal [source precedence](#source-precedence). Config filenames use the `basedir` set before config loading. Changing `basedir` through config applies to other paths and does not trigger another config load. Directory checks and creation happen after config loading succeeds.
 
-Add `persistent:"true"` to share the base with child commands. A child's own `basedir` field overrides it.
+A relative `basedir` resolves against the original working directory; an empty value means that directory. Add `basepath:"source"` to resolve `basedir` from config relative to the config file. BOA never changes the working directory. Use [config hooks](lifecycle.md#config-hooks-derive-directories-and-defaults) to set `basedir`; changing it in PreValidate is an error.
+
+Add `persistent:"true"` to share `basedir` with children. A child's own `basedir` overrides it. Managed dumps include `basedir` unless excluded with `boa:"noconfig"`.
 
 See the [runnable example](https://github.com/j0sh/boa/tree/main/internal/example_basedir) and [programmatic equivalents](external-structs.md#tag-to-method-mapping).
+
+## Source-relative paths
+
+Use `basepath:"source"` for credential files, runner files, or other paths that should resolve relative to their config file or working directory:
+
+```go
+type Params struct {
+    DataDir    string `basedir:"true" default:"."`
+    Database   string `basepath:"basedir" default:"database.db"`
+    RunnerFile string `file:"true" basepath:"source" optional:"true"`
+    Token      string `secret:"true" optional:"true"`
+    TokenFile  string `secretfor:"Token" basepath:"source"`
+}
+```
+
+| Input source | Relative paths resolve against |
+|---|---|
+| CLI or environment | Original working directory |
+| Automatic config | Directory containing the config file |
+| Default or application-generated value | `basedir`, or the original working directory if no `basedir` is set |
+
+Config-file defaults use `basedir` as set before config loading. An overlay becomes a path's source only when it assigns a value; an absent key or JSON `null` on a `string` field preserves its previous path and source. Empty paths stay empty; absolute paths stay absolute.
+
+`basepath` accepts `source` and `basedir` on strings, string slices, and supported named/pointer equivalents. The tag itself does not require files to exist. By default, `file`, `configfile`, and `secretfor` paths use `basedir`. For external structs, call `SetBasePath(boa.BasePathSource)` or `SetBasePath(boa.BasePathDir)` during Init.
+
+Standalone `LoadConfig*` helpers decode values without resolving paths.
 
 ## Secrets and secret files
 
@@ -311,7 +340,7 @@ type Params struct {
 
 On a struct group, `noconfig` also excludes its descendants, including embedded fields. Managed dumps omit excluded fields and groups; if nothing remains, they produce an empty object.
 
-Custom formats must provide `ConfigFormat.KeyTree` so BOA can inspect literal keys. `RegisterConfigFormat` supplies one automatically for decoders that can also decode into `map[string]any`; a complete `ConfigFormat` without a key tree fails closed when an applicable `noconfig` field exists.
+Custom decoders need [key inspection](configuration.md#registering-formats) to enforce `noconfig`; an unavailable probe rejects the load.
 
 ```go
 type Params struct {

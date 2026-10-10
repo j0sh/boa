@@ -272,52 +272,24 @@ func TestNoConfig_ProgrammaticNestedPolicy(t *testing.T) {
 }
 
 func TestNoConfig_FailsClosedWithoutUsableKeyTree(t *testing.T) {
-	testConfigProbes(t, false)
+	testConfigProbes(t, "noconfig")
 	path := filepath.Join(t.TempDir(), "config.json")
 	if err := os.WriteFile(path, []byte(`{"Other":"value"}`), 0o600); err != nil {
 		t.Fatal(err)
 	}
 
-	t.Run("unrelated target remains compatible", func(t *testing.T) {
-		type Plain struct {
-			ConfigFile string `configfile:"true" optional:"true"`
-			Other      string `optional:"true"`
+	t.Run("standalone fields need no key tree", func(t *testing.T) {
+		var p struct {
+			Other  string
+			Secret string `boa:"noconfig" json:"-"`
 		}
-		var got string
-		err := (Cmd[Plain]{
-			Use:          "test",
-			ConfigFormat: ConfigFormat{Unmarshal: json.Unmarshal},
-			RunFunc: func(p *Plain, _ *cobra.Command, _ []string) {
-				got = p.Other
-			},
-		}).RunArgsE([]string{"--config-file", path})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != "value" {
-			t.Fatalf("Other = %q, want value", got)
-		}
-	})
-
-	t.Run("format-excluded field needs no key tree", func(t *testing.T) {
-		type Excluded struct {
-			ConfigFile string `configfile:"true" optional:"true"`
-			Other      string `optional:"true"`
-			Secret     string `boa:"noconfig" json:"-" optional:"true"`
-		}
-		var got string
-		err := (Cmd[Excluded]{
-			Use:          "test",
-			ConfigFormat: ConfigFormat{Unmarshal: json.Unmarshal},
-			RunFunc: func(p *Excluded, _ *cobra.Command, _ []string) {
-				got = p.Other
-			},
-		}).RunArgsE([]string{"--config-file", path})
-		if err != nil {
-			t.Fatal(err)
-		}
-		if got != "value" {
-			t.Fatalf("Other = %q, want value", got)
+		calls := 0
+		err := LoadConfigFile(path, &p, func(data []byte, target any) error {
+			calls++
+			return json.Unmarshal(data, target)
+		})
+		if err != nil || p.Other != "value" || calls != 1 {
+			t.Fatalf("standalone load: %+v calls=%d error=%v", p, calls, err)
 		}
 	})
 }

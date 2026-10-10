@@ -106,6 +106,8 @@ type paramMeta struct {
 	// Path tags are seeded before Init so hooks can override them.
 	file, configFile fileOptions
 	baseDir          baseDirOptions
+	basePath         BasePath
+	configSource     string // absolute filename of the last config supplying this field
 	// Secret companions always require an existing regular file.
 	secretFile bool
 }
@@ -302,6 +304,10 @@ func (f *paramMeta) HasValue() bool {
 		f.wasSetByInject() || f.setByConfig
 }
 
+func (f *paramMeta) hasInput() bool {
+	return f.wasSetOnCli() || f.wasSetByEnv() || f.setByConfig
+}
+
 // --- CLI/Env state ---
 
 func (f *paramMeta) wasSetOnCli() bool {
@@ -367,7 +373,7 @@ func (f *paramMeta) IsNoFlag() bool       { return f.noFlag }
 func (f *paramMeta) SetNoFlag(val bool)   { f.noFlag = val }
 func (f *paramMeta) IsNoEnv() bool        { return f.noEnv }
 func (f *paramMeta) SetNoEnv(val bool)    { f.noEnv = val }
-func (f *paramMeta) IsNoConfig() bool     { return f.noConfig || f.IsBaseDir() && !f.IsIgnored() }
+func (f *paramMeta) IsNoConfig() bool     { return f.noConfig }
 func (f *paramMeta) SetNoConfig(val bool) { f.noConfig = val }
 func (f *paramMeta) IsIgnored() bool      { return f.ignored }
 func (f *paramMeta) SetIgnored(val bool)  { f.ignored = val }
@@ -414,6 +420,16 @@ func (f *paramMeta) SetConfigFileOptionalDefault(optional bool) {
 func (f *paramMeta) IsBaseDir() bool           { return f.baseDir.enabled }
 func (f *paramMeta) IsBaseDirRequired() bool   { return f.baseDir.required }
 func (f *paramMeta) IsBaseDirAutoCreate() bool { return f.baseDir.autoCreate }
+
+func (f *paramMeta) GetBasePath() BasePath {
+	if f.basePath == "" {
+		return BasePathDir
+	}
+	return f.basePath
+}
+
+// SetBasePath configures relative path resolution during Init.
+func (f *paramMeta) SetBasePath(base BasePath) { f.basePath = base }
 
 // Disabling the designation clears its options, preserving explicit noconfig.
 func (f *paramMeta) SetBaseDir(enabled bool) {

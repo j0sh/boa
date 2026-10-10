@@ -109,10 +109,12 @@ func TestRejectUnknown_ConfigFields(t *testing.T) {
 	}
 }
 
-func TestRejectUnknown_Probes(t *testing.T) { testConfigProbes(t, true) }
+func TestRejectUnknown_Probes(t *testing.T) { testConfigProbes(t, "strict") }
 
-// The same probe contract protects strict decoding and noconfig independently.
-func testConfigProbes(t *testing.T, strict bool) {
+func TestConfigFormat_Probes(t *testing.T) { testConfigProbes(t, "automatic") }
+
+// Exercise the shared probe contract through standalone and command loaders.
+func testConfigProbes(t *testing.T, mode string) {
 	t.Helper()
 	sentinel := errors.New("probe failed")
 	for _, tc := range []struct {
@@ -130,24 +132,34 @@ func testConfigProbes(t *testing.T, strict bool) {
 			return map[string]any{"credentials": []any{map[any]any{1: true}}}, nil
 		}, 1, 0},
 	} {
-		if !strict && (tc.name == "unknown" || tc.name == "opaque collection" || tc.name == "non-string key") {
+		if mode != "strict" && (tc.name == "unknown" || tc.name == "opaque collection" || tc.name == "non-string key") {
 			continue
 		}
 		t.Run(tc.name, func(t *testing.T) {
 			var target any = &strictConfig{}
-			if !strict {
+			if mode == "noconfig" {
 				target = &struct {
 					Secret string `boa:"noconfig"`
 				}{}
 			}
-			probes, decodes := 0, 0
+			probes, decodes, hooks := 0, 0, 0
 			format := ConfigFormat{Unmarshal: func([]byte, any) error { decodes++; return nil }}
 			if tc.probe != nil {
 				format.KeyTree = func(data []byte) (map[string]any, error) { probes++; return tc.probe(data) }
 			}
-			_, err := loadConfigBytesInto([]byte(tc.data), ".json", target, format, nil, strict)
-			if probes != tc.probes || decodes != tc.decodes || (err != nil) != (tc.want != "") || err != nil && !strings.Contains(err.Error(), tc.want) {
-				t.Fatalf("probes=%d decodes=%d err=%v", probes, decodes, err)
+			var err error
+			if mode == "automatic" {
+				type Params struct {
+					Config string `configfile:"true"`
+				}
+				err = (Cmd[Params]{RawArgs: []string{"--config", writeTestConfigFile(t, tc.data)}, ConfigFormat: format,
+					PostConfigFuncCtx: func(*HookContext, *Params, *cobra.Command, []string) error { hooks++; return nil },
+				}).Validate()
+			} else {
+				_, err = loadConfigBytesInto([]byte(tc.data), ".json", target, format, nil, mode == "strict")
+			}
+			if probes != tc.probes || decodes != tc.decodes || mode == "automatic" && hooks != tc.decodes || (err != nil) != (tc.want != "") || err != nil && !strings.Contains(err.Error(), tc.want) {
+				t.Fatalf("probes=%d decodes=%d hooks=%d err=%v", probes, decodes, hooks, err)
 			}
 			if tc.name == "error" && !errors.Is(err, sentinel) {
 				t.Fatalf("lost probe error: %v", err)

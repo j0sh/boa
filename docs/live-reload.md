@@ -36,39 +36,17 @@ Readers call `active.Load()` and always receive a complete old or new snapshot.
 
 ## Replay semantics
 
-A reload:
+Reload builds fresh parameters from the saved CLI flags and positional arguments, rereads environment and config, and returns the new pointer after validation succeeds. It uses the original working directory and any `basedir` inherited from the parent. It recalculates this command's `basedir` before loading config; the value from the previous config load is not reused. Reload never creates directories.
 
-1. allocates a new parameter struct;
-2. rebuilds that command's mirrors and bindings;
-3. reruns Init and PostCreate hooks;
-4. restores the parsed CLI flags and positional arguments from the actual invocation;
-5. reloads environment variables and config files with normal precedence;
-6. reruns PreValidate hooks and field validation;
-7. returns the fresh pointer only after all steps succeed.
-
-The saved invocation is independent of later changes to `os.Args`. Reload does not route through child commands or reparent the original Cobra tree. Calls through the same `HookContext` are serialized.
-
-With [`basedir`](struct-tags.md#base-directories), reload uses the original working directory and keeps any base directory inherited from a parent command.
-
-On a returned error, `Reload` returns `(nil, err)` and the caller should keep the previous snapshot. Setup and PreValidate hooks may affect external systems; those effects cannot be rolled back. Panics from application hooks or invalid API use are not recovered.
+Calls on the same `HookContext` are serialized. Reload affects only that command and does not rerun children. On error it returns `(nil, err)` and leaves the previous parameters and watch list intact. Hook side effects cannot be rolled back; application panics are not recovered.
 
 ## Hook behavior on reload
 
-| Phase | Runs? |
-|---|---:|
-| Struct and command Init | yes |
-| Struct and command PostCreate | yes |
-| Environment/config sourcing | yes |
-| Struct and command PreValidate | yes |
-| Field validation | yes |
-| Struct and command PreExecute | no |
-| Run functions | no |
-
-Keep Init, PostCreate, and PreValidate repeatable. Put one-time resource startup in PreExecute or Run.
+Reload runs Init, PostCreate, PreConfig, PostConfig, PreValidate, and field validation. Keep these hooks repeatable. PreExecute and Run are skipped; use them for one-time resource startup. See [execution order](lifecycle.md#execution-order).
 
 ## Watched files
 
-`ctx.WatchedConfigFiles()` returns successfully loaded `configfile` paths, excluding missing optional files and including nested paths, overlay chains, registered formats, and a command-level format override. Execution, `Validate()`, and reload use the same [missing-file policy](configuration.md#automatic-loading). A successful reload refreshes this list; a failed reload leaves the previous list intact.
+`ctx.WatchedConfigFiles()` returns the config files successfully loaded, excluding missing optional files. A successful reload refreshes the list using the same [missing-file policy](configuration.md#automatic-loading).
 
 Files loaded manually with `LoadConfigFile`, `LoadConfigFiles`, or `LoadConfigBytes` are outside the automatic pipeline. Register filesystem paths explicitly in a context-aware PreValidate hook:
 

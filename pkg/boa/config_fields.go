@@ -17,11 +17,7 @@ func (ctx *processingContext) noConfig(path fieldPath, sf reflect.StructField) b
 			return mirror.IsNoConfig()
 		}
 	}
-	var options baseDirOptions
-	if value, ok := sf.Tag.Lookup("basedir"); ok && !isBoaIgnored(sf) {
-		options, _ = parseBaseDirTag(value)
-	}
-	return slices.Contains(getBoaTags(sf), "noconfig") || sf.Tag.Get("secret") == "true" || options.enabled
+	return slices.Contains(getBoaTags(sf), "noconfig") || sf.Tag.Get("secret") == "true"
 }
 
 type configField struct {
@@ -94,10 +90,14 @@ func configFields(t reflect.Type, tag string, policy noConfigPredicate) []config
 	return fields
 }
 
-// inspectConfig probes once, rejects forbidden keys before decoding, and returns
-// declared paths to mark after all overlays. Nil means snapshot fallback; an
-// empty non-nil slice means a successful probe with no recognized keys.
-func inspectConfig(data []byte, target any, format ConfigFormat, tag string, policy noConfigPredicate, rejectUnknown bool) ([]fieldPath, error) {
+type configInput struct {
+	path    fieldPath
+	nonNull bool
+}
+
+// inspectConfig rejects forbidden keys before decoding and records supplied fields.
+// Nulls count as input but do not replace the origin of a retained scalar value.
+func inspectConfig(data []byte, target any, format ConfigFormat, tag string, policy noConfigPredicate, rejectUnknown bool) ([]configInput, error) {
 	fields := configFields(reflect.TypeOf(target), tag, policy)
 	if !rejectUnknown && policy == nil && !slices.ContainsFunc(fields, func(f configField) bool { return f.noConfig }) {
 		return nil, nil // Standalone decoders need not support a key probe otherwise.
@@ -110,23 +110,23 @@ func inspectConfig(data []byte, target any, format ConfigFormat, tag string, pol
 			probeErr = fmt.Errorf("KeyTree returned nil")
 		}
 	}
-	if rejectUnknown && probeErr != nil {
-		return nil, fmt.Errorf("cannot inspect config with RejectUnknown: %w", probeErr)
-	}
-	var present []fieldPath
-	if probeErr == nil {
-		present = []fieldPath{}
-	}
-	for _, f := range fields {
-		if f.noConfig && probeErr != nil {
-			return nil, fmt.Errorf("cannot inspect config for boa:\"noconfig\" on field %s: %w", f.name, probeErr)
+	if probeErr != nil {
+		purpose := "automatic loading"
+		if rejectUnknown {
+			purpose = "RejectUnknown"
+		} else if policy == nil {
+			purpose = `boa:"noconfig"`
 		}
-		if actual, ok := configKeyPathPresent(raw, f.keys); probeErr == nil && ok {
+		return nil, fmt.Errorf("%s requires a usable ConfigFormat.KeyTree: %w", purpose, probeErr)
+	}
+	var present []configInput
+	for _, f := range fields {
+		if actual, nonNull := configKeyPath(raw, f.keys); actual != nil {
 			if f.noConfig {
 				return nil, fmt.Errorf("config key %q is forbidden by boa:\"noconfig\" on field %s", strings.Join(actual, "."), f.name)
 			}
 			if !f.ignored {
-				present = append(present, f.path)
+				present = append(present, configInput{f.path, nonNull})
 			}
 		}
 	}
@@ -138,9 +138,9 @@ func inspectConfig(data []byte, target any, format ConfigFormat, tag string, pol
 	return present, nil
 }
 
-// Inspect every case-equivalent branch: JSON can decode multiple spellings into
-// the same struct. Sort matches to keep error reporting deterministic.
-func configKeyPathPresent(raw map[string]any, path []string) ([]string, bool) {
+// Inspect case-equivalent branches and retain any non-null assignment. A null
+// spelling must not hide another spelling that supplies a path in the same file.
+func configKeyPath(raw map[string]any, path []string) ([]string, bool) {
 	var matches []string
 	for key := range raw {
 		if strings.EqualFold(key, path[0]) {
@@ -148,15 +148,21 @@ func configKeyPathPresent(raw map[string]any, path []string) ([]string, bool) {
 		}
 	}
 	slices.Sort(matches)
+	var present []string
 	for _, key := range matches {
-		if len(path) == 1 {
-			return []string{key}, true
+		rest, nonNull := []string{}, raw[key] != nil
+		if len(path) > 1 {
+			rest, nonNull = configKeyPath(asKeyMap(raw[key]), path[1:])
+			if rest == nil {
+				continue
+			}
 		}
-		if rest, ok := configKeyPathPresent(asKeyMap(raw[key]), path[1:]); ok {
-			return append([]string{key}, rest...), true
+		present = append([]string{key}, rest...)
+		if nonNull {
+			return present, true
 		}
 	}
-	return nil, false
+	return present, false
 }
 
 // asKeyMap also accepts the nested mapping shape produced by YAML v2.
@@ -176,8 +182,9 @@ func asKeyMap(v any) map[string]any {
 	return nil
 }
 
-func markConfigKeysPresent(ctx *processingContext, targetPath fieldPath, present []fieldPath) {
-	for _, path := range present {
+func markConfigKeysPresent(ctx *processingContext, targetPath fieldPath, present []configInput, file string) {
+	for _, input := range present {
+		path := input.path
 		if targetPath != "" {
 			path = targetPath + "." + path
 		}
@@ -188,6 +195,19 @@ func markConfigKeysPresent(ctx *processingContext, targetPath fieldPath, present
 		if pm, ok := ctx.mirrorByPath[path].(*paramMeta); ok {
 			if !pm.ignored {
 				pm.setByConfig = true
+				if input.nonNull {
+					pm.configSource = file
+				}
+				if !pm.wasSetOnCli() && !pm.wasSetByEnv() {
+					value := v
+					if pm.isPointer {
+						value = reflect.Indirect(value)
+					}
+					if value.IsValid() {
+						// Preserve explicit zero values when mirrors synchronize.
+						pm.setValuePtr(reinterpretAs(value, pm.GetType()).Addr().Interface())
+					}
+				}
 			}
 		} else if v.Kind() == reflect.Pointer && !v.IsNil() && v.Elem().Kind() == reflect.Struct {
 			markStructPtrPresentByConfig(ctx, path)

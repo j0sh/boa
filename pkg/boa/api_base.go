@@ -61,6 +61,10 @@ type command struct {
 	InitFuncCtx func(ctx *HookContext, params any, cmd *cobra.Command) error
 	// PostCreateFuncCtx runs after cobra flags are created with access to HookContext
 	PostCreateFuncCtx func(ctx *HookContext, params any, cmd *cobra.Command) error
+	// PreConfigFuncCtx runs after CLI/env conversion, before config loading.
+	PreConfigFuncCtx func(ctx *HookContext, params any, cmd *cobra.Command, args []string) error
+	// PostConfigFuncCtx runs after config merging, before final path and secret resolution.
+	PostConfigFuncCtx func(ctx *HookContext, params any, cmd *cobra.Command, args []string) error
 	// PreValidateFuncCtx runs after flags are parsed but before validation with access to HookContext
 	PreValidateFuncCtx func(ctx *HookContext, params any, cmd *cobra.Command, args []string) error
 	// PreExecuteFuncCtx runs after validation but before command execution with access to HookContext
@@ -427,6 +431,15 @@ func (c *HookContext) HasValue(fieldPtr any) bool {
 	return param.HasValue()
 }
 
+// HasInput reports whether CLI, environment, or automatic configuration supplied
+// the field, including explicit zero, empty, and default-equivalent CLI/config
+// values. Empty environment variables, defaults, and application-generated
+// values do not count as input.
+func (c *HookContext) HasInput(fieldPtr any) bool {
+	param := c.parameter(fieldPtr)
+	return param != nil && param.(*paramMeta).hasInput()
+}
+
 // WatchedConfigFiles returns every config file path the pipeline read
 // during the most recent run, plus any paths explicitly registered via
 // WatchConfigFile. This is the input a live-reload watcher needs: the set
@@ -516,7 +529,8 @@ func (c *HookContext) reloadAny() (any, error) {
 // with it: atomic pointer swap, diff-and-notify, copy specific fields,
 // discard. Boa does not dictate a concurrency model — you pick.
 //
-// Hooks that run on reload: InitFunc, PostCreateFunc, PreValidateFunc,
+// Hooks that run on reload: InitFunc, PostCreateFunc, PreConfigFuncCtx,
+// PostConfigFuncCtx, PreValidateFunc,
 // and their Ctx variants, plus any CfgStructInit / CfgStructPreValidate
 // interface methods implemented on params. Hooks that DO NOT run on
 // reload: all struct and command PreExecute hooks and Run functions — a
@@ -902,31 +916,20 @@ type ConfigFormat struct {
 	// in the config file, even when the written value equals Go's zero value or
 	// the parameter's default.
 	//
-	// Only key presence matters. Nested objects should appear as map[string]any
-	// so boa can recurse. When Cmd.RejectUnknown is enabled, arrays must retain
-	// every element (for example as []any containing nested objects), including
+	// Values are not decoded from this tree. Nested objects use map[string]any.
+	// With Cmd.RejectUnknown, arrays must retain every element, including
 	// empty objects and arrays. Scalars may be non-nil placeholders; nil denotes
 	// null. Without strict inspection, arrays may also be opaque placeholders.
 	// Preserve the union of nested keys if the format permits repeated members;
 	// replacing an earlier object can hide a forbidden key from inspection.
 	//
-	// Required when Cmd.RejectUnknown is enabled or the target contains a
-	// config-addressable boa:"noconfig" field; loading fails closed if the probe
-	// is missing or unusable. Otherwise, boa falls back to snapshot comparison,
-	// which detects changed values but not zero-value or same-as-default writes
-	// to optional struct-pointer parameter groups.
+	// Required for automatic config loading. Standalone loaders require it only
+	// for noconfig inspection.
+	// A missing or unusable probe fails before decoding.
 	KeyTree func(data []byte) (map[string]any, error)
 }
 
-// configFormats maps file extensions to their registered ConfigFormat.
-// JSON is registered by default with both Unmarshal and KeyTree. Users can
-// register additional formats (e.g., YAML, TOML) via RegisterConfigFormat
-// or RegisterConfigFormatFull.
-//
-// Access to configFormats MUST go through configFormatsMu. Registration
-// (write) takes the exclusive lock; resolution / extension enumeration take
-// the read lock. The read path is hot — every config file load hits it —
-// but it's a pure map lookup so RWMutex contention is negligible in practice.
+// configFormats is protected by configFormatsMu for both reads and writes.
 var (
 	configFormatsMu sync.RWMutex
 	configFormats   = map[string]ConfigFormat{
@@ -938,11 +941,7 @@ var (
 	}
 )
 
-// jsonMarshalPretty is the built-in Marshal used for DumpConfig*.
-// It produces human-readable, 2-space-indented JSON with a trailing
-// newline — the shape you'd expect when writing a config file to disk.
-// json.Marshal's compact output round-trips fine but is unfriendly for a
-// human who opens the file after a dump.
+// jsonMarshalPretty formats JSON dumps with two-space indentation and a final newline.
 func jsonMarshalPretty(v any) ([]byte, error) {
 	out, err := json.MarshalIndent(v, "", "  ")
 	if err != nil {
@@ -951,37 +950,16 @@ func jsonMarshalPretty(v any) ([]byte, error) {
 	return append(out, '\n'), nil
 }
 
-// UniversalConfigFormat builds a ConfigFormat from a single "universal"
-// unmarshal function — one that can decode bytes into any target, including
-// map[string]any. The returned ConfigFormat has:
+// UniversalConfigFormat uses unmarshalFunc for both decoding and key inspection.
+// The decoder must accept map[string]any as well as application structs.
+// Passing nil panics.
 //
-//   - Unmarshal — the function you passed in.
-//   - KeyTree — a synthesized probe that calls the same function against a
-//     map[string]any target so boa can inspect the literal key structure.
+// Use this for a command-level override:
 //
-// That covers every mainstream Go config parser (encoding/json,
-// gopkg.in/yaml.v3, github.com/BurntSushi/toml, github.com/hashicorp/hcl/v2,
-// …), all of which decode into interface{} targets uniformly.
+//	boa.Cmd[Params]{ConfigFormat: boa.UniversalConfigFormat(yaml.Unmarshal)}
 //
-// RegisterConfigFormat uses this helper internally, so for registry-based
-// dispatch you normally just call RegisterConfigFormat directly. Call
-// UniversalConfigFormat yourself when you want to set a format inline on a
-// single command via Cmd.ConfigFormat:
-//
-//	boa.Cmd[Params]{
-//	    ConfigFormat: boa.UniversalConfigFormat(yaml.Unmarshal),
-//	    ...
-//	}
-//
-// Use the explicit boa.ConfigFormat{Unmarshal, KeyTree} struct literal (and
-// RegisterConfigFormatFull) only when the parser cannot decode into
-// map[string]any — e.g., a handwritten custom format that only populates
-// specific struct types. In that case supply a KeyTree function that
-// produces the nested key structure yourself.
-//
-// Passing nil panics — a missing unmarshal function is a programming error
-// and is surfaced eagerly so you don't silently fall through to the JSON
-// handler at parse time.
+// For extension-based dispatch, use RegisterConfigFormat. For decoders that
+// cannot populate maps, supply ConfigFormat.Unmarshal and ConfigFormat.KeyTree.
 func UniversalConfigFormat(unmarshalFunc func([]byte, any) error) ConfigFormat {
 	if unmarshalFunc == nil {
 		panic(fmt.Errorf("boa: UniversalConfigFormat: unmarshalFunc must be non-nil"))
@@ -998,63 +976,22 @@ func UniversalConfigFormat(unmarshalFunc func([]byte, any) error) ConfigFormat {
 	}
 }
 
-// RegisterConfigFormat registers an unmarshal function for a config file
-// extension. The extension should include the dot (e.g., ".yaml", ".toml").
-//
-// A single call gives you both parsing (the file extension now dispatches to
-// unmarshalFunc) and full key-presence detection (including zero-valued and
-// same-as-default writes to optional struct-pointer parameter groups).
-// Internally, RegisterConfigFormat wraps unmarshalFunc in a
-// UniversalConfigFormat — the KeyTree is synthesized by calling the same
-// parser against a map[string]any target, which every mainstream Go config
-// library supports.
-//
-// Example:
+// RegisterConfigFormat registers a decoder and key probe for an extension.
+// The decoder must support map[string]any; see UniversalConfigFormat.
+// Extensions accept an optional leading dot. Registration is goroutine-safe;
+// an empty extension or nil decoder panics.
 //
 //	boa.RegisterConfigFormat(".yaml", yaml.Unmarshal)
 //	boa.RegisterConfigFormat(".toml", toml.Unmarshal)
-//	boa.RegisterConfigFormat(".hcl", hcl.Decode)
 //
-// Registration is goroutine-safe (the registry is guarded by a
-// sync.RWMutex), but the common pattern is still to call from init() or
-// from main-goroutine startup before any commands run. Passing a nil
-// unmarshalFunc panics.
-//
-// Use RegisterConfigFormatFull instead only when your parser cannot decode
-// into map[string]any (e.g., a custom format that only populates specific
-// struct types). In that case you must supply a hand-written KeyTree that
-// produces the nested key structure yourself.
+// Use RegisterConfigFormatFull when a decoder needs a separate KeyTree.
 func RegisterConfigFormat(ext string, unmarshalFunc func([]byte, any) error) {
 	RegisterConfigFormatFull(ext, UniversalConfigFormat(unmarshalFunc))
 }
 
-// RegisterConfigFormatFull registers a complete ConfigFormat for a config file
-// extension. Use this when your parser cannot decode into map[string]any and
-// you need to supply a hand-written KeyTree for set-by-config detection.
-//
-// The extension should include the dot (e.g., ".mycustom").
-//
-// Registration is goroutine-safe — the registry is guarded by a sync.RWMutex,
-// so you can register formats from any goroutine. In practice, calling from
-// init() or main-goroutine startup (before any commands run) is still the
-// clearest model.
-//
-// Passing a ConfigFormat with a nil Unmarshal panics — a missing parser is a
-// programming error and is surfaced eagerly so you don't silently fall
-// through to the JSON handler at parse time.
-//
-// Example (using gopkg.in/yaml.v3):
-//
-//	boa.RegisterConfigFormatFull(".yaml", boa.ConfigFormat{
-//	    Unmarshal: yaml.Unmarshal,
-//	    KeyTree: func(data []byte) (map[string]any, error) {
-//	        var out map[string]any
-//	        if err := yaml.Unmarshal(data, &out); err != nil {
-//	            return nil, err
-//	        }
-//	        return out, nil
-//	    },
-//	})
+// RegisterConfigFormatFull registers a complete format, including a custom
+// KeyTree or Marshal function. It follows RegisterConfigFormat's extension,
+// concurrency, and nil-decoder rules. Automatic loads require a usable KeyTree.
 func RegisterConfigFormatFull(ext string, format ConfigFormat) {
 	normalized := normalizeConfigExt(ext)
 	if format.Unmarshal == nil {
@@ -1065,19 +1002,13 @@ func RegisterConfigFormatFull(ext string, format ConfigFormat) {
 	configFormats[normalized] = format
 }
 
-// RegisterConfigMarshaler attaches a Marshal function to a registered format,
-// enabling DumpConfigFile / DumpConfigBytes for that extension. The common
-// pattern is one call per format, paired with an earlier RegisterConfigFormat:
+// RegisterConfigMarshaler adds a Marshal function for DumpConfigFile/Bytes.
+// Registration is goroutine-safe; an empty extension or nil function panics.
+// Register a decoder too unless the format is dump-only: loads otherwise
+// fall back to JSON.
 //
 //	boa.RegisterConfigFormat(".yaml", yaml.Unmarshal)
 //	boa.RegisterConfigMarshaler(".yaml", yaml.Marshal)
-//
-// If the extension hasn't been registered yet, a placeholder entry is created
-// with only Marshal set. Reading such a format then falls through to the JSON
-// fallback, which is almost never what you want — always register Unmarshal
-// too unless the format is genuinely dump-only.
-//
-// Registration is goroutine-safe. Passing nil panics.
 func RegisterConfigMarshaler(ext string, marshalFunc func(v any) ([]byte, error)) {
 	normalized := normalizeConfigExt(ext)
 	if marshalFunc == nil {
@@ -1090,11 +1021,7 @@ func RegisterConfigMarshaler(ext string, marshalFunc func(v any) ([]byte, error)
 	configFormats[normalized] = cf
 }
 
-// normalizeConfigExt canonicalises an extension registration key into the
-// dot-prefixed form that filepath.Ext produces at lookup time. Accepts either
-// "yaml" or ".yaml" — both become ".yaml" — so users don't have to remember
-// which form boa expects. An empty string panics because it's unambiguously
-// a programmer mistake.
+// normalizeConfigExt adds a leading dot and rejects an empty extension.
 func normalizeConfigExt(ext string) string {
 	if ext == "" {
 		panic(fmt.Errorf("boa: config format extension must not be empty"))
@@ -1126,7 +1053,7 @@ func ConfigFormatExtensions() []string {
 
 // loadConfigFileInto shares inspection and decoding with the bytes loader.
 // The returned field paths retain presence information for later source tracking.
-func loadConfigFileInto(filePath string, target any, override ConfigFormat, policy noConfigPredicate, rejectUnknown bool) ([]fieldPath, error) {
+func loadConfigFileInto(filePath string, target any, override ConfigFormat, policy noConfigPredicate, rejectUnknown bool) ([]configInput, error) {
 	if filePath == "" {
 		return nil, nil
 	}
@@ -1142,7 +1069,7 @@ func loadConfigFileInto(filePath string, target any, override ConfigFormat, poli
 }
 
 // loadConfigBytesInto rejects forbidden keys before the decoder can mutate target.
-func loadConfigBytesInto(data []byte, ext string, target any, override ConfigFormat, policy noConfigPredicate, rejectUnknown bool) ([]fieldPath, error) {
+func loadConfigBytesInto(data []byte, ext string, target any, override ConfigFormat, policy noConfigPredicate, rejectUnknown bool) ([]configInput, error) {
 	format, tag := resolveConfigFormatByExt(ext, override)
 	present, err := inspectConfig(data, target, format, tag, policy, rejectUnknown)
 	if err != nil {
