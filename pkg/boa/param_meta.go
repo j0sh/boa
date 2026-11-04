@@ -61,6 +61,7 @@ type paramMeta struct {
 
 	// Validation
 	customValidator func(any) error
+	unsafeHTTPBind  *bool
 	// minVal / maxVal hold the bound as a typed pointer. The concrete type
 	// depends on the field kind:
 	//   - signed int field   → *int64
@@ -377,6 +378,8 @@ func (f *paramMeta) IsNoConfig() bool     { return f.noConfig }
 func (f *paramMeta) SetNoConfig(val bool) { f.noConfig = val }
 func (f *paramMeta) IsIgnored() bool      { return f.ignored }
 func (f *paramMeta) SetIgnored(val bool)  { f.ignored = val }
+
+func (f *paramMeta) SetUnsafeHTTPBind(allow bool) { f.unsafeHTTPBind = &allow }
 
 func (f *paramMeta) IsFile() bool                      { return f.file.enabled || f.secretFile }
 func (f *paramMeta) IsFileOptional() bool              { return f.file.optional && !f.secretFile }

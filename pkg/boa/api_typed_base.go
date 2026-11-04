@@ -54,6 +54,9 @@ type Cmd[Struct any] struct {
 	// inside collections. It does not affect standalone LoadConfig* calls or
 	// CLI/environment value decoding. The default is false.
 	RejectUnknown bool
+	// UnsafeHTTPBind permits non-loopback HTTPBind values without unsafe@.
+	// Defaults to false; override per field during Init with SetUnsafeHTTPBind.
+	UnsafeHTTPBind bool
 	// RawArgs supplies arguments instead of os.Args.
 	RawArgs []string
 	// Params is a pointer to the struct containing command parameters
@@ -118,6 +121,7 @@ func (b Cmd[Struct]) command() command {
 		ValidArgs:      b.ValidArgs,
 		ConfigFormat:   b.ConfigFormat,
 		RejectUnknown:  b.RejectUnknown,
+		UnsafeHTTPBind: b.UnsafeHTTPBind,
 		RawArgs:        b.RawArgs,
 		Params:         b.Params,
 

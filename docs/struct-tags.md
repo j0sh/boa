@@ -406,5 +406,10 @@ Programmatic metadata must be set during initialization. Later hooks run after b
 
 For types you own, implement `encoding.TextUnmarshaler` and preferably `encoding.TextMarshaler`. For types you cannot change, use `boa.RegisterType`. See [Config Decoding](config-decoding.md) for sharing the same textual behavior across flags, environment variables, JSON, YAML, and TOML.
 
-`boa.HTTPBind` embeds `netip.AddrPort` and accepts `IP:port`, `[IPv6]:port`, or `:port` (loopback `127.0.0.1`), with ports 1–65535; hostnames are rejected and explicit wildcard IPs are allowed.
-Use `optional:"true"` for an omitted listener; empty CLI/config input clears the address, and `IsValid()` reports whether it is set.
+`boa.HTTPBind` embeds `netip.AddrPort` and accepts `IP:port`, `[IPv6]:port`, or `:port` (127.0.0.1), with ports 1–65535; hostnames are rejected. Empty text clears the address; `IsValid()` reports whether it is set. Use `optional:"true"` for an omitted listener.
+
+Command validation requires `unsafe@` for non-loopback addresses, including wildcard and private IPs (for example, `unsafe@0.0.0.0:8080`). Set `Cmd.UnsafeHTTPBind` to permit unmarked addresses. During initialization, `boa.Param(ctx, &p.Metrics).SetUnsafeHTTPBind(false)` can guard one field while the command permits public listeners; `true` permits a field under a strict command. Overrides also cover collection elements.
+
+Enforcement covers every input source, collections, `Validate()`, and reload, after `PreValidate` hooks. Standalone decoding checks syntax and ports without enforcing command policy, like `min`/`max`. Applications that start servers without a Boa command must retain their own validation.
+
+`String()` returns the plain listener address. Text serialization preserves an explicit `unsafe@` prefix and never adds acknowledgment.

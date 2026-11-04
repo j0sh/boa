@@ -140,7 +140,7 @@ func (b command) loadAndValidate(ctx *processingContext, cmd *cobra.Command, arg
 		return NewUserInputError(err)
 	}
 
-	if err = validate(ctx, b.Params); err != nil {
+	if err = b.validate(ctx, b.Params); err != nil {
 		return err
 	}
 

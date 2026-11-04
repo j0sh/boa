@@ -3,6 +3,7 @@ package boa
 import (
 	"net"
 	"net/netip"
+	"strings"
 	"testing"
 
 	"github.com/spf13/cobra"
@@ -21,17 +22,20 @@ func TestHTTPBindText(t *testing.T) {
 		{"0.0.0.0:8080", "0.0.0.0:8080"},
 		{"[::]:8080", "[::]:8080"},
 		{"10.0.0.1:8080", "10.0.0.1:8080"},
+		{"[::ffff:127.0.0.1]:8080", "[::ffff:127.0.0.1]:8080"},
+		{"unsafe@0.0.0.0:8080", "unsafe@0.0.0.0:8080"},
+		{"unsafe@[::1]:8080", "unsafe@[::1]:8080"},
 	} {
 		t.Run(tc.input, func(t *testing.T) {
 			// Start with an address so empty input must clear an existing value.
-			bind := HTTPBind{netip.MustParseAddrPort("127.0.0.1:9000")}
+			bind := HTTPBind{AddrPort: netip.MustParseAddrPort("127.0.0.1:9000"), acknowledged: true}
 			if err := bind.UnmarshalText([]byte(tc.input)); err != nil {
 				t.Fatal(err)
 			}
 			if bind.IsValid() != (tc.want != "") {
 				t.Fatalf("IsValid() = %v for %q", bind.IsValid(), tc.input)
 			}
-			if tc.want != "" && bind.String() != tc.want {
+			if tc.want != "" && bind.String() != strings.TrimPrefix(tc.want, "unsafe@") {
 				t.Fatalf("String() = %q, want %q", bind.String(), tc.want)
 			}
 			text, err := bind.MarshalText()
@@ -55,9 +59,10 @@ func TestHTTPBindInvalid(t *testing.T) {
 	for _, input := range []string{
 		"true", "127.0.0.1", "127.0.0.1:", ":0", ":65536", ":http",
 		"localhost:8080", "::1:8080", "127.0.0.1:0", "[::1]:0", " :8080",
+		"unsafe@", "unsafe@unsafe@0.0.0.0:8080", "unsafe@:0", "unsafe@localhost:8080",
 	} {
 		t.Run(input, func(t *testing.T) {
-			original := HTTPBind{netip.MustParseAddrPort("127.0.0.1:9000")}
+			original := HTTPBind{AddrPort: netip.MustParseAddrPort("127.0.0.1:9000"), acknowledged: true}
 			bind := original
 			if err := bind.UnmarshalText([]byte(input)); err == nil {
 				t.Fatalf("accepted %q", input)
@@ -78,7 +83,7 @@ func TestHTTPBindSources(t *testing.T) {
 		name, config, env string
 		args              []string
 		want              string
-		invalid           bool
+		invalid, allow    bool
 	}{
 		{name: "default", want: "127.0.0.1:8000"},
 		{name: "config", config: `{"bind":":8001"}`, want: "127.0.0.1:8001"},
@@ -89,6 +94,12 @@ func TestHTTPBindSources(t *testing.T) {
 		{name: "invalid config", config: `{"bind":":0"}`, invalid: true},
 		{name: "invalid env", env: "localhost:8002", invalid: true},
 		{name: "invalid cli", args: []string{"--bind", ":65536"}, invalid: true},
+		{name: "exposed config", config: `{"bind":"0.0.0.0:8001"}`, invalid: true},
+		{name: "exposed env", env: "10.0.0.1:8002", invalid: true},
+		{name: "exposed cli", args: []string{"--bind", "[::]:8003"}, invalid: true},
+		{name: "allowed config", config: `{"bind":"0.0.0.0:8001"}`, allow: true, want: "0.0.0.0:8001"},
+		{name: "acknowledged env", env: "unsafe@10.0.0.1:8002", want: "unsafe@10.0.0.1:8002"},
+		{name: "acknowledged cli", args: []string{"--bind", "unsafe@[::]:8003"}, want: "unsafe@[::]:8003"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			t.Setenv("BOA_TEST_HTTP_BIND", tc.env)
@@ -96,7 +107,7 @@ func TestHTTPBindSources(t *testing.T) {
 			if tc.config != "" {
 				p.ConfigFile = writeTestConfigFile(t, tc.config)
 			}
-			err := (Cmd[Params]{Params: &p, RawArgs: append([]string{}, tc.args...), RejectUnknown: true}).Validate()
+			err := (Cmd[Params]{Params: &p, RawArgs: append([]string{}, tc.args...), RejectUnknown: true, UnsafeHTTPBind: tc.allow}).Validate()
 			if tc.invalid {
 				if err == nil {
 					t.Fatal("expected invalid bind to fail validation")
@@ -111,6 +122,82 @@ func TestHTTPBindSources(t *testing.T) {
 				t.Fatalf("bind = %q, %v; want %q", text, err, tc.want)
 			}
 		})
+	}
+}
+
+func TestHTTPBindPolicy(t *testing.T) {
+	type Params struct {
+		Bind    HTTPBind   `default:"0.0.0.0:8000"`
+		Binds   []HTTPBind `default:":8001"`
+		Named   map[string]HTTPBind
+		Pointer *HTTPBind
+		Nested  [][]HTTPBind
+	}
+	yes, no := true, false
+	for _, tc := range []struct {
+		name     string
+		allow    bool
+		override *bool
+		args     []string
+		reject   bool
+	}{
+		{name: "default", reject: true},
+		{name: "command allows", allow: true},
+		{name: "field allows", override: &yes},
+		{name: "field guards", allow: true, override: &no, reject: true},
+		{name: "field isolation", override: &yes, args: []string{"--binds=0.0.0.0:8001"}, reject: true},
+		{name: "slice", args: []string{"--bind=:8000", "--binds=0.0.0.0:8001"}, reject: true},
+		{name: "map", args: []string{"--bind=:8000", "--named=public=0.0.0.0:8001"}, reject: true},
+		{name: "pointer", args: []string{"--bind=:8000", "--pointer=0.0.0.0:8001"}, reject: true},
+		{name: "nested", args: []string{"--bind=:8000", `--nested=[["0.0.0.0:8001"]]`}, reject: true},
+		{name: "acknowledged collections", args: []string{"--bind=:8000", "--binds=unsafe@0.0.0.0:8001", "--named=public=unsafe@0.0.0.0:8001", "--pointer=unsafe@0.0.0.0:8001", `--nested=[["unsafe@0.0.0.0:8001"]]`}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cmd := Cmd[Params]{RawArgs: append([]string{}, tc.args...), UnsafeHTTPBind: tc.allow,
+				InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
+					if tc.override != nil {
+						Param(ctx, &p.Bind).SetUnsafeHTTPBind(*tc.override)
+					}
+					return nil
+				},
+			}
+			if err := cmd.Validate(); (err != nil) != tc.reject {
+				t.Fatalf("Validate() = %v, reject = %v", err, tc.reject)
+			}
+		})
+	}
+}
+
+func TestHTTPBindPreValidateReload(t *testing.T) {
+	type Params struct {
+		Bind HTTPBind `default:":8000"`
+	}
+	dir := t.TempDir()
+	for _, allow := range []bool{false, true} {
+		path := writeReloadFile(t, dir, "config.json", `{"Bind":":8000"}`)
+		cmd := Cmd[Params]{RawArgs: []string{}, UnsafeHTTPBind: allow,
+			PreValidateFunc: func(p *Params, _ *cobra.Command, _ []string) error { return LoadConfigFile(path, p, nil) },
+		}
+		cmd.RunFuncCtx = func(ctx *HookContext, p *Params, _ *cobra.Command, _ []string) {
+			for _, input := range []string{"0.0.0.0:8001", "unsafe@0.0.0.0:8001"} {
+				writeReloadFile(t, dir, "config.json", `{"Bind":"`+input+`"}`)
+				fresh, err := Reload[Params](ctx)
+				reject := !allow && !strings.HasPrefix(input, "unsafe@")
+				if (err != nil) != reject || err == nil && fresh.Bind.String() != "0.0.0.0:8001" {
+					t.Fatalf("reload = %v, %v; reject = %v", fresh, err, reject)
+				}
+			}
+			if p.Bind.String() != "127.0.0.1:8000" {
+				t.Fatalf("reload mutated original: %v", p.Bind)
+			}
+		}
+		if err := cmd.RunE(); err != nil {
+			t.Fatal(err)
+		}
+		writeReloadFile(t, dir, "config.json", `{"Bind":"0.0.0.0:8001"}`)
+		if err := cmd.Validate(); (err != nil) != !allow {
+			t.Fatalf("PreValidate config: %v; allow = %v", err, allow)
+		}
 	}
 }
 

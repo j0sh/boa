@@ -78,7 +78,7 @@ func TestHTTPBindConfigFormats(t *testing.T) {
 		{"pelletier", ".toml", "bind = %q\n", toml.Unmarshal, toml.Marshal},
 	} {
 		t.Run(format.name, func(t *testing.T) {
-			for _, input := range []string{":8080", "[::1]:8081", ""} {
+			for _, input := range []string{":8080", "[::1]:8081", "0.0.0.0:8080", "10.0.0.1:8082", "unsafe@0.0.0.0:8080", "unsafe@[::]:8081", ""} {
 				t.Run(input, func(t *testing.T) {
 					data := fmt.Appendf(nil, format.template, input)
 					p := Config{Bind: boa.HTTPBind{AddrPort: netip.MustParseAddrPort("127.0.0.1:9000")}}
@@ -101,18 +101,29 @@ func TestHTTPBindConfigFormats(t *testing.T) {
 					if err := boa.LoadConfigBytes(encoded, format.ext, &roundTrip, format.decode); err != nil || roundTrip.Bind != p.Bind {
 						t.Fatalf("round trip = %v, %v; want %v", roundTrip.Bind, err, p.Bind)
 					}
-					strict := Config{Source: writeConfig(t, format.ext, data)}
-					if err := (boa.Cmd[Config]{Params: &strict, RawArgs: []string{}, RejectUnknown: true, ConfigFormat: boa.UniversalConfigFormat(format.decode)}).Validate(); err != nil {
-						t.Fatal(err)
-					}
-					if strict.Bind != roundTrip.Bind {
-						t.Fatalf("strict command bind = %v; want %v", strict.Bind, roundTrip.Bind)
+					for _, allow := range []bool{false, true} {
+						strict := Config{Source: writeConfig(t, format.ext, data)}
+						err := (boa.Cmd[Config]{Params: &strict, RawArgs: []string{}, RejectUnknown: true, UnsafeHTTPBind: allow, ConfigFormat: boa.UniversalConfigFormat(format.decode)}).Validate()
+						reject := !allow && (input == "0.0.0.0:8080" || input == "10.0.0.1:8082")
+						if (err != nil) != reject || err == nil && strict.Bind != roundTrip.Bind {
+							t.Fatalf("command bind = %v, error = %v; reject = %v", strict.Bind, err, reject)
+						}
 					}
 				})
 			}
-			var p Config
-			if err := boa.LoadConfigBytes(fmt.Appendf(nil, format.template, ":0"), format.ext, &p, format.decode); err == nil {
-				t.Fatal("accepted a zero port")
+			invalid := [][]byte{fmt.Appendf(nil, format.template, ":0")}
+			if format.name == "yaml" {
+				invalid = append(invalid, []byte("bind:\n  addrport: 0.0.0.0:8080\n"))
+			}
+			for _, data := range invalid {
+				var p Config
+				if err := boa.LoadConfigBytes(data, format.ext, &p, format.decode); err == nil {
+					t.Fatalf("accepted invalid bind: %s", data)
+				}
+				strict := Config{Source: writeConfig(t, format.ext, data)}
+				if err := (boa.Cmd[Config]{Params: &strict, RawArgs: []string{}, RejectUnknown: true, ConfigFormat: boa.UniversalConfigFormat(format.decode)}).Validate(); err == nil {
+					t.Fatalf("strict command accepted invalid bind: %s", data)
+				}
 			}
 		})
 	}

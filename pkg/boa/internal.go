@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net"
+	"net/netip"
 	"net/url"
 	"os"
 	"reflect"
@@ -154,6 +155,9 @@ type Parameter interface {
 	SetNoConfig(bool)
 	IsIgnored() bool
 	SetIgnored(bool)
+	// SetUnsafeHTTPBind overrides Cmd.UnsafeHTTPBind for this field,
+	// including collection elements. Configure during initialization.
+	SetUnsafeHTTPBind(bool)
 	// File metadata must be configured during Init; Init settings override tags.
 	// IsFile includes the regular-file requirement implied by secretfor.
 	IsFile() bool
@@ -576,7 +580,7 @@ func parseEnv(ctx *processingContext, structPtr any) error {
 	return NewUserInputError(err)
 }
 
-func validate(ctx *processingContext, structPtr any) error {
+func (b command) validate(ctx *processingContext, structPtr any) error {
 
 	err := traverse(ctx, structPtr, func(param parameter, _ string, _ reflect.StructTag) error {
 
@@ -642,6 +646,15 @@ func validate(ctx *processingContext, structPtr any) error {
 
 			// min/max/pattern tag validation
 			if pm, ok := param.(*paramMeta); ok {
+				allow := b.UnsafeHTTPBind
+				if pm.unsafeHTTPBind != nil {
+					allow = *pm.unsafeHTTPBind
+				}
+				if !allow {
+					if err := validateHTTPBinds(reflect.ValueOf(param.valuePtrF()), make(map[configCopyKey]bool)); err != nil {
+						return fmt.Errorf("invalid value for param '%s': %w", param.GetName(), err)
+					}
+				}
 				if err := validateMinMaxPattern(pm, param.valuePtrF()); err != nil {
 					return fmt.Errorf("invalid value for param '%s': %s", param.GetName(), err.Error())
 				}
@@ -2022,6 +2035,10 @@ type configCopyKey struct {
 }
 
 func cloneConfigValue(value reflect.Value, seen map[configCopyKey]reflect.Value) reflect.Value {
+	// Addr is immutable; cloning its interned zone handles breaks address identity.
+	if value.Type() == reflect.TypeFor[netip.Addr]() {
+		return value
+	}
 	copy := reflect.New(value.Type()).Elem()
 	copy.Set(value)
 	if kind := value.Kind(); kind == reflect.Pointer || kind == reflect.Map || kind == reflect.Slice {

@@ -34,6 +34,7 @@ type command struct {
 	ValidArgs      []string
 	ConfigFormat   ConfigFormat
 	RejectUnknown  bool
+	UnsafeHTTPBind bool
 	RawArgs        []string
 	// Params is a pointer to a struct containing command parameters
 	Params any
