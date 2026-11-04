@@ -405,3 +405,6 @@ Programmatic metadata must be set during initialization. Later hooks run after b
 ## Custom scalar types
 
 For types you own, implement `encoding.TextUnmarshaler` and preferably `encoding.TextMarshaler`. For types you cannot change, use `boa.RegisterType`. See [Config Decoding](config-decoding.md) for sharing the same textual behavior across flags, environment variables, JSON, YAML, and TOML.
+
+`boa.HTTPBind` embeds `netip.AddrPort` and accepts `IP:port`, `[IPv6]:port`, or `:port` (loopback `127.0.0.1`), with ports 1–65535; hostnames are rejected and explicit wildcard IPs are allowed.
+Use `optional:"true"` for an omitted listener; empty CLI/config input clears the address, and `IsValid()` reports whether it is set.

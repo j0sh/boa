@@ -3,7 +3,9 @@ package formats_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"math/big"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -55,6 +57,62 @@ func TestPortableTextAndNativeDates(t *testing.T) {
 				if err != nil || !strict.At.Equal(p.At) || strict.Timeout != p.Timeout || strict.Pointer == nil || strict.Pointer.RatString() != want || strict.WeiPerUSD.RatString() != want {
 					t.Fatalf("strict=%+v error=%v; want native date/duration and rates=%s", strict, err, want)
 				}
+			}
+		})
+	}
+}
+
+func TestHTTPBindConfigFormats(t *testing.T) {
+	type Config struct {
+		Source string       `configfile:"true" boa:"configonly" json:"-" yaml:"-" toml:"-"`
+		Bind   boa.HTTPBind `json:"bind" yaml:"bind" toml:"bind" optional:"true"`
+	}
+	for _, format := range []struct {
+		name, ext, template string
+		decode              func([]byte, any) error
+		encode              func(any) ([]byte, error)
+	}{
+		{"json", ".json", `{"bind":%q}`, boa.UnmarshalJSON, json.Marshal},
+		{"yaml", ".yaml", "bind: %q\n", yaml.Unmarshal, yaml.Marshal},
+		{"burntsushi", ".toml", "bind = %q\n", burnttoml.Unmarshal, burnttoml.Marshal},
+		{"pelletier", ".toml", "bind = %q\n", toml.Unmarshal, toml.Marshal},
+	} {
+		t.Run(format.name, func(t *testing.T) {
+			for _, input := range []string{":8080", "[::1]:8081", ""} {
+				t.Run(input, func(t *testing.T) {
+					data := fmt.Appendf(nil, format.template, input)
+					p := Config{Bind: boa.HTTPBind{AddrPort: netip.MustParseAddrPort("127.0.0.1:9000")}}
+					if err := boa.LoadConfigBytes(data, format.ext, &p, format.decode); err != nil {
+						t.Fatal(err)
+					}
+					want := input
+					if input == ":8080" {
+						want = "127.0.0.1:8080"
+					}
+					text, err := p.Bind.MarshalText()
+					if err != nil || string(text) != want {
+						t.Fatalf("bind = %q, %v; want %q", text, err, want)
+					}
+					encoded, err := boa.DumpConfigBytes(&p, format.ext, format.encode)
+					if err != nil {
+						t.Fatal(err)
+					}
+					var roundTrip Config
+					if err := boa.LoadConfigBytes(encoded, format.ext, &roundTrip, format.decode); err != nil || roundTrip.Bind != p.Bind {
+						t.Fatalf("round trip = %v, %v; want %v", roundTrip.Bind, err, p.Bind)
+					}
+					strict := Config{Source: writeConfig(t, format.ext, data)}
+					if err := (boa.Cmd[Config]{Params: &strict, RawArgs: []string{}, RejectUnknown: true, ConfigFormat: boa.UniversalConfigFormat(format.decode)}).Validate(); err != nil {
+						t.Fatal(err)
+					}
+					if strict.Bind != roundTrip.Bind {
+						t.Fatalf("strict command bind = %v; want %v", strict.Bind, roundTrip.Bind)
+					}
+				})
+			}
+			var p Config
+			if err := boa.LoadConfigBytes(fmt.Appendf(nil, format.template, ":0"), format.ext, &p, format.decode); err == nil {
+				t.Fatal("accepted a zero port")
 			}
 		})
 	}
