@@ -11,14 +11,14 @@ func ruleError(code ValidationCode, err error) *FieldError {
 	return &FieldError{Code: code, Err: err}
 }
 
-func validateRequired(param parameter, present bool) error {
+func validateRequired(param parameter, present bool) *FieldError {
 	if param.IsRequired() && !present {
 		return ruleError(CodeRequired, fmt.Errorf("required value is absent"))
 	}
 	return nil
 }
 
-func validateAlternatives(param parameter, valPtr any) error {
+func validateAlternatives(param parameter, valPtr any) *FieldError {
 	alts := param.GetAlternatives()
 	if alts == nil || !param.GetStrictAlts() || valPtr == nil {
 		return nil
@@ -26,7 +26,7 @@ func validateAlternatives(param parameter, valPtr any) error {
 	// CLI mirrors normalize named primitives, including slice elements. Use
 	// that same representation rather than a named type's display methods.
 	value := reinterpretAs(reflect.ValueOf(valPtr).Elem(), param.GetType())
-	check := func(v reflect.Value, path string) error {
+	check := func(v reflect.Value, path string) *FieldError {
 		text := fmt.Sprintf("%v", v.Interface())
 		if !slices.Contains(alts, text) {
 			err := ruleError(CodeAlternatives, fmt.Errorf("'%s' is not in the list of allowed values: %v", text, alts))
@@ -46,7 +46,7 @@ func validateAlternatives(param parameter, valPtr any) error {
 	return check(value, "")
 }
 
-func validateCustom(param parameter, valPtr any) error {
+func validateCustom(param parameter, valPtr any) *FieldError {
 	if valPtr != nil {
 		value := reinterpretAs(reflect.ValueOf(valPtr).Elem(), param.GetType())
 		valPtr = value.Addr().Interface()
@@ -62,7 +62,7 @@ func validateCustom(param parameter, valPtr any) error {
 // in pm.minVal / pm.maxVal. The storage type is guaranteed to match the field
 // kind (coerceBound enforces this at set time), so the type assertions here
 // never panic on a valid mirror.
-func validateMinMaxPattern(pm *paramMeta, valPtr any) error {
+func validateMinMaxPattern(pm *paramMeta, valPtr any) *FieldError {
 	if pm.minVal == nil && pm.maxVal == nil && pm.pattern == "" {
 		return nil
 	}

@@ -51,6 +51,13 @@ type ValidationError struct {
 	Truncated bool
 }
 
+func (e *ValidationError) append(path string, failure *FieldError) {
+	if !e.Truncated {
+		e.Fields = append(e.Fields, FieldError{Path: path + failure.Path, Code: failure.Code, Err: failure.Err})
+		e.Truncated = len(e.Fields) == MaxValidationErrors
+	}
+}
+
 func (e *ValidationError) Error() string {
 	if len(e.Fields) == 0 {
 		return "validation failed"
@@ -67,7 +74,9 @@ func (e *ValidationError) Unwrap() []error {
 }
 
 // ConfigureField edits existing Boa metadata for an in-memory operation. It is
-// called after tags, using the same paths as FieldError. It never runs CLI hooks.
+// called before constraint tags, matching CLI Init precedence, and uses the same
+// paths as FieldError. Configured defaults take priority over default tags.
+// It never runs CLI hooks.
 // Use Parameter.SetCustomValidator or Field[T]{Parameter: p} for typed validators.
 // Callbacks and validators are application code and should be free of I/O.
 type ConfigureField func(path string, field Parameter)
@@ -127,12 +136,8 @@ func Validate(value any, configure ...ConfigureField) error {
 		root = root.Elem()
 	}
 	errs := &ValidationError{}
-	add := func(path string, code ValidationCode, err error) {
-		errs.Fields = append(errs.Fields, FieldError{Path: path, Code: code, Err: err})
-		errs.Truncated = len(errs.Fields) == MaxValidationErrors
-	}
 	if !root.IsValid() || root.Kind() != reflect.Struct {
-		add("", CodeSchema, fmt.Errorf("boa.Validate: expected a struct or non-nil pointer to struct"))
+		errs.append("", ruleError(CodeSchema, fmt.Errorf("boa.Validate: expected a struct or non-nil pointer to struct")))
 		return errs
 	}
 	// Keep traversal addressable without copying excluded subtrees. Only rules
@@ -140,14 +145,11 @@ func Validate(value any, configure ...ConfigureField) error {
 	addressable := reflect.New(root.Type()).Elem()
 	addressable.Set(root)
 	root = addressable
-	walker := fieldWalker{active: active, remaining: maxFieldSteps,
-		stopped: func() bool { return errs.Truncated },
-		report:  func(failure *FieldError) { add(failure.Path, failure.Code, failure.Err) },
-	}
+	walker := fieldWalker{active: active, remaining: maxFieldSteps, failures: errs}
 	_ = walker.walk(root, "", 0, func(field reflect.StructField, v reflect.Value, path string) (bool, error) {
 		meta, err := fieldMetadata(field, path, false, configure)
 		if err != nil {
-			add(path, CodeSchema, err)
+			errs.append(path, ruleError(CodeSchema, err))
 			return false, nil
 		}
 		if meta.IsIgnored() || !meta.IsEnabled() {
@@ -159,7 +161,7 @@ func Validate(value any, configure ...ConfigureField) error {
 			present = !v.IsNil()
 		}
 		if err := validateRequired(meta, present); err != nil {
-			add(path, CodeRequired, err.(*FieldError).Err)
+			errs.append(path, err)
 			return false, nil
 		}
 		if !present {
@@ -170,7 +172,7 @@ func Validate(value any, configure ...ConfigureField) error {
 			cloner := configCloner{seen: make(map[configCopyKey]reflect.Value), maxDepth: maxFieldDepth}
 			ruleValue = cloner.clone(v, 0)
 			if cloner.exceeded {
-				add(path, CodeLimit, fmt.Errorf("copying exceeds %d recursive steps", maxFieldDepth))
+				errs.append(path, ruleError(CodeLimit, fmt.Errorf("copying exceeds %d recursive steps", maxFieldDepth)))
 				return false, nil
 			}
 		}
@@ -178,14 +180,13 @@ func Validate(value any, configure ...ConfigureField) error {
 		if meta.isPointer {
 			ptr = ruleValue.Interface()
 		}
-		for _, rule := range []func() error{
-			func() error { return validateAlternatives(meta, ptr) },
-			func() error { return validateCustom(meta, ptr) },
-			func() error { return validateMinMaxPattern(meta, ptr) },
+		for _, rule := range []func() *FieldError{
+			func() *FieldError { return validateAlternatives(meta, ptr) },
+			func() *FieldError { return validateCustom(meta, ptr) },
+			func() *FieldError { return validateMinMaxPattern(meta, ptr) },
 		} {
-			if err := rule(); err != nil {
-				failure := err.(*FieldError)
-				add(path+failure.Path, failure.Code, failure.Err)
+			if failure := rule(); failure != nil {
+				errs.append(path, failure)
 				return false, nil
 			}
 		}
@@ -204,11 +205,11 @@ func fieldMetadata(field reflect.StructField, path string, defaults bool, config
 	}
 	meta := param.(*paramMeta)
 	meta.name = path
-	if err := applyFieldTags(meta, field.Tag, defaults); err != nil {
-		return nil, err
-	}
 	for _, fn := range configure {
 		fn(path, meta)
+	}
+	if err := applyFieldTags(meta, field.Tag, defaults); err != nil {
+		return nil, err
 	}
 	return meta, nil
 }

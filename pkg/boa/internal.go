@@ -615,7 +615,7 @@ func (b command) validate(ctx *processingContext, structPtr any) error {
 			}
 
 			if err := validateAlternatives(param, param.valuePtrF()); err != nil {
-				return fmt.Errorf("invalid value for param '%s': %s", param.GetName(), err.(*FieldError).Err)
+				return fmt.Errorf("invalid value for param '%s': %s", param.GetName(), err.Err)
 			}
 			if err := validateCustom(param, param.valuePtrF()); err != nil {
 				return fmt.Errorf("invalid value for param '%s': %s", param.GetName(), err.Error())

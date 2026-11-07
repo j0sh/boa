@@ -19,18 +19,17 @@ type fieldWalker struct {
 	active     map[configCopyKey]bool
 	remaining  int
 	exhausted  bool
-	stopped    func() bool
-	report     func(*FieldError)
+	failures   *ValidationError
 }
 
 func (w *fieldWalker) done() bool {
-	return w.exhausted || w.stopped != nil && w.stopped()
+	return w.exhausted || w.failures != nil && w.failures.Truncated
 }
 
 func (w *fieldWalker) fail(path string, code ValidationCode, message string) error {
 	failure := &FieldError{Path: path, Code: code, Err: errors.New(message)}
-	if w.report != nil {
-		w.report(failure)
+	if w.failures != nil {
+		w.failures.append("", failure)
 		return nil
 	}
 	return failure

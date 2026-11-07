@@ -56,16 +56,28 @@ func failures(t *testing.T, err error, want ...string) ValidationError {
 func TestFieldRulesCLIParity(t *testing.T) {
 	type params struct {
 		Count int           `default:"1" min:"1" max:"2"`
+		Port  int           `default:"1024"`
 		Size  uint64        `default:"1" min:"1" max:"18446744073709551614"`
 		Name  string        `default:"ok" pattern:"^[a-z]+$"`
 		Mode  displayMode   `default:"tcp" alts:"tcp,http"`
 		Tags  []displayMode `default:"[tcp]" alts:"tcp,http"`
 		Extra string        `default:"any" alts:"tcp,http" strict:"false"`
 	}
-	valid, err := Defaults[params]()
+	configure := func(path string, p Parameter) {
+		if path == "Count" || path == "Port" {
+			p.SetMin(1024)
+		}
+	}
+	valid, err := Defaults[params](configure)
 	requireNoError(t, err)
-	requireNoError(t, Validate(valid))
-	cli := Cmd[params]{Use: "test", ParamEnrich: ParamEnricherName, RunFunc: func(*params, *cobra.Command, []string) {}}
+	requireNoError(t, Validate(valid, configure))
+	cli := Cmd[params]{Use: "test", ParamEnrich: ParamEnricherName,
+		InitFuncCtx: func(ctx *HookContext, p *params, _ *cobra.Command) error {
+			Param(ctx, &p.Count).SetMin(1024)
+			Param(ctx, &p.Port).SetMin(1024)
+			return nil
+		}, RunFunc: func(*params, *cobra.Command, []string) {},
+	}
 	requireNoError(t, cli.RunArgsE(nil))
 	for _, tc := range []struct {
 		path string
@@ -75,6 +87,7 @@ func TestFieldRulesCLIParity(t *testing.T) {
 	}{
 		{"Count", CodeMin, []string{"--count", "0"}, func(p *params) { p.Count = 0 }},
 		{"Count", CodeMax, []string{"--count", "3"}, func(p *params) { p.Count = 3 }},
+		{"Port", CodeMin, []string{"--port", "80"}, func(p *params) { p.Port = 80 }},
 		{"Size", CodeMin, []string{"--size", "0"}, func(p *params) { p.Size = 0 }},
 		{"Size", CodeMax, []string{"--size", "18446744073709551615"}, func(p *params) { p.Size = ^uint64(0) }},
 		{"Name", CodePattern, []string{"--name", "NO"}, func(p *params) { p.Name = "NO" }},
@@ -84,7 +97,7 @@ func TestFieldRulesCLIParity(t *testing.T) {
 		t.Run(tc.path+string(tc.code), func(t *testing.T) {
 			p := valid
 			tc.edit(&p)
-			field := failures(t, Validate(&p), tc.path+":"+string(tc.code)).Fields[0]
+			field := failures(t, Validate(&p, configure), tc.path+":"+string(tc.code)).Fields[0]
 			err := cli.RunArgsE(tc.args)
 			name := camelToKebabCase(strings.Split(tc.path, "[")[0])
 			if want := "invalid value for param '" + name + "': " + field.Err.Error(); err == nil || err.Error() != want {
@@ -127,9 +140,9 @@ func TestDefaultsIndependent(t *testing.T) {
 	type params struct {
 		Child    child
 		Optional *child
-		Names    []name  `default:"[a,b]"`
-		Children []child `default:"[{\"N\":0}]"`
-		Values   map[string][]int
+		Names    []name           `default:"[a,b]"`
+		Children []child          `default:"[{\"N\":0}]"`
+		Values   map[string][]int `default:"{\"a\":[2]}"`
 	}
 	source := map[string][]int{"a": {1}}
 	configure := func(path string, p Parameter) {

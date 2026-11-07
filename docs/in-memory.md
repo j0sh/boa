@@ -57,13 +57,12 @@ from an explicit zero after decoding.
 | Non-nil pointer or collection, including an empty collection | Present |
 | Value struct | Present; fields are traversed |
 
-`required` checks presence; absence does not itself mean a field is optional.
-Flat slices and interface fields are required by default. Tags and the global
-setting can override requiredness; see [Required and optional](struct-tags.md#required-and-optional).
-Unlike command loading, `Validate` does not treat a default tag as a source: a
-default does not satisfy an absent required value. Optional absent values skip
-rules and traversal. Use `min`, `pattern`, or a custom validator to reject empty
-or invalid values.
+`required` checks presence; absence does not imply optionality. Flat slices and
+interface fields are required by default; tags and the global setting can
+override this. See [Required and optional](struct-tags.md#required-and-optional).
+`Validate` ignores default tags for presence, so a default does not satisfy an
+absent required value. Optional absent values skip rules and traversal. Use
+`min`, `pattern`, or a custom validator to reject empty or invalid values.
 
 Registered and text scalar types, including root types, are treated as scalars.
 Ignored and disabled fields are skipped.
@@ -75,9 +74,9 @@ Ignored and disabled fields are skipped.
 | Array | Nested structs are traversed; min/max bounds are ignored, and alternatives compare the whole formatted value |
 | Map | Nested structs are traversed; non-nil maps with non-string keys produce `boa.CodeSchema` |
 
-Both `Defaults` and `Validate` accept `ConfigureField` callbacks after tags are
-parsed. Callbacks receive a Go field path and the public `Parameter` API. For a
-`Config` with a `Port int` field, use `Field[T]` for a typed validator:
+Both `Defaults` and `Validate` accept `ConfigureField` callbacks. They receive a
+Go field path and the public `Parameter` API. For a `Config` with a `Port int`
+field, use `Field[T]` for a typed validator:
 
 ```go
 err := boa.Validate(cfg, func(path string, p boa.Parameter) {
@@ -89,9 +88,17 @@ err := boa.Validate(cfg, func(path string, p boa.Parameter) {
 })
 ```
 
-Callbacks can set defaults for `Defaults` or constraints for `Validate`. Setting
-a default during validation does not make an absent value present. Validators
-receive field copies; traversal still inspects the original values.
+Required and optional tags are parsed before callbacks; constraint and default
+tags follow.
+When both configure a field, precedence is:
+
+| Setting | Takes precedence |
+|---|---|
+| Min, max, pattern, alternatives, strictness | Tag |
+| Default, requiredness | Callback |
+
+Setting a default during validation does not make an absent value present.
+Validators receive field copies; traversal still inspects the original values.
 
 These operations do not automatically read environment variables or files,
 resolve paths or secrets, enforce command HTTPBind policy, or run lifecycle
