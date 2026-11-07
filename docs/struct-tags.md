@@ -168,7 +168,7 @@ type Params struct {
 ## Validation
 
 For in-memory values without command execution, use the separate
-[`boa.Defaults[T]()` and `boa.Validate(value)` APIs](in-memory.md).
+[`boa.ParseConfigBytes`, `boa.Defaults[T]()` and `boa.Validate` APIs](in-memory.md).
 
 `alts` supplies completion candidates and, by default, restricts the value:
 
@@ -215,7 +215,7 @@ type Params struct {
 | `autocreate` | Create `basedir` and missing parents after loading config |
 | `false` | Disable the tag |
 
-Combine options as `basedir:"required,autocreate"`. Directory creation runs only during command execution; help, completion, `Validate()`, and reload never create directories. With `required`, validation and reload fail if the directory is missing.
+Combine options as `basedir:"required,autocreate"`. Directory creation runs only during command execution; help, completion, `Cmd.Validate()`, and reload never create directories. With `required`, validation and reload fail if the directory is missing.
 
 A config file can set `basedir` with normal [source precedence](#source-precedence). Config filenames use the `basedir` set before config loading. Changing `basedir` through config applies to other paths and does not trigger another config load. Directory checks and creation happen after config loading succeeds.
 
@@ -413,6 +413,6 @@ For types you own, implement `encoding.TextUnmarshaler` and preferably `encoding
 
 Command validation requires `unsafe@` for non-loopback addresses, including wildcard and private IPs (for example, `unsafe@0.0.0.0:8080`). Set `Cmd.UnsafeHTTPBind` to permit unmarked addresses. During initialization, `boa.Param(ctx, &p.Metrics).SetUnsafeHTTPBind(false)` can guard one field while the command permits public listeners; `true` permits a field under a strict command. Overrides also cover collection elements.
 
-Enforcement covers every input source, collections, `Validate()`, and reload, after `PreValidate` hooks. Standalone decoding checks syntax and ports without enforcing command policy, like `min`/`max`. Applications that start servers without a Boa command must retain their own validation.
+Enforcement covers every input source, collections, `Cmd.Validate()`, and reload, after `PreValidate` hooks. Standalone decoding checks syntax and ports without enforcing command policy, like `min`/`max`. Applications that start servers without a Boa command must retain their own validation.
 
 `String()` returns the plain listener address. Text serialization preserves an explicit `unsafe@` prefix and never adds acknowledgment.

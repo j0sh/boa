@@ -1,6 +1,7 @@
 package boa
 
 import (
+	"errors"
 	"fmt"
 	"reflect"
 	"slices"
@@ -24,6 +25,9 @@ const (
 
 // MaxValidationErrors bounds the errors returned by Validate.
 const MaxValidationErrors = 100
+
+const maxFieldDepth = 128
+const maxFieldSteps = 10_000
 
 // FieldError describes a failed rule. Path uses exported Go field names, dots,
 // slice/array indices, and quoted string map keys, e.g. Apps[0].Labels["team"].
@@ -83,7 +87,8 @@ func Defaults[T any](configure ...ConfigureField) (T, error) {
 	if root.Kind() != reflect.Struct {
 		return value, fmt.Errorf("boa.Defaults: expected a struct type")
 	}
-	err := walkFields(root, "", make(map[configCopyKey]bool), 0, func(field reflect.StructField, v reflect.Value, path string) (bool, error) {
+	walker := fieldWalker{active: make(map[configCopyKey]bool), remaining: maxFieldSteps}
+	err := walker.walk(root, "", 0, func(field reflect.StructField, v reflect.Value, path string) (bool, error) {
 		meta, err := fieldMetadata(field, path, true, configure)
 		if err != nil {
 			return false, &FieldError{Path: path, Code: CodeSchema, Err: err}
@@ -103,7 +108,7 @@ func Defaults[T any](configure ...ConfigureField) (T, error) {
 			return false, nil
 		}
 		return true, nil
-	}, nil)
+	})
 	return value, err
 }
 
@@ -113,13 +118,16 @@ func Defaults[T any](configure ...ConfigureField) (T, error) {
 // zero or empty scalar values. Absent optional values skip rules and traversal.
 //
 // Nested structs and collection elements are checked. Registered/text scalar
-// types are opaque. Cyclic references are visited once per active branch, and
-// nesting beyond 128 levels returns CodeLimit. No environment, filesystem, path,
+// types are opaque. Cycles are visited once per active branch. Traversal is
+// limited to 10,000 steps and 128 recursive steps, including pointer/interface
+// dereferences. Limit failures return CodeLimit. No environment, filesystem, path,
 // secret, command HTTPBind policy, or lifecycle operations run. Custom validators
 // receive a deep copy; their own external side effects remain their responsibility.
 func Validate(value any, configure ...ConfigureField) error {
 	root := reflect.ValueOf(value)
+	active := make(map[configCopyKey]bool)
 	if root.IsValid() && root.Kind() == reflect.Pointer && !root.IsNil() {
+		active[configCopyKey{typ: root.Type(), ptr: root.UnsafePointer()}] = true
 		root = root.Elem()
 	}
 	errs := &ValidationError{}
@@ -131,8 +139,16 @@ func Validate(value any, configure ...ConfigureField) error {
 		add("", CodeSchema, fmt.Errorf("boa.Validate: expected a struct or non-nil pointer to struct"))
 		return errs
 	}
-	root = cloneConfigValue(root, make(map[configCopyKey]reflect.Value))
-	err := walkFields(root, "", make(map[configCopyKey]bool), 0, func(field reflect.StructField, v reflect.Value, path string) (bool, error) {
+	// Keep traversal addressable without copying excluded subtrees. Only rules
+	// that can invoke application code need an independent field copy.
+	addressable := reflect.New(root.Type()).Elem()
+	addressable.Set(root)
+	root = addressable
+	walker := fieldWalker{active: active, remaining: maxFieldSteps,
+		stopped: func() bool { return errs.Truncated },
+		report:  func(failure *FieldError) { add(failure.Path, failure.Code, failure.Err) },
+	}
+	err := walker.walk(root, "", 0, func(field reflect.StructField, v reflect.Value, path string) (bool, error) {
 		meta, err := fieldMetadata(field, path, false, configure)
 		if err != nil {
 			add(path, CodeSchema, err)
@@ -153,9 +169,18 @@ func Validate(value any, configure ...ConfigureField) error {
 		if !present {
 			return false, nil
 		}
-		ptr := v.Addr().Interface()
+		ruleValue := v
+		if meta.customValidator != nil || meta.GetAlternatives() != nil && meta.GetStrictAlts() {
+			cloner := configCloner{seen: make(map[configCopyKey]reflect.Value), maxDepth: maxFieldDepth}
+			ruleValue = cloner.clone(v, 0)
+			if cloner.exceeded {
+				add(path, CodeLimit, fmt.Errorf("copying exceeds %d recursive steps", maxFieldDepth))
+				return false, nil
+			}
+		}
+		ptr := ruleValue.Addr().Interface()
 		if meta.isPointer {
-			ptr = v.Interface()
+			ptr = ruleValue.Interface()
 		}
 		for _, rule := range []func() error{
 			func() error { return validateAlternatives(meta, ptr) },
@@ -169,7 +194,7 @@ func Validate(value any, configure ...ConfigureField) error {
 			}
 		}
 		return true, nil
-	}, func() bool { return errs.Truncated })
+	})
 	if err != nil {
 		failure := err.(*FieldError)
 		add(failure.Path, failure.Code, failure.Err)
@@ -196,14 +221,40 @@ func fieldMetadata(field reflect.StructField, path string, defaults bool, config
 	return meta, nil
 }
 
-// walkFields only traverses values. Source handling and CLI mirror identity stay
-// in traverseAt; this walker also handles structs inside collections.
-func walkFields(v reflect.Value, path string, active map[configCopyKey]bool, depth int, visit func(reflect.StructField, reflect.Value, string) (bool, error), stop func() bool) error {
-	if stop != nil && stop() {
+// fieldWalker traverses values; source handling and CLI mirror identity stay in
+// traverseAt. Error collection and work limits are local to one operation.
+type fieldWalker struct {
+	active    map[configCopyKey]bool
+	remaining int
+	exhausted bool
+	stopped   func() bool
+	report    func(*FieldError)
+}
+
+func (w *fieldWalker) done() bool {
+	return w.exhausted || w.stopped != nil && w.stopped()
+}
+
+func (w *fieldWalker) fail(path string, code ValidationCode, message string) error {
+	failure := &FieldError{Path: path, Code: code, Err: errors.New(message)}
+	if w.report != nil {
+		w.report(failure)
 		return nil
 	}
-	if depth > 128 {
-		return &FieldError{Path: path, Code: CodeLimit, Err: fmt.Errorf("nesting exceeds 128 levels")}
+	return failure
+}
+
+func (w *fieldWalker) walk(v reflect.Value, path string, depth int, visit func(reflect.StructField, reflect.Value, string) (bool, error)) error {
+	if w.done() {
+		return nil
+	}
+	if w.remaining == 0 {
+		w.exhausted = true
+		return w.fail(path, CodeLimit, fmt.Sprintf("traversal exceeds %d steps", maxFieldSteps))
+	}
+	w.remaining--
+	if depth > maxFieldDepth {
+		return w.fail(path, CodeLimit, fmt.Sprintf("nesting exceeds %d recursive steps", maxFieldDepth))
 	}
 	if lookupHandler(v.Type()) != nil {
 		return nil
@@ -217,15 +268,13 @@ func walkFields(v reflect.Value, path string, active map[configCopyKey]bool, dep
 		if v.Kind() == reflect.Slice {
 			key.len = v.Len()
 		}
-		if active[key] {
+		if w.active[key] {
 			return nil
 		}
-		active[key] = true
-		defer delete(active, key)
+		w.active[key] = true
+		defer delete(w.active, key)
 	}
-	walk := func(child reflect.Value, childPath string) error {
-		return walkFields(child, childPath, active, depth+1, visit, stop)
-	}
+	walk := func(child reflect.Value, childPath string) error { return w.walk(child, childPath, depth+1, visit) }
 	switch v.Kind() {
 	case reflect.Pointer:
 		return walk(v.Elem(), path)
@@ -236,10 +285,7 @@ func walkFields(v reflect.Value, path string, active map[configCopyKey]bool, dep
 			return walk(child, path)
 		}
 	case reflect.Struct:
-		for i := 0; i < v.NumField(); i++ {
-			if stop != nil && stop() {
-				break
-			}
+		for i := 0; i < v.NumField() && !w.done(); i++ {
 			field := v.Type().Field(i)
 			if isBoaIgnored(field) {
 				continue
@@ -249,36 +295,38 @@ func walkFields(v reflect.Value, path string, active map[configCopyKey]bool, dep
 				childPath = path + "." + childPath
 			}
 			child := v.Field(i)
-			recurse, err := visit(field, child, childPath)
+			descend, err := visit(field, child, childPath)
 			if err != nil {
 				return err
 			}
-			if recurse {
+			if descend {
 				if err := walk(child, childPath); err != nil {
 					return err
 				}
 			}
 		}
 	case reflect.Slice, reflect.Array:
-		for i := 0; i < v.Len(); i++ {
-			if stop != nil && stop() {
-				break
-			}
+		if !mayHaveFields(v.Type().Elem()) {
+			return nil
+		}
+		for i := 0; i < v.Len() && !w.done(); i++ {
 			if err := walk(v.Index(i), fmt.Sprintf("%s[%d]", path, i)); err != nil {
 				return err
 			}
 		}
 	case reflect.Map:
 		if v.Type().Key().Kind() != reflect.String {
-			return &FieldError{Path: path, Code: CodeSchema, Err: fmt.Errorf("expected string map keys")}
+			return w.fail(path, CodeSchema, "expected string map keys")
+		}
+		if !mayHaveFields(v.Type().Elem()) {
+			return nil
 		}
 		keys := v.MapKeys()
 		slices.SortFunc(keys, func(a, b reflect.Value) int { return strings.Compare(a.String(), b.String()) })
 		for _, key := range keys {
-			if stop != nil && stop() {
+			if w.done() {
 				break
 			}
-			// Map values are not addressable, so visit an addressable copy.
 			child := reflect.New(v.Type().Elem()).Elem()
 			child.Set(v.MapIndex(key))
 			if err := walk(child, path+"["+strconv.Quote(key.String())+"]"); err != nil {
@@ -287,4 +335,28 @@ func walkFields(v reflect.Value, path string, active map[configCopyKey]bool, dep
 		}
 	}
 	return nil
+}
+
+// Skip scalar collections without allocating element paths. Recursive type
+// shapes remain subject to the ordinary value-traversal limits.
+func mayHaveFields(t reflect.Type) bool {
+	for range maxFieldDepth {
+		if lookupHandler(t) != nil {
+			return false
+		}
+		switch t.Kind() {
+		case reflect.Pointer, reflect.Slice, reflect.Array:
+			t = t.Elem()
+		case reflect.Map:
+			if t.Key().Kind() != reflect.String {
+				return true
+			}
+			t = t.Elem()
+		case reflect.Struct, reflect.Interface:
+			return true
+		default:
+			return false
+		}
+	}
+	return true
 }

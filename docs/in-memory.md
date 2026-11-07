@@ -1,105 +1,100 @@
 # In-memory defaults and validation
 
-Use `boa.Defaults[T]()` to construct a fresh struct and `boa.Validate(value)` to
-validate a struct or non-nil pointer to one. They are independent operations:
+Use `ParseConfigBytes` to apply defaults, decode, and validate without running a
+command:
 
 ```go
-type Settings struct {
-    Enabled bool   `json:"enabled" default:"true"`
-    Port    int    `json:"port" default:"8080" min:"1" max:"65535"`
-    Mode    string `json:"mode" default:"tcp" alts:"tcp,http"`
-}
+cfg, err := boa.ParseConfigBytes[Config](data, toml.Unmarshal)
+```
 
-settings, err := boa.Defaults[Settings]()
+The decoder determines the format; there is no extension argument. BOA calls
+`Defaults[Config]()`, then the decoder with `data` and `&cfg`, then
+`Validate(cfg)`. It stops on the first error, returning that error unchanged and
+the value constructed so far. A nil decoder is an error. The decoder controls
+key, type, and omission handling.
+
+## Separate operations
+
+Use `Defaults` and `Validate` independently when you need a different loading
+policy or field configuration:
+
+```go
+cfg, err := boa.Defaults[Config]()
 if err != nil {
     return err
 }
-if err := boa.LoadConfigBytes(data, ".json", &settings, nil); err != nil {
+if err := toml.Unmarshal(data, &cfg); err != nil {
     return err
 }
-return boa.Validate(settings)
+return boa.Validate(cfg)
 ```
 
-For persisted, already normalized data, decode into a zero value and call only
-`Validate`. `LoadConfigBytes` remains a decoder: it adds neither defaults nor
-validation. Strict key/type/presence checks belong to the decoder or application.
+To validate persisted data without adding defaults, decode into a zero value
+and call `Validate` alone. `LoadConfigBytes` only decodes; it does not apply
+defaults or validate.
 
-## Presence and defaults
+`Defaults` creates a fresh struct. Decode onto it so explicit zero, false,
+empty, or nil values can replace defaults. Omitted values follow the decoder's
+semantics.
 
-| In-memory value | Presence during validation |
+| Default scope | Behavior |
 |---|---|
-| `0`, `false`, `""`, any other scalar | Present; rules run |
-| Nil pointer, slice, map, or interface | Absent; required fails, optional skips rules |
-| Non-nil pointer to a zero value | Present; rules run on its value |
-| Non-nil empty slice or map | Present; length rules run |
-| Value struct | Present; its fields are traversed |
-| Nil pointer to a struct | Absent; its children are not traversed |
+| Nested value structs | Fields receive defaults |
+| Nil pointer groups | Stay nil unless explicitly defaulted |
+| Collections | Defaults are whole values; elements receive no additional overlay |
+| Mutable values | Storage is independent between calls |
 
-There is no way to distinguish an omitted scalar from an explicitly assigned
-zero in an existing Go struct. Validation does not guess. A required string can
-be empty; use `min:"1"` to require content. A required Boolean can be false.
-Use pointers or decoder-specific presence checks when omission matters.
+## Validation
 
-`Defaults` constructs a new value rather than filling zero fields in an existing
-one. Decode onto it **after** construction: explicit `0`, `false`, `""`, and
-pointer `null` replace defaults according to your decoder. Omitted keys retain
-defaults. No new presence tracking is needed. Never use this flow to repair
-missing persisted data implicitly.
+`Validate` accepts a struct or a non-nil pointer to one. Presence is based on
+the Go value, so an omitted scalar cannot be distinguished from an explicit
+zero after decoding.
 
-Defaults use Boa's existing typed text parsers. Nested value structs receive
-their defaults; nil pointer groups remain nil unless explicitly defaulted through
-configuration. Collections declared with defaults are whole values; their element
-fields do not receive an additional default overlay. To construct collection
-elements before decoding them, call `Defaults[Element]()` in the owning loader.
-Maps, slices, and pointers returned from defaults have independent storage,
-including programmatically configured defaults.
+| Value | Presence |
+|---|---|
+| Scalar, including `0`, `false`, or `""` | Present |
+| Nil pointer, map, slice, or interface | Absent |
+| Non-nil pointer or collection, including an empty collection | Present |
+| Value struct | Present; fields are traversed |
 
-There is no Boolean enricher in the standalone functions: an untagged bool is
-simply Go's false. Required/optional tags and `WithDefaultOptional` retain their
-existing metadata meanings. `boa:"ignore"` and unexported fields are skipped;
-CLI input directives such as `configonly` do not disable in-memory validation.
+`required` checks presence. Use `min`, `pattern`, or a custom validator to
+reject empty or invalid values. Optional absent values skip rules and traversal.
+Registered and text scalar types are treated as scalars. Ignored and disabled
+fields are skipped.
 
-## Shared rules and metadata
+| Type | Rules and traversal |
+|---|---|
+| String, slice, or map | Min/max bounds apply to length |
+| Slice | Alternatives check each element; nested structs are traversed |
+| Array | Nested structs are traversed; collection rules do not apply |
+| Map | Nested structs are traversed; non-nil maps with non-string keys produce `boa.CodeSchema` |
 
-Both functions accept optional `boa.ConfigureField` callbacks. They receive an
-exported Go field path and the existing `boa.Parameter`, after tag parsing:
+Both `Defaults` and `Validate` accept `ConfigureField` callbacks after tags are
+parsed. Callbacks receive a Go field path and the public `Parameter` API. For a
+`Config` with a `Port int` field, use `Field[T]` for a typed validator:
 
 ```go
-err := boa.Validate(settings, func(path string, p boa.Parameter) {
+err := boa.Validate(cfg, func(path string, p boa.Parameter) {
     if path == "Port" {
         p.SetMin(1024)
         field := boa.Field[int]{Parameter: p}
-        field.SetCustomValidator(func(port int) error {
-            if port == 9000 {
-                return errors.New("port reserved by this application")
-            }
-            return nil
-        })
+        field.SetCustomValidator(validPort)
     }
 })
 ```
 
-Reuse the same field configuration in a command's Init hook via
-`boa.Param(ctx, &params.Port).Parameter`. Standalone functions do not execute
-that hook automatically. Defaults callbacks may call `SetDefault`; validation
-callbacks may change constraints, but `SetDefault` cannot make absent input
-present during validation. Disabled and ignored fields skip rules and children.
+Callbacks can set defaults for `Defaults` or constraints for `Validate`. Setting
+a default during validation does not make an absent value present. Validators
+receive field copies; traversal still inspects the original values.
 
-The shared evaluators check required presence, strict alternatives, custom
-validators, then min/max/pattern. Each field reports its first failed rule.
-Collection alternatives check each slice element and report the first invalid
-index. Min/max on collections constrain length, not each element's magnitude.
-Structs inside slices, arrays, and string-keyed maps are traversed; registered
-and text scalar types are opaque. Map keys are visited in sorted order.
+These operations do not automatically read environment variables or files,
+resolve paths or secrets, enforce command HTTPBind policy, or run lifecycle
+hooks. Decoders, callbacks, parsers, and validators are application code and can
+have their own side effects.
 
-`Validate` copies input before invoking custom validators, including reference
-values. It does not apply defaults, normalize values, expand environment
-variables, check files, resolve paths or secrets, enforce command HTTPBind policy,
-or run lifecycle hooks. `Defaults` likewise performs no source lookup or path
-resolution. Registered parsers, configuration callbacks, and validators are
-application code; Boa cannot prevent their own external side effects.
+## Errors
 
-## Structured errors
+Use `errors.As` to inspect a `*boa.ValidationError`:
 
 ```go
 var validation *boa.ValidationError
@@ -107,95 +102,30 @@ if errors.As(err, &validation) {
     for _, field := range validation.Fields {
         fmt.Println(field.Path, field.Code, field.Err)
     }
-    // Truncated means traversal stopped at MaxValidationErrors (100).
 }
 ```
 
-Paths use exported Go names, including embedded fields: `Health.Readiness.Type`,
-`Apps[2].HTTP.Port`, or `Groups["west"].Port`. They do not depend on flag names or
-JSON/TOML tags. Applications can map these paths to their wire format.
+Paths use Go field names, dots, indices, and quoted map keys, such as
+`Apps[2].HTTP.Port` and `Groups["west"].Port`. Custom causes support `errors.Is`.
 
-Stable categories are `required`, `alternatives`, `min`, `max`, `pattern`,
-`custom`, `schema` (invalid metadata/input shape), and `limit` (nesting beyond
-128 levels). Compare `Code` with the `boa.Code*` constants. `FieldError` and
-`ValidationError` support `errors.As`; custom causes support `errors.Is`.
-Messages are diagnostics rather than a parsing contract. Collection stops at
-100 failures; repeated references on an active cyclic branch are not traversed
-again. Defaults stops at its first construction error.
+| Code | Meaning |
+|---|---|
+| `boa.CodeRequired` | Required value is absent |
+| `boa.CodeAlternatives` | Value is not an allowed alternative |
+| `boa.CodeMin`, `boa.CodeMax` | Value or collection length is out of bounds |
+| `boa.CodePattern` | Pattern check failed |
+| `boa.CodeCustom` | Custom validator failed |
+| `boa.CodeSchema` | Invalid metadata or input shape |
+| `boa.CodeLimit` | Traversal or copying exceeded a depth or work limit |
 
-## Implementation and compatibility audit
+Validation reports the first failed rule per field. Field-local depth and schema
+errors do not suppress sibling errors. Limits are:
 
-The change keeps the existing `paramMeta` and `newParam` representation. Tag
-parsing for alternatives, strictness, typed defaults, bounds, and patterns is
-extracted from `processingContext.applyTags` into `applyFieldTags`; validation
-does not even parse default literals. Default copying uses the existing
-`cloneConfigValue`, extended from slices to all reference defaults.
+| Limit | Behavior |
+|---|---|
+| 100 errors | `Truncated` indicates the error-count cap was reached |
+| 128 recursive traversal or copy steps | Includes pointer and interface dereferences |
+| 10,000 traversal steps | Caps total traversal work |
 
-The required, alternatives, custom-validator, and min/max/pattern evaluators are
-shared with `command.validate`. The command calls them against its live mirrors,
-preserving constraints enriched during Init. Its adapter retains source-aware
-required checks, conversion, environment hints, first-error messages, HTTPBind
-policy, file checks, secret loading, precedence, lifecycle hooks, and reload.
-CLI traversal is unchanged; standalone traversal additionally reaches struct
-fields within collections. No new validation library or parallel metadata
-representation is introduced.
-
-The paired rule tests compare CLI error messages to standalone rule diagnostics,
-including bounds beyond 2^53, unsigned bounds, duration, named strings,
-collections, and Init-enriched/custom rules. Existing command integration tests
-continue to cover precedence, hooks, files, secrets, HTTPBind, and reload.
-
-## Consumer assessment
-
-The runnable [consumer example](https://github.com/j0sh/boa/tree/main/internal/example_memory)
-uses representative fields inspected in Clankery `26c84a9` and Node `23c1f6a`.
-It is a subset demonstration, not a migration or a replacement for either
-application's full validator. Its tests compare the sample's six basic rules
-and defaults with an explicit manual baseline.
-
-| Consumer | Checks/defaults Boa can supply | Checks that stay with the consumer |
-|---|---|---|
-| Clankery `schema` | Readiness defaults and type enum; failure threshold 1–10; HTTP port 1–65535; instance mode enum, replicas 1–100, capacity 1–10000; other literal defaults/enums can use tags | Strict TOML kinds/keys/presence, conditional readiness default when a table is supplied, normalized JSON completeness, canonical bytes/digest, exact quantity/price parsing, image references, path safety/overlap, resource sums, timeout relationships, single-session capacity, payment policy |
-| Node `signer.KafkaConfig` | Existing auth enum/default, outbox path default, outbox capacity default and positive bound | Broker address/scheme/port rules; topic syntax and special names; outbox URI/path restrictions; credential pairing, secret-file resolution and NUL checks; SASL transport construction |
-| Node orchestrator `validateApp` | Capacity 1–10000, nonempty app, mode enum, optional route ID length/pattern, GPU VRAM bound; fresh request defaults for capacity/mode/status | Explicit zero/empty compatibility normalization, lowercasing/trimming price metadata, destination URL checks, exact pricing, ownership, duplicate IDs, admission and cross-field rules |
-
-For Kafka, the existing explicit `OutboxMaxBytes <= 0` branch is redundant once
-`boa.Validate` runs. Topic length/syntax would need **new tags** before those
-checks could move. `transport()` currently permits empty auth as SCRAM fallback,
-while its existing strict Boa enum rejects empty: a consumer migration must
-decide whether to retain that compatibility exception. Do not silently replace
-transport construction with enum checking.
-
-Node registration currently converts explicit capacity `0` to `1`, and explicit
-empty mode/status to defaults. `Defaults` before decoding only handles omission;
-`Validate` preserves explicit zero/empty. Retain those normalization branches or
-deliberately version that contract. Status currently accepts arbitrary nonempty
-strings, so adding a status enum would also change behavior.
-
-No consumer files are changed. Savings are measured on the runnable subset,
-not inferred from the earlier 10–30 schema LOC estimate; they do not include
-application rules that still have to run.
-
-The sample's two manual helpers occupy 28 physical Go lines; the two helpers
-using Boa occupy 7, a reduction of **21 lines** with identical tested basic rule
-results. These counts include the separating blank line and function boundaries.
-Tags replace existing field declarations without adding lines. The loader needs
-3 extra lines to handle a possible default-construction error, making the net
-sample reduction **18 lines** when that call site is included. The manual
-baseline stays in the example's test file solely to verify the comparison.
-
-For the Boa change itself (physical Go lines, including comments and blanks,
-excluding pre-existing editor-swap deletions):
-
-| Area | Added | Removed | Net |
-|---|---:|---:|---:|
-| Framework production | 469 | 140 | +329 |
-| Runnable consumer example | 70 | 0 | +70 |
-| Tests, including the manual consumer baseline | 494 | 0 | +494 |
-
-The production totals include **108 original lines relocated with edits**:
-68 in the bounds/pattern evaluator and 40 in field-tag parsing. These are moves,
-not 108 additional lines of new rule logic; alternatives/custom/required
-extraction is a refactor rather than an unchanged move. Counts use
-`git diff --numstat` against the parent plus full line counts for new Go files;
-the moved-block counts measure their original source spans separately.
+Cyclic references are not revisited on the same active branch; a root
+self-cycle is visited once.

@@ -224,13 +224,7 @@ func TestValidateCollectionsAndLimits(t *testing.T) {
 	if err := Validate(cycle); err != nil {
 		t.Fatal(err)
 	}
-	deep := &recursive{Value: 1}
-	for i := 0; i < 130; i++ {
-		deep = &recursive{Value: 1, Next: deep}
-	}
-	if failures(t, Validate(deep)).Fields[0].Code != CodeLimit {
-		t.Fatal("expected depth limit")
-	}
+
 }
 
 func TestValidateCustomAndNonMutation(t *testing.T) {

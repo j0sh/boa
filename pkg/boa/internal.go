@@ -1943,8 +1943,24 @@ type configCopyKey struct {
 }
 
 func cloneConfigValue(value reflect.Value, seen map[configCopyKey]reflect.Value) reflect.Value {
-	// Addr is immutable; cloning its interned zone handles breaks address identity.
-	if value.Type() == reflect.TypeFor[netip.Addr]() {
+	return (&configCloner{seen: seen}).clone(value, 0)
+}
+
+// A zero maxDepth leaves decoder/default copying unrestricted. Validation sets
+// a bound and discards the partial copy if exceeded is true.
+type configCloner struct {
+	seen     map[configCopyKey]reflect.Value
+	maxDepth int
+	exceeded bool
+}
+
+func (c *configCloner) clone(value reflect.Value, depth int) reflect.Value {
+	if c.exceeded || c.maxDepth > 0 && depth > c.maxDepth {
+		c.exceeded = true
+		return value
+	}
+	// Preserve identity for immutable interned addresses and lazy timezones.
+	if value.Type() == reflect.TypeFor[netip.Addr]() || value.Type() == reflect.TypeFor[*time.Location]() {
 		return value
 	}
 	copy := reflect.New(value.Type()).Elem()
@@ -1957,39 +1973,39 @@ func cloneConfigValue(value reflect.Value, seen map[configCopyKey]reflect.Value)
 		if kind == reflect.Slice {
 			key.len = value.Len()
 		}
-		if prior, ok := seen[key]; ok {
+		if prior, ok := c.seen[key]; ok {
 			return prior
 		}
-		seen[key] = copy
+		c.seen[key] = copy
 	}
 	switch value.Kind() {
 	case reflect.Pointer:
 		copy.Set(reflect.New(value.Type().Elem()))
-		copy.Elem().Set(cloneConfigValue(value.Elem(), seen))
+		copy.Elem().Set(c.clone(value.Elem(), depth+1))
 	case reflect.Interface:
 		if !value.IsNil() {
-			copy.Set(cloneConfigValue(value.Elem(), seen))
+			copy.Set(c.clone(value.Elem(), depth+1))
 		}
 	case reflect.Slice:
 		copy.Set(reflect.MakeSlice(value.Type(), value.Len(), value.Len()))
 		for i := range value.Len() {
-			copy.Index(i).Set(cloneConfigValue(value.Index(i), seen))
+			copy.Index(i).Set(c.clone(value.Index(i), depth+1))
 		}
 	case reflect.Map:
 		copy.Set(reflect.MakeMapWithSize(value.Type(), value.Len()))
 		for it := value.MapRange(); it.Next(); {
-			copy.SetMapIndex(cloneConfigValue(it.Key(), seen), cloneConfigValue(it.Value(), seen))
+			copy.SetMapIndex(c.clone(it.Key(), depth+1), c.clone(it.Value(), depth+1))
 		}
 	case reflect.Struct:
 		for i := range copy.NumField() {
 			field := copy.Field(i)
 			// Native scalar decoders such as big.Rat mutate unexported storage too.
 			field = reflect.NewAt(field.Type(), field.Addr().UnsafePointer()).Elem()
-			field.Set(cloneConfigValue(field, seen))
+			field.Set(c.clone(field, depth+1))
 		}
 	case reflect.Array:
 		for i := range value.Len() {
-			copy.Index(i).Set(cloneConfigValue(value.Index(i), seen))
+			copy.Index(i).Set(c.clone(value.Index(i), depth+1))
 		}
 	}
 	return copy

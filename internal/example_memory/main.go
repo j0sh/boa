@@ -3,6 +3,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/j0sh/boa/pkg/boa"
@@ -38,32 +39,15 @@ type KafkaSettings struct {
 	OutboxMaxBytes int64  `name:"outbox-max-bytes" default:"268435456" min:"1"`
 }
 
-func defaultApp() (App, error) {
-	return boa.Defaults[App]()
-}
-
-func validateApp(a App) error {
-	return boa.Validate(a)
-}
-
 func main() {
-	app, err := defaultApp()
+	// Fresh defaults, caller-selected decoding, then validation in one call.
+	app, err := boa.ParseConfigBytes[App]([]byte(`{"http":{"port":8080},"instances":{"replicas":2}}`), json.Unmarshal)
 	if err != nil {
-		panic(err)
-	}
-	// A decoder can replace defaults with explicit zero, false or empty values.
-	if err := boa.LoadConfigBytes([]byte(`{"http":{"port":8080},"instances":{"replicas":2}}`), ".json", &app, nil); err != nil {
-		panic(err)
-	}
-	if err := validateApp(app); err != nil {
 		panic(err)
 	}
 	fmt.Printf("%s readiness, %d replicas\n", app.Readiness.Type, app.Instances.Replicas)
-	kafka, err := boa.Defaults[KafkaSettings]()
+	kafka, err := boa.ParseConfigBytes[KafkaSettings]([]byte(`{}`), json.Unmarshal)
 	if err != nil {
-		panic(err)
-	}
-	if err := boa.Validate(kafka); err != nil {
 		panic(err)
 	}
 	fmt.Printf("%s, %d outbox bytes\n", kafka.AuthMethod, kafka.OutboxMaxBytes)

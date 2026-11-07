@@ -39,7 +39,7 @@ func legacyValidate(a App) error {
 }
 
 func TestAppReuse(t *testing.T) {
-	app, err := defaultApp()
+	app, err := boa.Defaults[App]()
 	if err != nil || app != legacyDefaults() {
 		t.Fatalf("defaults differ: %+v, %v", app, err)
 	}
@@ -60,7 +60,7 @@ func TestAppReuse(t *testing.T) {
 	} {
 		value := app
 		edit(&value)
-		if (validateApp(value) == nil) != (legacyValidate(value) == nil) {
+		if (boa.Validate(value) == nil) != (legacyValidate(value) == nil) {
 			t.Fatalf("validation differs: %+v", value)
 		}
 	}

@@ -23,7 +23,9 @@ func validateAlternatives(param parameter, valPtr any) error {
 	if alts == nil || !param.GetStrictAlts() || valPtr == nil {
 		return nil
 	}
-	value := reflect.ValueOf(valPtr).Elem()
+	// CLI mirrors normalize named primitives, including slice elements. Use
+	// that same representation rather than a named type's display methods.
+	value := reinterpretAs(reflect.ValueOf(valPtr).Elem(), param.GetType())
 	check := func(v reflect.Value, path string) error {
 		text := fmt.Sprintf("%v", v.Interface())
 		if !slices.Contains(alts, text) {
@@ -45,7 +47,8 @@ func validateAlternatives(param parameter, valPtr any) error {
 }
 
 func validateCustom(param parameter, valPtr any) error {
-	if err := param.customValidatorOfPtr()(valPtr); err != nil {
+	value := reinterpretAs(reflect.ValueOf(valPtr).Elem(), param.GetType())
+	if err := param.customValidatorOfPtr()(value.Addr().Interface()); err != nil {
 		return ruleError(CodeCustom, err)
 	}
 	return nil
