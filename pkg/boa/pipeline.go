@@ -12,6 +12,28 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// convertParamValues finishes string-backed flag conversion. A second pass
+// handles parameters enabled by configuration or validation hooks.
+func convertParamValues(ctx *processingContext) error {
+	for _, path := range ctx.pathOrder {
+		if _, live := ctx.resolveFieldValue(path); !live {
+			continue
+		}
+		param := ctx.mirrorByPath[path]
+		if !param.HasValue() || !param.IsEnabled() || param.IsIgnored() {
+			continue
+		}
+		if handler := handlerFor(param); handler != nil && handler.convert != nil {
+			value, err := handler.convert(param.GetName(), param.valuePtrF())
+			if err != nil {
+				return err
+			}
+			param.setValuePtr(value)
+		}
+	}
+	return nil
+}
+
 // loadAndValidate is shared by execution, Validate, and reload. Source loading
 // and validation complete before any action hook is eligible to run.
 func (b command) loadAndValidate(ctx *processingContext, cmd *cobra.Command, args []string, createDirs bool) error {
@@ -36,18 +58,8 @@ func (b command) loadAndValidate(ctx *processingContext, cmd *cobra.Command, arg
 
 	// Finish string-backed flag conversion before base selection or config loading.
 	// Native pflag values and env/config values are already typed.
-	for _, path := range ctx.pathOrder {
-		param := ctx.mirrorByPath[path]
-		if !param.HasValue() || !param.IsEnabled() || param.IsIgnored() {
-			continue
-		}
-		if handler := handlerFor(param); handler != nil && handler.convert != nil {
-			value, err := handler.convert(param.GetName(), param.valuePtrF())
-			if err != nil {
-				return NewUserInputError(err)
-			}
-			param.setValuePtr(value)
-		}
+	if err := convertParamValues(ctx); err != nil {
+		return NewUserInputError(err)
 	}
 	syncMirrors(ctx)
 	if b.PreConfigFuncCtx != nil {
@@ -140,12 +152,14 @@ func (b command) loadAndValidate(ctx *processingContext, cmd *cobra.Command, arg
 		return NewUserInputError(err)
 	}
 
+	if err := convertParamValues(ctx); err != nil {
+		return NewUserInputError(err)
+	}
+	syncMirrors(ctx)
+
 	if err = b.validate(ctx, b.Params); err != nil {
 		return err
 	}
-
-	// Sync mirrors again after validation to copy converted values (e.g., *url.URL from string)
-	syncMirrors(ctx)
 
 	// Validation and reload never execute action hooks.
 	if b.validateOnly {

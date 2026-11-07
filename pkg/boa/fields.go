@@ -19,7 +19,7 @@ const (
 	CodeLimit        ValidationCode = "limit"
 )
 
-// MaxValidationErrors bounds the errors returned by Validate.
+// MaxValidationErrors bounds shared validation diagnostics.
 const MaxValidationErrors = 100
 
 const maxFieldDepth = 128
@@ -49,16 +49,21 @@ func (e *FieldError) Unwrap() error { return e.Err }
 type ValidationError struct {
 	Fields    []FieldError
 	Truncated bool
+	limit     int
+	message   string
 }
 
 func (e *ValidationError) append(path string, failure *FieldError) {
 	if !e.Truncated {
 		e.Fields = append(e.Fields, FieldError{Path: path + failure.Path, Code: failure.Code, Err: failure.Err})
-		e.Truncated = len(e.Fields) == MaxValidationErrors
+		e.Truncated = len(e.Fields) == e.limit
 	}
 }
 
 func (e *ValidationError) Error() string {
+	if e.message != "" {
+		return e.message
+	}
 	if len(e.Fields) == 0 {
 		return "validation failed"
 	}
@@ -74,8 +79,8 @@ func (e *ValidationError) Unwrap() []error {
 }
 
 // ConfigureField edits existing Boa metadata for an in-memory operation. It is
-// called before constraint tags, matching CLI Init precedence, and uses the same
-// paths as FieldError. Configured defaults take priority over default tags.
+// called after tags, using the same paths as FieldError. Explicit settings
+// override the tag baseline, as they do in CLI Init hooks.
 // It never runs CLI hooks.
 // Use Parameter.SetCustomValidator or Field[T]{Parameter: p} for typed validators.
 // Callbacks and validators are application code and should be free of I/O.
@@ -85,36 +90,14 @@ type ConfigureField func(path string, field Parameter)
 // configuration. It does not validate, read the environment, resolve paths, read
 // files or secrets, or run lifecycle hooks. Nil struct groups stay nil. Collection
 // defaults are whole values; element defaults are not overlaid onto them.
-// Decode into the returned value to preserve explicit zero/false/empty inputs.
+// Decoded zero, false and empty strings replace defaults. Collection merging
+// and replacement follow the supplied decoder.
 func Defaults[T any](configure ...ConfigureField) (T, error) {
 	var value T
-	root := reflect.ValueOf(&value).Elem()
-	if root.Kind() != reflect.Struct {
-		return value, fmt.Errorf("boa.Defaults: expected a struct type")
+	if failures := processFields(&value, true, nil, configure); failures != nil {
+		return value, &failures.Fields[0]
 	}
-	walker := fieldWalker{active: make(map[configCopyKey]bool), remaining: maxFieldSteps}
-	err := walker.walk(root, "", 0, func(field reflect.StructField, v reflect.Value, path string) (bool, error) {
-		meta, err := fieldMetadata(field, path, true, configure)
-		if err != nil {
-			return false, &FieldError{Path: path, Code: CodeSchema, Err: err}
-		}
-		if meta.IsIgnored() || !meta.IsEnabled() {
-			return false, nil
-		}
-		if meta.hasDefaultValue() {
-			value := reflect.ValueOf(meta.defaultValuePtr()).Elem()
-			if meta.isPointer {
-				v.Set(reflect.New(v.Type().Elem()))
-				v = v.Elem()
-			}
-			// Mirrors normalize named primitive/slice types for Cobra. Use the
-			// same typed view as syncMirrors when constructing their defaults.
-			reinterpretAs(v, value.Type()).Set(value)
-			return false, nil
-		}
-		return true, nil
-	})
-	return value, err
+	return value, nil
 }
 
 // Validate checks an in-memory struct or non-nil pointer to one, without applying
@@ -129,50 +112,95 @@ func Defaults[T any](configure ...ConfigureField) (T, error) {
 // secret, command HTTPBind policy, or lifecycle operations run. Custom validators
 // receive a deep copy; their own external side effects remain their responsibility.
 func Validate(value any, configure ...ConfigureField) error {
+	if failures := processFields(value, false, nil, configure); failures != nil {
+		return failures
+	}
+	return nil
+}
+
+// processFields owns metadata, default construction or validation, traversal,
+// and diagnostics for both public APIs and CLI values. CLI supplies its existing
+// metadata/source state; it does not supply a second validation controller.
+func processFields(value any, defaults bool, ctx *processingContext, configure []ConfigureField) *ValidationError {
 	root := reflect.ValueOf(value)
 	active := make(map[configCopyKey]bool)
 	if root.IsValid() && root.Kind() == reflect.Pointer && !root.IsNil() {
 		active[configCopyKey{typ: root.Type(), ptr: root.UnsafePointer()}] = true
 		root = root.Elem()
 	}
-	errs := &ValidationError{}
-	if !root.IsValid() || root.Kind() != reflect.Struct {
-		errs.append("", ruleError(CodeSchema, fmt.Errorf("boa.Validate: expected a struct or non-nil pointer to struct")))
-		return errs
+	failures := &ValidationError{limit: MaxValidationErrors}
+	if defaults {
+		failures.limit = 1
 	}
-	// Keep traversal addressable without copying excluded subtrees. Only rules
-	// that can invoke application code need an independent field copy.
-	addressable := reflect.New(root.Type()).Elem()
-	addressable.Set(root)
-	root = addressable
-	walker := fieldWalker{active: active, remaining: maxFieldSteps, failures: errs}
+	if !root.IsValid() || root.Kind() != reflect.Struct {
+		failures.append("", ruleError(CodeSchema, fmt.Errorf("boa: expected a struct or non-nil pointer to struct")))
+		return failures
+	}
+	if !root.CanAddr() {
+		addressable := reflect.New(root.Type()).Elem()
+		addressable.Set(root)
+		root = addressable
+	}
+	walker := fieldWalker{active: active, remaining: maxFieldSteps, failures: failures}
 	_ = walker.walk(root, "", 0, func(field reflect.StructField, v reflect.Value, path string) (bool, error) {
-		meta, err := fieldMetadata(field, path, false, configure)
-		if err != nil {
-			errs.append(path, ruleError(CodeSchema, err))
-			return false, nil
+		var meta *paramMeta
+		cached := false
+		if ctx != nil {
+			meta, cached = ctx.mirrorByPath[joinPath(walker.indices)].(*paramMeta)
+		}
+		if !cached {
+			var failure *FieldError
+			meta, failure = newField(field, path)
+			if failure != nil {
+				failures.append("", failure)
+				return false, nil
+			}
+			if defaults {
+				if err := applyDefaultTag(meta, field.Tag); err != nil {
+					failures.append("", schemaError(path, field.Tag, err))
+					return false, nil
+				}
+			}
+			for _, fn := range configure {
+				fn(path, meta)
+			}
 		}
 		if meta.IsIgnored() || !meta.IsEnabled() {
 			return false, nil
 		}
-		present := true
+		if defaults {
+			if meta.hasDefaultValue() {
+				syncField(v, meta)
+				return false, nil
+			}
+			return v.Kind() != reflect.Array && mayHaveFields(field.Type), nil
+		}
+		valuePresent := true
 		switch v.Kind() {
 		case reflect.Pointer, reflect.Map, reflect.Slice, reflect.Interface:
-			present = !v.IsNil()
+			valuePresent = !v.IsNil()
 		}
-		if err := validateRequired(meta, present); err != nil {
-			errs.append(path, err)
+		present := valuePresent
+		if cached {
+			present = meta.HasValue()
+		}
+		if failure := validateRequired(meta, present); failure != nil {
+			failures.append(path, failure)
 			return false, nil
 		}
-		if !present {
+		if !present || !valuePresent {
 			return false, nil
+		}
+		original := v.Addr().Interface()
+		if meta.isPointer {
+			original = v.Interface()
 		}
 		ruleValue := v
 		if meta.customValidator != nil || meta.GetAlternatives() != nil && meta.GetStrictAlts() {
 			cloner := configCloner{seen: make(map[configCopyKey]reflect.Value), maxDepth: maxFieldDepth}
 			ruleValue = cloner.clone(v, 0)
 			if cloner.exceeded {
-				errs.append(path, ruleError(CodeLimit, fmt.Errorf("copying exceeds %d recursive steps", maxFieldDepth)))
+				failures.append(path, ruleError(CodeLimit, fmt.Errorf("copying exceeds %d recursive steps", maxFieldDepth)))
 				return false, nil
 			}
 		}
@@ -180,36 +208,28 @@ func Validate(value any, configure ...ConfigureField) error {
 		if meta.isPointer {
 			ptr = ruleValue.Interface()
 		}
-		for _, rule := range []func() *FieldError{
-			func() *FieldError { return validateAlternatives(meta, ptr) },
-			func() *FieldError { return validateCustom(meta, ptr) },
-			func() *FieldError { return validateMinMaxPattern(meta, ptr) },
-		} {
-			if failure := rule(); failure != nil {
-				errs.append(path, failure)
-				return false, nil
-			}
+		failure := validateAlternatives(meta, ptr)
+		if failure == nil {
+			failure = validateCustom(meta, ptr)
 		}
-		return true, nil
+		if failure == nil {
+			failure = validateMinMaxPattern(meta, original)
+		}
+		if failure != nil {
+			failures.append(path, failure)
+			return false, nil
+		}
+		return mayHaveFields(field.Type), nil
 	})
-	if len(errs.Fields) != 0 {
-		return errs
+	if len(failures.Fields) == 0 {
+		return nil
 	}
-	return nil
+	return failures
 }
 
-func fieldMetadata(field reflect.StructField, path string, defaults bool, configure []ConfigureField) (*paramMeta, error) {
-	param, err := newParam(&field, field.Type)
-	if err != nil {
-		return nil, err
+func schemaError(path string, tags reflect.StructTag, err error) *FieldError {
+	if alias := tags.Get("name"); alias != "" {
+		err = fmt.Errorf("(%s) %w", alias, err)
 	}
-	meta := param.(*paramMeta)
-	meta.name = path
-	for _, fn := range configure {
-		fn(path, meta)
-	}
-	if err := applyFieldTags(meta, field.Tag, defaults); err != nil {
-		return nil, err
-	}
-	return meta, nil
+	return &FieldError{Path: path, Code: CodeSchema, Err: err}
 }

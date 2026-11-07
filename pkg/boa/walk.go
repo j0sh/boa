@@ -12,14 +12,13 @@ import (
 // fieldWalker discovers fields for commands, defaults, and validation. Adapters
 // decide which fields are leaves and supply metadata, hooks, and error policy.
 type fieldWalker struct {
-	indices    []int
-	prefix     string
-	rootStruct bool
-	onStruct   func(reflect.Value) error
-	active     map[configCopyKey]bool
-	remaining  int
-	exhausted  bool
-	failures   *ValidationError
+	indices   []int
+	prefix    string
+	onStruct  func(reflect.Value) error
+	active    map[configCopyKey]bool
+	remaining int
+	exhausted bool
+	failures  *ValidationError
 }
 
 func (w *fieldWalker) done() bool {
@@ -36,11 +35,11 @@ func (w *fieldWalker) fail(path string, code ValidationCode, message string) err
 }
 
 func (w *fieldWalker) walk(v reflect.Value, path string, depth int, visit func(reflect.StructField, reflect.Value, string) (bool, error)) error {
-	if w.done() {
+	if w.done() || v.Kind() == reflect.Interface && (v.IsNil() || !mayHaveFields(v.Elem().Type())) {
 		return nil
 	}
-	// Commands retain their existing unrestricted traversal; in-memory
-	// operations supply the bounded work budget.
+	// Parameter discovery is outside validation; defaults and the shared
+	// validator supply a bounded work budget.
 	if w.remaining >= 0 {
 		if w.remaining == 0 {
 			w.exhausted = true
@@ -51,7 +50,7 @@ func (w *fieldWalker) walk(v reflect.Value, path string, depth int, visit func(r
 			return w.fail(path, CodeLimit, fmt.Sprintf("nesting exceeds %d recursive steps", maxFieldDepth))
 		}
 	}
-	if lookupHandler(v.Type()) != nil && (!w.rootStruct || depth != 0) {
+	if depth != 0 && lookupHandler(v.Type()) != nil {
 		return nil
 	}
 	switch v.Kind() {

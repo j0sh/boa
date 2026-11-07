@@ -49,6 +49,7 @@ Plain scalar and flat-slice fields are required by default. These field shapes d
 
 - pointers, because `nil` represents absence;
 - maps;
+- interfaces;
 - nested slices such as `[][]int`.
 
 `required:"true"` and `optional:"true"` override the default. A declared default also satisfies a required field.

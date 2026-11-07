@@ -580,71 +580,53 @@ func parseEnv(ctx *processingContext, structPtr any) error {
 }
 
 func (b command) validate(ctx *processingContext, structPtr any) error {
-
+	failures := processFields(structPtr, false, ctx, nil)
+	if failures != nil {
+		first := failures.Fields[0]
+		lookup := first.Path
+		if first.Code == CodeAlternatives && strings.HasSuffix(lookup, "]") {
+			lookup = lookup[:strings.LastIndex(lookup, "[")]
+		}
+		name, envHint := first.Path, ""
+		for _, param := range ctx.mirrorByPath {
+			meta := param.(*paramMeta)
+			if meta.goPath == lookup {
+				name = meta.GetName()
+				if meta.GetEnv() != "" && !meta.IsNoEnv() {
+					envHint = " (env: " + meta.GetEnv() + ")"
+				}
+				break
+			}
+		}
+		if first.Code == CodeRequired {
+			failures.message = fmt.Sprintf("missing required param '%s'%s", name, envHint)
+		} else {
+			failures.message = fmt.Sprintf("invalid value for param '%s': %s", name, first.Err)
+		}
+		return NewUserInputError(failures)
+	}
+	// Source conversion, path/HTTPBind policy and filesystem checks belong to
+	// the command pipeline, outside the shared validation engine.
 	err := traverse(ctx, structPtr, func(param parameter, _ string, _ reflect.StructTag) error {
-
-		if !param.IsEnabled() {
+		if !param.IsEnabled() || param.IsIgnored() || !param.HasValue() || param.valuePtrF() == nil {
 			return nil
 		}
-
-		// Fully ignored params are skipped end-to-end: no required check,
-		// no conversion, no alt/min/max/pattern/custom validation. Config
-		// files write directly to the raw struct field via unmarshal, so
-		// their values still land — just without any boa-layer processing.
-		if param.IsIgnored() {
-			return nil
+		meta := param.(*paramMeta)
+		allow := b.UnsafeHTTPBind
+		if meta.unsafeHTTPBind != nil {
+			allow = *meta.unsafeHTTPBind
 		}
-
-		envHint := ""
-		if param.GetEnv() != "" && !param.IsNoEnv() {
-			envHint = fmt.Sprintf(" (env: %s)", param.GetEnv())
-		}
-
-		if err := validateRequired(param, param.HasValue()); err != nil {
-			return fmt.Errorf("missing required param '%s'%s", param.GetName(), envHint)
-		}
-
-		// Post-parse conversion for types stored as strings in cobra (time.Time, *url.URL, JSON fallback, etc.)
-		if param.HasValue() {
-			if h := handlerFor(param); h != nil && h.convert != nil {
-				value, err := h.convert(param.GetName(), param.valuePtrF())
-				if err != nil {
-					return err
-				}
-				param.setValuePtr(value)
-			}
-
-			if err := validateAlternatives(param, param.valuePtrF()); err != nil {
-				return fmt.Errorf("invalid value for param '%s': %s", param.GetName(), err.Err)
-			}
-			if err := validateCustom(param, param.valuePtrF()); err != nil {
-				return fmt.Errorf("invalid value for param '%s': %s", param.GetName(), err.Error())
-			}
-
-			// min/max/pattern tag validation
-			if pm, ok := param.(*paramMeta); ok {
-				allow := b.UnsafeHTTPBind
-				if pm.unsafeHTTPBind != nil {
-					allow = *pm.unsafeHTTPBind
-				}
-				if !allow {
-					if err := validateHTTPBinds(reflect.ValueOf(param.valuePtrF()), make(map[configCopyKey]bool)); err != nil {
-						return fmt.Errorf("invalid value for param '%s': %w", param.GetName(), err)
-					}
-				}
-				if err := validateMinMaxPattern(pm, param.valuePtrF()); err != nil {
-					return fmt.Errorf("invalid value for param '%s': %s", param.GetName(), err.Error())
-				}
-			}
-
-			if param.IsFile() {
-				value := reflect.Indirect(reflect.ValueOf(param.valuePtrF()))
-				if err := validateFile(value.String()); err != nil && (!param.IsFileOptional() || !errors.Is(err, os.ErrNotExist)) {
-					return fmt.Errorf("invalid value for param '%s': %w", param.GetName(), err)
-				}
+		if !allow {
+			if err := validateHTTPBinds(reflect.ValueOf(param.valuePtrF()), make(map[configCopyKey]bool)); err != nil {
+				return fmt.Errorf("invalid value for param '%s': %w", param.GetName(), err)
 			}
 		}
-
+		if param.IsFile() {
+			value := reflect.Indirect(reflect.ValueOf(param.valuePtrF()))
+			if err := validateFile(value.String()); err != nil && (!param.IsFileOptional() || !errors.Is(err, os.ErrNotExist)) {
+				return fmt.Errorf("invalid value for param '%s': %w", param.GetName(), err)
+			}
+		}
 		return nil
 	}, nil)
 	return NewUserInputError(err)
@@ -1152,11 +1134,11 @@ func traverse(
 	if !root.IsValid() || root.Kind() != reflect.Pointer || root.IsNil() || root.Type().Elem().Kind() != reflect.Struct {
 		return fmt.Errorf("expected pointer to struct")
 	}
-	walker := fieldWalker{active: make(map[configCopyKey]bool), remaining: -1, rootStruct: true}
+	walker := fieldWalker{active: make(map[configCopyKey]bool), remaining: -1}
 	if fStruct != nil {
 		walker.onStruct = func(v reflect.Value) error { return fStruct(v.Addr().Interface()) }
 	}
-	return walker.walk(root.Elem(), "", 0, func(field reflect.StructField, value reflect.Value, _ string) (bool, error) {
+	return walker.walk(root.Elem(), "", 0, func(field reflect.StructField, value reflect.Value, goPath string) (bool, error) {
 		param, isParam := value.Addr().Interface().(parameter)
 		if !isParam {
 			if !isSupportedType(field.Type) {
@@ -1167,18 +1149,18 @@ func traverse(
 				if t.Kind() == reflect.Struct {
 					return true, nil
 				}
-				slog.Warn(fmt.Sprintf("field %s is not a type that is interpretable as a boa.Parameter. It will be ignored", field.Name))
+				slog.Warn(fmt.Sprintf("field %s has no CLI or environment binding", field.Name))
 				return false, nil
 			}
 			path := joinPath(walker.indices)
 			var found bool
 			if param, found = ctx.mirrorByPath[path]; !found {
-				var err error
-				param, err = newParam(&field, field.Type)
-				if err != nil {
-					return false, err
+				meta, failure := newField(field, goPath)
+				if failure != nil {
+					return false, failure
 				}
-				meta := param.(*paramMeta)
+				meta.name = ""
+				param = meta
 				meta.pathKey = path
 				if walker.prefix != "" {
 					meta.flagPrefix = camelToKebabCase(walker.prefix) + "-"
@@ -1437,6 +1419,17 @@ func (b command) toCobraBase() (*cobra.Command, *processingContext, error) {
 
 	syncMirrors(ctx)
 
+	if b.Params != nil {
+		if err := traverse(ctx, b.Params, func(param parameter, _ string, tags reflect.StructTag) error {
+			if err := applyDefaultTag(param, tags); err != nil {
+				return schemaError(param.(*paramMeta).goPath, tags, err)
+			}
+			return nil
+		}, nil); err != nil {
+			return nil, nil, fmt.Errorf("error parsing tags: %w", err)
+		}
+	}
+
 	// if b.params or any inner struct implements CfgStructInit, call it
 	if b.Params != nil {
 		err := traverse(ctx, b.Params, nil, func(innerParams any) error {
@@ -1512,7 +1505,6 @@ func (b command) toCobraBase() (*cobra.Command, *processingContext, error) {
 		err := traverse(ctx, b.Params, func(param parameter, _ string, tags reflect.StructTag) error {
 			return ctx.applyTags(param, tags)
 		}, nil)
-
 		if err != nil {
 			return nil, nil, fmt.Errorf("error parsing tags: %w", err)
 		}
@@ -1794,7 +1786,7 @@ func (ctx *processingContext) resolveFieldValue(path fieldPath) (reflect.Value, 
 	}
 	// For the final value, if it is a pointer-to-struct we do NOT auto-deref:
 	// mirror types may themselves be pointers (e.g., *url.URL), and pointer-field
-	// semantics are handled by syncPointerField.
+	// semantics are handled by syncField.
 	return v, true
 }
 
@@ -1962,62 +1954,57 @@ func syncMirrors(ctx *processingContext) {
 			continue
 		}
 
-		// Check if this is a pointer field (e.g., *string, *int)
-		pm, isParamMeta := mirror.(*paramMeta)
-		if isParamMeta && pm.isPointer {
-			// Reinterpret as a pointer to the underlying type so named types round-trip.
-			ptrView := reinterpretAs(rawFieldVal, reflect.PointerTo(mirror.GetType()))
-			syncPointerField(ptrView, mirror)
-			continue
-		}
-
-		// Reinterpret as the underlying type (matters for named primitives).
-		underlying := reinterpretAs(rawFieldVal, mirror.GetType())
-
-		if !mirror.wasSetOnCli() && !mirror.wasSetByEnv() && !underlying.IsZero() {
-			mirror.injectValuePtr(underlying.Addr().Interface())
-		}
-
-		if mirror.wasSetOnCli() || mirror.wasSetByEnv() || (mirror.HasValue() && underlying.IsZero()) {
-			mirrorValue := reflect.ValueOf(mirror.valuePtrF()).Elem()
-
-			// Skip if types don't match (e.g., string vs *url.URL before conversion)
-			// This allows syncing to work before and after validation/conversion
-			if !mirrorValue.Type().AssignableTo(underlying.Type()) {
-				continue
-			}
-
-			// Make sure the destination is settable
-			if underlying.CanSet() {
-				underlying.Set(mirrorValue)
-			} else {
-				panic(fmt.Errorf("could not set value for parameter %s", mirror.GetName()))
-			}
-		}
+		syncField(rawFieldVal, mirror)
 	}
 }
 
-// syncPointerField handles bidirectional sync for pointer fields like *string, *int.
-// rawFieldVal is the *string field value itself (an addressable reflect.Value of
-// pointer kind). The mirror stores the element type (string).
-func syncPointerField(rawFieldVal reflect.Value, mirror parameter) {
-	// Raw → Mirror: if the user's pointer is non-nil, inject the pointed-to value
-	if !mirror.wasSetOnCli() && !mirror.wasSetByEnv() && !rawFieldVal.IsNil() {
-		// rawFieldVal.Interface() is *string — same type cobra uses
-		mirror.injectValuePtr(rawFieldVal.Interface())
-	}
+// syncField shares typed value transfer between CLI mirrors and fresh defaults.
+func syncField(rawFieldVal reflect.Value, mirror parameter) {
+	if meta, ok := mirror.(*paramMeta); ok && meta.isPointer {
+		rawFieldVal = reinterpretAs(rawFieldVal, reflect.PointerTo(mirror.GetType()))
 
-	// Mirror → Raw: if mirror has a value, set the pointer field
-	if mirror.wasSetOnCli() || mirror.wasSetByEnv() || (mirror.HasValue() && rawFieldVal.IsNil()) {
-		valPtr := mirror.valuePtrF()
-		if valPtr != nil {
-			mirrorVal := reflect.ValueOf(valPtr) // *string from cobra
-			// Skip if types don't match (e.g., string vs *url.URL before conversion)
-			if mirrorVal.Type().AssignableTo(rawFieldVal.Type()) {
-				if rawFieldVal.CanSet() {
-					rawFieldVal.Set(mirrorVal)
+		// Raw → Mirror: if the user's pointer is non-nil, inject the pointed-to value
+		if !mirror.wasSetOnCli() && !mirror.wasSetByEnv() && !rawFieldVal.IsNil() {
+			// rawFieldVal.Interface() is *string — same type cobra uses
+			mirror.injectValuePtr(rawFieldVal.Interface())
+		}
+
+		// Mirror → Raw: if mirror has a value, set the pointer field
+		if mirror.wasSetOnCli() || mirror.wasSetByEnv() || (mirror.HasValue() && rawFieldVal.IsNil()) {
+			valPtr := mirror.valuePtrF()
+			if valPtr != nil {
+				mirrorVal := reflect.ValueOf(valPtr) // *string from cobra
+				// Skip if types don't match (e.g., string vs *url.URL before conversion)
+				if mirrorVal.Type().AssignableTo(rawFieldVal.Type()) {
+					if rawFieldVal.CanSet() {
+						rawFieldVal.Set(mirrorVal)
+					}
 				}
 			}
+		}
+		return
+	}
+	// Reinterpret as the underlying type (matters for named primitives).
+	underlying := reinterpretAs(rawFieldVal, mirror.GetType())
+
+	if !mirror.wasSetOnCli() && !mirror.wasSetByEnv() && !underlying.IsZero() {
+		mirror.injectValuePtr(underlying.Addr().Interface())
+	}
+
+	if mirror.wasSetOnCli() || mirror.wasSetByEnv() || (mirror.HasValue() && underlying.IsZero()) {
+		mirrorValue := reflect.ValueOf(mirror.valuePtrF()).Elem()
+
+		// Skip if types don't match (e.g., string vs *url.URL before conversion)
+		// This allows syncing to work before and after validation/conversion
+		if !mirrorValue.Type().AssignableTo(underlying.Type()) {
+			return
+		}
+
+		// Make sure the destination is settable
+		if underlying.CanSet() {
+			underlying.Set(mirrorValue)
+		} else {
+			panic(fmt.Errorf("could not set value for parameter %s", mirror.GetName()))
 		}
 	}
 }
@@ -2102,7 +2089,10 @@ func normalizeType(t reflect.Type) reflect.Type {
 	return t
 }
 
-func newParam(field *reflect.StructField, t reflect.Type) (parameter, error) {
+// newField builds the existing metadata and tag baseline for every caller.
+func newField(field reflect.StructField, path string) (*paramMeta, *FieldError) {
+	t := field.Type
+
 	// Determine if this is a pointer-to-value field (e.g., *string, *int)
 	// Exact registered pointer types own their pointer semantics.
 	isPtr := t.Kind() == reflect.Pointer && exactTypeHandlers[t] == nil
@@ -2115,9 +2105,9 @@ func newParam(field *reflect.StructField, t reflect.Type) (parameter, error) {
 	// underlying built-in type (for example, *string rather than *MyString).
 	valueType = normalizeType(valueType)
 
-	// Pointer, map, and nested slice fields default to optional (nil = not set)
+	// Pointer, interface, map, and nested slice fields default to optional.
 	isRequired := !cfg.defaultOptional
-	if isPtr || valueType.Kind() == reflect.Map {
+	if isPtr || valueType.Kind() == reflect.Map || valueType.Kind() == reflect.Interface {
 		isRequired = false
 	}
 	// Nested slices ([][]T) default to optional — flat slices keep the global default
@@ -2128,7 +2118,7 @@ func newParam(field *reflect.StructField, t reflect.Type) (parameter, error) {
 	for _, key := range []string{"required", "optional"} {
 		if value, ok := field.Tag.Lookup(key); ok {
 			if value != "true" && value != "false" {
-				return nil, fmt.Errorf("invalid value for field %s's %s tag: %s", field.Name, key, value)
+				return nil, schemaError(path, field.Tag, fmt.Errorf("invalid value for field %s's %s tag: %s", field.Name, key, value))
 			}
 			isRequired = (value == "true") == (key == "required")
 		}
@@ -2143,14 +2133,14 @@ func newParam(field *reflect.StructField, t reflect.Type) (parameter, error) {
 		var err error
 		baseDir, err = parseBaseDirTag(value)
 		if err != nil {
-			return nil, fmt.Errorf("basedir on field %s: %w", field.Name, err)
+			return nil, schemaError(path, field.Tag, fmt.Errorf("basedir on field %s: %w", field.Name, err))
 		}
 	}
 	var basePath BasePath
 	if value, ok := field.Tag.Lookup("basepath"); ok {
 		basePath = BasePath(value)
 		if basePath != BasePathDir && basePath != BasePathSource {
-			return nil, fmt.Errorf("basepath on field %s: invalid value %q", field.Name, value)
+			return nil, schemaError(path, field.Tag, fmt.Errorf("basepath on field %s: invalid value %q", field.Name, value))
 		}
 	}
 	var file, config fileOptions
@@ -2161,23 +2151,57 @@ func newParam(field *reflect.StructField, t reflect.Type) (parameter, error) {
 		if value, ok := field.Tag.Lookup(tag.name); ok {
 			parsed, err := parseFileTag(tag.name, value)
 			if err != nil {
-				return nil, fmt.Errorf("%s on field %s: %w", tag.name, field.Name, err)
+				return nil, schemaError(path, field.Tag, fmt.Errorf("%s on field %s: %w", tag.name, field.Name, err))
 			}
 			*tag.options = parsed
 		}
 	}
-	return &paramMeta{
+	meta := &paramMeta{
+		name:            path,
+		goPath:          path,
 		fieldType:       valueType,
 		isPointer:       isPtr,
 		defaultRequired: isRequired,
-		noConfig:        slices.Contains(getBoaTags(*field), "noconfig") || field.Tag.Get("secret") == "true",
+		noConfig:        slices.Contains(getBoaTags(field), "noconfig") || field.Tag.Get("secret") == "true",
 		secretName:      secretName,
 		secretFile:      field.Tag.Get("secretfor") != "",
 		file:            file,
 		configFile:      config,
 		baseDir:         baseDir,
 		basePath:        basePath,
-	}, nil
+	}
+
+	if value, ok := field.Tag.Lookup("alts"); ok {
+		var alternatives []string
+		for _, item := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(value), "["), "]"), ",") {
+			if item = strings.TrimSpace(item); item != "" {
+				alternatives = append(alternatives, item)
+			}
+		}
+		meta.SetAlternatives(alternatives)
+	}
+	if value, ok := field.Tag.Lookup("strict"); ok {
+		meta.SetStrictAlts(value == "true")
+	}
+
+	for _, bound := range []struct {
+		tag  string
+		dest *any
+	}{{"min", &meta.minVal}, {"max", &meta.maxVal}} {
+		if value, ok := field.Tag.Lookup(bound.tag); ok {
+			parsed, err := parseBoundTag(meta.boundKind(), value)
+			if err != nil {
+				return nil, schemaError(path, field.Tag, fmt.Errorf("invalid %s value: %w", bound.tag, err))
+			}
+			if parsed != nil {
+				*bound.dest = parsed
+			}
+		}
+	}
+	if pattern, ok := field.Tag.Lookup("pattern"); ok {
+		meta.pattern = pattern
+	}
+	return meta, nil
 }
 
 var timeType = reflect.TypeOf(time.Time{})

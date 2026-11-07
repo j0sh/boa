@@ -47,6 +47,7 @@ type paramMeta struct {
 	// (e.g., the configfile tag handler) that have a *paramMeta can read its
 	// path directly instead of scanning pathOrder.
 	pathKey fieldPath
+	goPath  string
 
 	// Default value — stored as typed reflect.Value
 	defaultVal *reflect.Value

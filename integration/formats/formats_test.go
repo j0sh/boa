@@ -264,7 +264,7 @@ func TestYAMLEmbeddedGroupPresence(t *testing.T) {
 func TestRejectUnknownRegisteredFormats(t *testing.T) {
 	type Policy struct {
 		Name    string   `json:"name" yaml:"name" toml:"name"`
-		Allow   []string `json:"allow" yaml:"allow" toml:"allow"`
+		Allow   []string `optional:"true" json:"allow" yaml:"allow" toml:"allow"`
 		Enabled bool     `json:"enabled" yaml:"enabled" toml:"enabled"`
 	}
 	type Entry struct {

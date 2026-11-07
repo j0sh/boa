@@ -22,7 +22,9 @@ type memoryOnly struct {
 func (*memoryOnly) Init() error        { panic("standalone operation called Init") }
 func (*memoryOnly) PreValidate() error { panic("standalone operation called PreValidate") }
 
-type memoryScalar string
+type memoryScalar struct {
+	N int `default:"1" min:"1"`
+}
 
 func (s *memoryScalar) UnmarshalText([]byte) error {
 	panic("standalone validation decoded a value")
@@ -55,13 +57,14 @@ func failures(t *testing.T, err error, want ...string) ValidationError {
 
 func TestFieldRulesCLIParity(t *testing.T) {
 	type params struct {
-		Count int           `default:"1" min:"1" max:"2"`
-		Port  int           `default:"1024"`
-		Size  uint64        `default:"1" min:"1" max:"18446744073709551614"`
-		Name  string        `default:"ok" pattern:"^[a-z]+$"`
-		Mode  displayMode   `default:"tcp" alts:"tcp,http"`
-		Tags  []displayMode `default:"[tcp]" alts:"tcp,http"`
-		Extra string        `default:"any" alts:"tcp,http" strict:"false"`
+		Count     int           `default:"1024" min:"1" max:"2048"`
+		Port      int           `default:"1024"`
+		Size      uint64        `default:"1" min:"1" max:"18446744073709551614"`
+		Name      string        `default:"ok" pattern:"^[a-z]+$"`
+		Mode      displayMode   `default:"tcp" alts:"tcp,http"`
+		Tags      []displayMode `default:"[tcp]" alts:"tcp,http"`
+		ExtraData any
+		Extra     string `default:"any" alts:"tcp,http" strict:"false"`
 	}
 	configure := func(path string, p Parameter) {
 		if path == "Count" || path == "Port" {
@@ -85,8 +88,8 @@ func TestFieldRulesCLIParity(t *testing.T) {
 		args []string
 		edit func(*params)
 	}{
-		{"Count", CodeMin, []string{"--count", "0"}, func(p *params) { p.Count = 0 }},
-		{"Count", CodeMax, []string{"--count", "3"}, func(p *params) { p.Count = 3 }},
+		{"Count", CodeMin, []string{"--count", "80"}, func(p *params) { p.Count = 80 }},
+		{"Count", CodeMax, []string{"--count", "2049"}, func(p *params) { p.Count = 2049 }},
 		{"Port", CodeMin, []string{"--port", "80"}, func(p *params) { p.Port = 80 }},
 		{"Size", CodeMin, []string{"--size", "0"}, func(p *params) { p.Size = 0 }},
 		{"Size", CodeMax, []string{"--size", "18446744073709551615"}, func(p *params) { p.Size = ^uint64(0) }},
@@ -99,6 +102,7 @@ func TestFieldRulesCLIParity(t *testing.T) {
 			tc.edit(&p)
 			field := failures(t, Validate(&p, configure), tc.path+":"+string(tc.code)).Fields[0]
 			err := cli.RunArgsE(tc.args)
+			failures(t, err, tc.path+":"+string(tc.code))
 			name := camelToKebabCase(strings.Split(tc.path, "[")[0])
 			if want := "invalid value for param '" + name + "': " + field.Err.Error(); err == nil || err.Error() != want {
 				t.Fatalf("CLI = %v, want %s", err, want)
@@ -112,18 +116,20 @@ func TestValidatePresence(t *testing.T) {
 		Port int `min:"1"`
 	}
 	type params struct {
-		Zero     int    `default:"10"`
-		False    bool   `default:"true"`
-		Empty    string `default:"fallback"`
-		Port     *int   `min:"1"`
-		Group    *group
-		Required *int              `required:"true" default:"2"`
-		Items    []string          `required:"true" min:"1"`
-		Labels   map[string]string `required:"true" min:"1"`
+		Zero        int    `default:"10"`
+		False       bool   `default:"true"`
+		Empty       string `default:"fallback"`
+		Port        *int   `min:"1"`
+		Group       *group
+		RequiredAny any               `required:"true"`
+		Required    *int              `required:"true" default:"2"`
+		Items       []string          `required:"true" min:"1"`
+		Labels      map[string]string `required:"true" min:"1"`
 	}
 	p := params{}
-	failures(t, Validate(&p), "Required:required", "Items:required", "Labels:required")
+	failures(t, Validate(&p), "RequiredAny:required", "Required:required", "Items:required", "Labels:required")
 	zero := 0
+	p.RequiredAny = 0
 	p.Required, p.Port, p.Group = &zero, &zero, &group{}
 	p.Items, p.Labels = []string{}, map[string]string{}
 	failures(t, Validate(&p), "Port:min", "Group.Port:min", "Items:min", "Labels:min")
@@ -140,7 +146,8 @@ func TestDefaultsIndependent(t *testing.T) {
 	type params struct {
 		Child    child
 		Optional *child
-		Names    []name           `default:"[a,b]"`
+		Names    []name `default:"[a,b]"`
+		Slots    [1]child
 		Children []child          `default:"[{\"N\":0}]"`
 		Values   map[string][]int `default:"{\"a\":[2]}"`
 	}
@@ -158,7 +165,7 @@ func TestDefaultsIndependent(t *testing.T) {
 	if !reflect.DeepEqual(b.Names, []name{"a", "b"}) || b.Values["a"][0] != 1 || source["a"][0] != 1 {
 		t.Fatal("defaults aliased")
 	}
-	if b.Child.N != 7 || b.Optional != nil || b.Children[0].N != 0 {
+	if b.Child.N != 7 || b.Optional != nil || b.Children[0].N != 0 || b.Slots[0].N != 0 {
 		t.Fatalf("defaults overlaid: %+v", b)
 	}
 }
@@ -174,11 +181,16 @@ func TestValidateCollectionsAndLimits(t *testing.T) {
 		Dynamic map[string]any
 	}
 	p := params{Matrix: [][]*child{{{}}}, Groups: map[string]child{"b": {}, "a": {}}, Dynamic: map[string]any{"x": child{}}}
-	failures(t, Validate(p), "Matrix[0][0].Port:min", `Groups["a"].Port:min`, `Groups["b"].Port:min`, "Array[0].Port:min", `Dynamic["x"].Port:min`)
-	large := struct{ Rows []child }{Rows: make([]child, MaxValidationErrors+10)}
-	err := failures(t, Validate(large))
-	if len(err.Fields) != MaxValidationErrors || !err.Truncated || err.Fields[99].Path != "Rows[99].Port" {
-		t.Fatalf("unbounded: %+v", err)
+	for _, err := range []error{Validate(p), (Cmd[params]{Params: &p, ParamEnrich: ParamEnricherName, RunFunc: func(*params, *cobra.Command, []string) {}}).RunArgsE(nil)} {
+		failures(t, err, "Matrix[0][0].Port:min", `Groups["a"].Port:min`, `Groups["b"].Port:min`, "Array[0].Port:min", `Dynamic["x"].Port:min`)
+	}
+	type many struct{ Rows []child }
+	large := many{Rows: make([]child, MaxValidationErrors+10)}
+	for _, cause := range []error{Validate(large), (Cmd[many]{Params: &large, ParamEnrich: ParamEnricherName, RunFunc: func(*many, *cobra.Command, []string) {}}).RunArgsE(nil)} {
+		err := failures(t, cause)
+		if len(err.Fields) != MaxValidationErrors || !err.Truncated || err.Fields[99].Path != "Rows[99].Port" {
+			t.Fatalf("unbounded: %+v", err)
+		}
 	}
 }
 
@@ -189,8 +201,9 @@ func TestValidateCustomAndNonMutation(t *testing.T) {
 	type params struct {
 		Values map[string][]int
 		Child  *child
+		Port   *int `min:"1"`
 	}
-	p := params{Values: map[string][]int{"a": {1}}, Child: &child{}}
+	p := params{Values: map[string][]int{"a": {1}}, Child: &child{}, Port: new(int)}
 	sentinel := errors.New("custom failure")
 	configure := func(path string, param Parameter) {
 		switch path {
@@ -198,19 +211,40 @@ func TestValidateCustomAndNonMutation(t *testing.T) {
 			(&Field[map[string][]int]{Parameter: param}).SetCustomValidator(func(v map[string][]int) error { v["a"][0] = 9; return sentinel })
 		case "Child":
 			(&Field[*child]{Parameter: param}).SetCustomValidator(func(v *child) error { v.Port = 80; return nil })
+		case "Port":
+			(&Field[*int]{Parameter: param}).SetCustomValidator(func(v *int) error { *v = 80; return nil })
 		}
 	}
 	err := Validate(&p, configure)
-	failures(t, err, "Values:custom", "Child.Port:min")
+	failures(t, err, "Values:custom", "Child.Port:min", "Port:min")
 	if !errors.Is(err, sentinel) {
 		t.Fatal("lost custom cause", err)
 	}
-	if p.Values["a"][0] != 1 || p.Child.Port != 0 {
+	if p.Values["a"][0] != 1 || p.Child.Port != 0 || *p.Port != 0 {
 		t.Fatalf("mutated: %+v", p)
 	}
+	p.Child.Port = 1
+	cliErr := (Cmd[params]{Params: &p, ParamEnrich: ParamEnricherName, InitFuncCtx: func(ctx *HookContext, p *params, _ *cobra.Command) error {
+		configure("Values", Param(ctx, &p.Values).Parameter)
+		configure("Port", Param(ctx, &p.Port).Parameter)
+		return nil
+	}, RunFunc: func(*params, *cobra.Command, []string) {}}).RunArgsE(nil)
+	failures(t, cliErr, "Values:custom", "Port:min")
+	if p.Values["a"][0] != 1 || *p.Port != 0 || !errors.Is(cliErr, sentinel) {
+		t.Fatal("CLI mutation or cause loss", cliErr)
+	}
+
 }
 
 func TestStandaloneNoAutomaticIO(t *testing.T) {
+	root, err := Defaults[memoryScalar]()
+	if err != nil || root.N != 1 {
+		t.Fatalf("root defaults skipped: %+v, %v", root, err)
+	}
+	failures(t, Validate(memoryScalar{}), "N:min")
+	failures(t, (Cmd[memoryScalar]{ParamEnrich: ParamEnricherName,
+		RunFunc: func(*memoryScalar, *cobra.Command, []string) {},
+	}).RunArgsE([]string{"--n", "0"}), "N:min")
 	if _, err := Defaults[memoryOnly](); err != nil {
 		t.Fatal(err)
 	}
@@ -317,21 +351,37 @@ func TestValidateTraversal(t *testing.T) {
 		t.Fatalf("cycle was traversed repeatedly: %d calls, %v", calls, err)
 	}
 
+	type cyclic struct{ Nodes [1]*node }
+	requireNoError(t, (Cmd[cyclic]{Params: &cyclic{Nodes: [1]*node{cycle}}, RunFunc: func(*cyclic, *cobra.Command, []string) {}}).RunArgsE(nil))
+
 	type graph struct{ Left, Right *graph }
 	shared := &graph{}
 	for range 30 {
 		shared = &graph{Left: shared, Right: shared}
 	}
+
 	calls = 0
-	fields := failures(t, Validate(shared, func(_ string, _ Parameter) { calls++ })).Fields
-	if len(fields) != 1 || fields[0].Code != CodeLimit || calls > 2*maxFieldSteps {
-		t.Fatalf("unbounded work: %d, %+v", calls, fields)
+	type config struct{ Root [1]*graph }
+	input := config{Root: [1]*graph{shared}}
+	var first []FieldError
+	for _, err := range []error{
+		Validate(input, func(_ string, _ Parameter) { calls++ }),
+		(Cmd[config]{Params: &input, RunFunc: func(*config, *cobra.Command, []string) {}}).RunArgsE(nil),
+	} {
+		result := failures(t, err)
+		if len(result.Fields) != 1 || result.Fields[0].Code != CodeLimit || result.Truncated || calls > 2*maxFieldSteps {
+			t.Fatalf("unbounded work: %d, %+v", calls, result)
+		}
+		if first != nil && !reflect.DeepEqual(first, result.Fields) {
+			t.Fatal("CLI traversal differs", result.Fields)
+		}
+		first = result.Fields
 	}
 
 	type child struct{ Value int }
 	alias := &child{Value: 1}
 	value := struct{ Left, Right *child }{alias, alias}
-	fields = failures(t, Validate(value, func(path string, p Parameter) {
+	fields := failures(t, Validate(value, func(path string, p Parameter) {
 		if path == "Right.Value" {
 			p.SetMin(2)
 		}
@@ -340,13 +390,21 @@ func TestValidateTraversal(t *testing.T) {
 		t.Fatalf("path-specific rules lost: %+v", fields)
 	}
 
-	requireNoError(t, Validate(struct {
+	dynamic := make([]any, maxFieldSteps+1)
+	for i := range dynamic {
+		dynamic[i] = i
+	}
+	type scalars struct {
 		Bytes   []byte
 		Strings []string
 		Nested  map[string][]string
-	}{
-		make([]byte, maxFieldSteps+1), make([]string, maxFieldSteps+1), map[string][]string{"key": make([]string, maxFieldSteps+1)},
-	}))
+		Dynamic []any
+	}
+	data := scalars{make([]byte, maxFieldSteps+1), make([]string, maxFieldSteps+1), map[string][]string{"key": make([]string, maxFieldSteps+1)}, dynamic}
+	for _, err := range []error{Validate(data), (Cmd[scalars]{Params: &data, ParamEnrich: ParamEnricherName, RunFunc: func(*scalars, *cobra.Command, []string) {}}).RunArgsE(nil)} {
+		requireNoError(t, err)
+	}
+
 }
 
 func TestValidateRecursiveStepBoundary(t *testing.T) {
@@ -354,13 +412,13 @@ func TestValidateRecursiveStepBoundary(t *testing.T) {
 		Value int
 		Next  *node
 	}
-	for _, size := range []int{64, 65} {
+	for _, size := range []int{65, 66} {
 		value := &node{Value: 1}
 		for i := 1; i < size; i++ {
 			value = &node{Value: 1, Next: value}
 		}
 		err := Validate(value)
-		if size == 64 {
+		if size == 65 {
 			if err != nil {
 				t.Fatalf("below step limit: %v", err)
 			}
@@ -395,6 +453,16 @@ func TestValidateBranchErrorsContinue(t *testing.T) {
 	if len(fields) != 4 || fields[0].Path != "Bad" || fields[0].Code != CodeSchema || fields[1].Path != `Dynamic["bad"]` || fields[1].Code != CodeSchema || fields[2].Code != CodeLimit || fields[3].Path != "Port" || fields[3].Code != CodeMin {
 		t.Fatalf("missing siblings: %+v", fields)
 	}
+	type bad struct {
+		N int `min:"oops"`
+	}
+	type groups struct{ Arr [1]struct{ Group bad } }
+	err := (Cmd[groups]{ParamEnrich: ParamEnricherName, RunFunc: func(*groups, *cobra.Command, []string) {}}).RunArgsE(nil)
+	failures(t, err, "Arr[0].Group.N:schema")
+	if !strings.Contains(err.Error(), "'Arr[0].Group.N'") {
+		t.Fatal("truncated CLI schema path", err)
+	}
+
 }
 
 func TestCustomValidatorNamedTypeParity(t *testing.T) {
@@ -472,13 +540,14 @@ func TestCustomValidatorNamedTypeParity(t *testing.T) {
 
 func TestParseConfigBytes(t *testing.T) {
 	type config struct {
-		Count   int    `default:"3" min:"0"`
-		Enabled bool   `default:"true"`
-		Name    string `default:"fresh"`
-		Port    *int   `default:"80" min:"1"`
-		Mode    string `default:"tcp" alts:"tcp,http"`
+		Count   int              `default:"3" min:"0"`
+		Enabled bool             `default:"true"`
+		Name    string           `default:"fresh"`
+		Port    *int             `default:"80" min:"1"`
+		Mode    string           `default:"tcp" alts:"tcp,http"`
+		Labels  map[string][]int `default:"{\"a\":[2]}"`
 	}
-	for i, data := range []string{`{}`, `{"Count":0,"Enabled":false,"Name":"","Port":null}`, `{"Count":-1,"Mode":"bad"}`} {
+	for i, data := range []string{`{}`, `{"Count":0,"Enabled":false,"Name":"","Port":null}`, `{"Count":-1,"Mode":"bad"}`, `{"Labels":{}}`} {
 		manual, err := Defaults[config]()
 		requireNoError(t, err)
 		requireNoError(t, json.Unmarshal([]byte(data), &manual))
@@ -489,6 +558,9 @@ func TestParseConfigBytes(t *testing.T) {
 		}
 		if i == 1 && (parsed.Count != 0 || parsed.Enabled || parsed.Name != "" || parsed.Port != nil) {
 			t.Fatalf("explicit values lost: %+v", parsed)
+		}
+		if i == 3 && !reflect.DeepEqual(parsed.Labels, map[string][]int{"a": {2}}) {
+			t.Fatalf("decoder map semantics changed: %+v", parsed.Labels)
 		}
 		if !reflect.DeepEqual(parsed, manual) || !reflect.DeepEqual(err, manualErr) {
 			t.Fatalf("pipeline differs for %s: %+v, %v / %+v, %v", data, parsed, err, manual, manualErr)

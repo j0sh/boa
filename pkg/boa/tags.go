@@ -75,9 +75,6 @@ func (ctx *processingContext) applyTags(param parameter, tags reflect.StructTag)
 		}
 		param.SetCollection(mode)
 	}
-	if err := applyFieldTags(param, tags, true); err != nil {
-		return err
-	}
 	if param.IsFile() && param.GetKind() != reflect.String {
 		return fmt.Errorf("file tag requires a string field, got %s", param.GetType())
 	}
@@ -165,50 +162,17 @@ func parseFileTag(tag, value string) (fileOptions, error) {
 	return fileOptions{enabled: !options["false"], optional: options["optional"], optionalDefault: options["optional-default"]}, nil
 }
 
-// applyFieldTags is shared by commands and in-memory field operations.
-// Validation deliberately does not parse defaults.
-func applyFieldTags(param parameter, tags reflect.StructTag, defaults bool) error {
-	if value, ok := tags.Lookup("alts"); ok {
-		var alternatives []string
-		for _, item := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(value), "["), "]"), ",") {
-			if item = strings.TrimSpace(item); item != "" {
-				alternatives = append(alternatives, item)
-			}
-		}
-		param.SetAlternatives(alternatives)
-	}
-	if value, ok := tags.Lookup("strict"); ok {
-		param.SetStrictAlts(value == "true")
-	}
-	if defaults && !param.hasDefaultValue() {
+func applyDefaultTag(param parameter, tags reflect.StructTag) error {
+	if !param.hasDefaultValue() {
 		if value, ok := tags.Lookup("default"); ok {
 			if handlerFor(param) == nil {
-				return fmt.Errorf("default on param %s: unsupported type %s", param.GetName(), param.GetType())
+				return fmt.Errorf("default on unsupported type %s", param.GetType())
 			}
 			parsed, err := parseParamText(param, value)
 			if err != nil {
-				return fmt.Errorf("invalid default value for param %s: %w", param.GetName(), err)
+				return fmt.Errorf("invalid default value: %w", err)
 			}
 			param.SetDefault(parsed)
-		}
-	}
-	if meta, ok := param.(*paramMeta); ok {
-		for _, bound := range []struct {
-			tag  string
-			dest *any
-		}{{"min", &meta.minVal}, {"max", &meta.maxVal}} {
-			if value, ok := tags.Lookup(bound.tag); ok {
-				parsed, err := parseBoundTag(meta.boundKind(), value)
-				if err != nil {
-					return fmt.Errorf("invalid %s value for param %s: %w", bound.tag, param.GetName(), err)
-				}
-				if parsed != nil {
-					*bound.dest = parsed
-				}
-			}
-		}
-		if pattern, ok := tags.Lookup("pattern"); ok {
-			meta.pattern = pattern
 		}
 	}
 	return nil

@@ -4,7 +4,8 @@ import "fmt"
 
 // ParseConfigBytes constructs a fresh defaulted value, decodes data using
 // unmarshal, then validates it. The decoder owns the format and decoding policy.
-// Explicit decoded zero, false, empty, and nil values replace defaults. No
+// Explicit decoded zero, false, empty string, and nil values replace defaults.
+// Collection merging and replacement follow the supplied decoder. No
 // environment lookup, filesystem access or lifecycle hooks run automatically.
 // On error it returns the value constructed so far and the original error.
 // Use Defaults and Validate separately for other loading or validation policies.
