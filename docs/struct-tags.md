@@ -205,7 +205,7 @@ For example, a `Port int` field tagged `min:"1"` rejects `Rows[0].Port = 0`, and
 err := boa.Validate(cfg)
 ```
 
-`Validate` accepts a struct or non-nil pointer to one without applying defaults or changing the input. To load defaults and decode first, use [`ParseConfigBytes`](configuration.md#loading-without-a-cli).
+`Validate` accepts a struct or non-nil pointer to one without applying defaults or changing the input. To load defaults and decode first, see [Loading from bytes](configuration.md#loading-from-bytes).
 
 | Go value | Presence |
 |---|---|

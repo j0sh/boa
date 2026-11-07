@@ -25,7 +25,7 @@ boa.Cmd[Params]{
 - **Defining fields?** Use [Parameters and Struct Tags](struct-tags.md) as the canonical reference for types, tags, validation, enrichment, and source precedence.
 - **Loading configuration?** See [Configuration Files](configuration.md), then [Config Decoding](config-decoding.md) for custom scalar and decoder contracts.
 - **Integrating an existing struct?** See [External Structs](external-structs.md).
-- **Working without a CLI?** See [Loading without a CLI](configuration.md#loading-without-a-cli).
+- **Loading from bytes?** See [Loading from bytes](configuration.md#loading-from-bytes).
 - **Embedding BOA in a Cobra application?** See [Cobra Interoperability](cobra-interop.md).
 - **Building a long-running service?** See [Live Config Reload](live-reload.md).
 - **Coming from the original project?** See [Migrating from GiGurra/boa](migration.md).
