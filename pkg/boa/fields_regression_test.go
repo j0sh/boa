@@ -91,12 +91,8 @@ func TestStandaloneCopyRegression(t *testing.T) {
 	switch mode {
 	case "defaults":
 		value, err := Defaults[params](func(_ string, p Parameter) { p.SetDefault(original) })
-		if err != nil {
-			t.Fatal(err)
-		}
-		if err := check(value.At); err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
+		requireNoError(t, check(value.At))
 	case "cli":
 		err := (Cmd[params]{Use: "test", ParamEnrich: ParamEnricherName,
 			InitFuncCtx: func(ctx *HookContext, p *params, _ *cobra.Command) error {
@@ -105,16 +101,12 @@ func TestStandaloneCopyRegression(t *testing.T) {
 			},
 			RunFuncE: func(p *params, _ *cobra.Command, _ []string) error { return check(p.At) },
 		}).RunArgsE(nil)
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 	case "validate":
 		err := Validate(params{At: original}, func(_ string, p Parameter) {
 			(&Field[time.Time]{Parameter: p}).SetCustomValidator(check)
 		})
-		if err != nil {
-			t.Fatal(err)
-		}
+		requireNoError(t, err)
 	default:
 		t.Fatalf("unknown regression mode %q", mode)
 	}
@@ -132,13 +124,11 @@ func TestValidateExcludedDepth(t *testing.T) {
 		Disabled *node
 		Included int `min:"1"`
 	}{Ignored: deep, private: deep, Disabled: deep, Included: 1}
-	if err := Validate(value, func(path string, p Parameter) {
+	requireNoError(t, Validate(value, func(path string, p Parameter) {
 		if path == "Disabled" {
 			p.SetIsEnabledFn(func() bool { return false })
 		}
-	}); err != nil {
-		t.Fatal(err)
-	}
+	}))
 }
 
 func TestValidateCustomCopyTraversal(t *testing.T) {
@@ -203,9 +193,7 @@ func TestValidateTraversalWork(t *testing.T) {
 			Bytes: make([]byte, size), Strings: make([]string, size), Nested: map[string][]string{"key": make([]string, size)},
 		}
 		return testing.AllocsPerRun(1, func() {
-			if err := Validate(data); err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, Validate(data))
 		})
 	}
 	if small, large := measure(1), measure(1<<20); large > small+20 {
@@ -310,12 +298,8 @@ func TestCustomValidatorNamedTypeParity(t *testing.T) {
 		}
 		for _, path := range []string{"Mode", "Ptr", "Modes", "PtrModes"} {
 			value, err := Defaults[params]()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := Validate(value, setup); err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
+			requireNoError(t, Validate(value, setup))
 			switch path {
 			case "Mode":
 				value.Mode = "udp"
@@ -340,9 +324,7 @@ func TestCustomValidatorNamedTypeParity(t *testing.T) {
 				},
 				RunFunc: func(*params, *cobra.Command, []string) {},
 			}
-			if err := cli.RunArgsE(nil); err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, cli.RunArgsE(nil))
 			name := camelToKebabCase(path)
 			if err := cli.RunArgsE([]string{"--" + name, "udp"}); err == nil || err.Error() != "invalid value for param '"+name+"': "+sentinel.Error() {
 				t.Fatalf("typed=%v path=%s CLI: %v", typed, path, err)

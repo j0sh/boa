@@ -1141,152 +1141,61 @@ func isBoaIgnored(field reflect.StructField) bool {
 	return slices.Contains(boaTags, "ignore")
 }
 
-// traverse walks from the root parameters struct with an empty field-name prefix.
+// traverse adapts shared field discovery to command mirrors and lifecycle hooks.
 func traverse(
 	ctx *processingContext,
 	structPtr any,
-	fParam func(param parameter, paramFieldName string, tags reflect.StructTag) error,
-	fStruct func(structPtr any) error,
+	fParam func(parameter, string, reflect.StructTag) error,
+	fStruct func(any) error,
 ) error {
-	return traverseAt(ctx, structPtr, nil, fParam, fStruct, "")
-}
-
-// traverseAt walks the struct tree while carrying the declared-index path from
-// the root. The path is what identifies each leaf mirror in mirrorByPath.
-// Ignored fields retain their declared index slot; only the loop variable i is
-// used for path construction (never a visit counter), so interleaved ignored
-// fields cannot drift the key.
-func traverseAt(
-	ctx *processingContext,
-	structPtr any,
-	path []int,
-	fParam func(param parameter, paramFieldName string, tags reflect.StructTag) error,
-	fStruct func(structPtr any) error,
-	prefix string,
-) error {
-	if reflect.TypeOf(structPtr).Kind() != reflect.Pointer {
+	root := reflect.ValueOf(structPtr)
+	if !root.IsValid() || root.Kind() != reflect.Pointer || root.IsNil() || root.Type().Elem().Kind() != reflect.Struct {
 		return fmt.Errorf("expected pointer to struct")
 	}
-
-	if reflect.TypeOf(structPtr).Elem().Kind() != reflect.Struct {
-		return fmt.Errorf("expected pointer to struct")
-	}
-
+	walker := fieldWalker{active: make(map[configCopyKey]bool), remaining: -1, rootStruct: true}
 	if fStruct != nil {
-		err := fStruct(structPtr)
-		if err != nil {
-			return err
-		}
+		walker.onStruct = func(v reflect.Value) error { return fStruct(v.Addr().Interface()) }
 	}
-
-	// use reflection to iterate over all fields of the struct
-	fields := reflect.TypeOf(structPtr).Elem()
-	rootValue := reflect.ValueOf(structPtr).Elem()
-	for i := 0; i < fields.NumField(); i++ {
-		field := fields.Field(i)
-
-		if isBoaIgnored(field) {
-			continue
-		}
-
-		// childPath is the declared-index path to this field from the root.
-		// Use declared index (i), not a visit counter, so ignored fields do not
-		// drift subsequent siblings.
-		//
-		// Single allocation: len(path)+1 explicitly sized. The old
-		// append(append([]int(nil), path...), i) form did two allocations per
-		// field visit, which matters during init of larger parameter trees.
-		childPath := make([]int, len(path)+1)
-		copy(childPath, path)
-		childPath[len(path)] = i
-
-		fieldAddr := rootValue.Field(i).Addr()
-		// check if field is a param
-		param, isParam := fieldAddr.Interface().(parameter)
-		prefixedName := prefix + field.Name
-		if isParam {
-			if fParam != nil {
-				err := fParam(param, prefixedName, field.Tag)
+	return walker.walk(root.Elem(), "", 0, func(field reflect.StructField, value reflect.Value, _ string) (bool, error) {
+		param, isParam := value.Addr().Interface().(parameter)
+		if !isParam {
+			if !isSupportedType(field.Type) {
+				t := field.Type
+				if t.Kind() == reflect.Pointer {
+					t = t.Elem()
+				}
+				if t.Kind() == reflect.Struct {
+					return true, nil
+				}
+				slog.Warn(fmt.Sprintf("field %s is not a type that is interpretable as a boa.Parameter. It will be ignored", field.Name))
+				return false, nil
+			}
+			path := joinPath(walker.indices)
+			var found bool
+			if param, found = ctx.mirrorByPath[path]; !found {
+				var err error
+				param, err = newParam(&field, field.Type)
 				if err != nil {
-					return err
+					return false, err
+				}
+				meta := param.(*paramMeta)
+				meta.pathKey = path
+				if walker.prefix != "" {
+					meta.flagPrefix = camelToKebabCase(walker.prefix) + "-"
+					meta.envPrefix = kebabCaseToUpperSnakeCase(strings.TrimSuffix(meta.flagPrefix, "-")) + "_"
+				}
+				ctx.pathOrder = append(ctx.pathOrder, path)
+				ctx.mirrorByPath[path] = param
+				if ctx.addrToPath != nil {
+					ctx.addrToPath[value.Addr().UnsafePointer()] = path
 				}
 			}
-		} else {
-
-			// check if it is a struct (but not registered types like time.Time or custom types)
-			if field.Type.Kind() == reflect.Struct && !isSupportedType(field.Type) {
-				// Named (non-anonymous) struct fields get auto-prefixed
-				childPrefix := prefix
-				if !field.Anonymous {
-					childPrefix = prefix + field.Name
-				}
-				if err := traverseAt(ctx, fieldAddr.Interface(), childPath, fParam, fStruct, childPrefix); err != nil {
-					return err
-				}
-				continue
-			}
-
-			// check if it is a pointer to a struct (but not *url.URL or pointer-to-supported-type)
-			if field.Type.Kind() == reflect.Pointer && field.Type.Elem().Kind() == reflect.Struct && !isSupportedType(field.Type) {
-				if !fieldAddr.IsNil() && !fieldAddr.Elem().IsNil() {
-					childPrefix := prefix
-					if !field.Anonymous {
-						childPrefix = prefix + field.Name
-					}
-					if err := traverseAt(ctx, fieldAddr.Elem().Interface(), childPath, fParam, fStruct, childPrefix); err != nil {
-						return err
-					}
-				}
-				continue
-			}
-
-			// For raw fields, store parameter mirrors keyed by field-index path.
-			if isSupportedType(field.Type) {
-
-				// check if we already have a mirror for this field
-				pathKey := joinPath(childPath)
-				var ok bool
-				if param, ok = ctx.mirrorByPath[pathKey]; !ok {
-					var err error
-					param, err = newParam(&field, field.Type)
-					if err != nil {
-						return err
-					}
-					// Set prefix for named struct nesting, and stash the path
-					// key on the mirror so callers that have a *paramMeta can
-					// read it without scanning pathOrder.
-					if pm, ok := param.(*paramMeta); ok {
-						pm.pathKey = pathKey
-						if prefix != "" {
-							pm.flagPrefix = camelToKebabCase(prefix) + "-"
-							pm.envPrefix = kebabCaseToUpperSnakeCase(pm.flagPrefix[:len(pm.flagPrefix)-1]) + "_"
-						}
-					}
-					ctx.pathOrder = append(ctx.pathOrder, pathKey)
-					ctx.mirrorByPath[pathKey] = param
-					// Maintain the reverse address index for boa.Param(ctx, &field).
-					// This is a non-authoritative cache — mirrorByPath is the source of truth.
-					if ctx.addrToPath != nil {
-						ctx.addrToPath[fieldAddr.UnsafePointer()] = pathKey
-					}
-				}
-
-				if fParam != nil {
-					err := fParam(param, prefixedName, field.Tag)
-					if err != nil {
-						return err
-					}
-				}
-
-				continue
-			}
-
-			slog.Warn(fmt.Sprintf("field %s is not a type that is interpretable as a boa.Parameter. It will be ignored", field.Name))
-			continue // not a param
 		}
-	}
-
-	return nil
+		if fParam != nil {
+			return false, fParam(param, walker.prefix+field.Name, field.Tag)
+		}
+		return false, nil
+	})
 }
 
 // prependPersistentPipelineToDescendants composes a declaring command's Boa

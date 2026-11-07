@@ -25,6 +25,13 @@ func (s *memoryScalar) UnmarshalText([]byte) error {
 	panic("standalone validation decoded a value")
 }
 
+func requireNoError(t *testing.T, err error) {
+	t.Helper()
+	if err != nil {
+		t.Fatal(err)
+	}
+}
+
 func failures(t *testing.T, err error) *ValidationError {
 	t.Helper()
 	var result *ValidationError
@@ -71,12 +78,8 @@ func TestFieldRulesCLIParity(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.path+string(tc.code), func(t *testing.T) {
 			p, err := Defaults[params]()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := Validate(p); err != nil {
-				t.Fatal(err)
-			}
+			requireNoError(t, err)
+			requireNoError(t, Validate(p))
 			tc.edit(&p)
 			field := failures(t, Validate(&p)).Fields[0]
 			if field.Path != tc.path || field.Code != tc.code {
@@ -161,13 +164,9 @@ func TestDefaultsBeforeDecode(t *testing.T) {
 		Labels   map[string][]string `default:"{\"a\":[\"b\"]}"`
 	}
 	a, err := Defaults[params]()
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	b, err := Defaults[params]()
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	if a.Count != 10 || !a.Enabled || a.Name != "default" || *a.Port != 90 || a.Child.Port != 80 || a.Optional != nil {
 		t.Fatalf("defaults: %+v", a)
 	}
@@ -175,16 +174,12 @@ func TestDefaultsBeforeDecode(t *testing.T) {
 	if b.Items[0] != "a" || b.Labels["a"][0] != "b" || *b.Port != 90 {
 		t.Fatal("defaults aliased")
 	}
-	if err := LoadConfigBytes([]byte(`{"Count":0,"Enabled":false,"Name":"","Port":null}`), ".json", &b, nil); err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, LoadConfigBytes([]byte(`{"Count":0,"Enabled":false,"Name":"","Port":null}`), ".json", &b, nil))
 	if b.Count != 0 || b.Enabled || b.Name != "" || b.Port != nil || b.Child.Port != 80 {
 		t.Fatalf("explicit values lost: %+v", b)
 	}
 	var decoded params
-	if err := LoadConfigBytes([]byte(`{}`), ".json", &decoded, nil); err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, LoadConfigBytes([]byte(`{}`), ".json", &decoded, nil))
 	if !reflect.DeepEqual(decoded, params{}) {
 		t.Fatal("LoadConfigBytes added defaults")
 	}
@@ -221,9 +216,7 @@ func TestValidateCollectionsAndLimits(t *testing.T) {
 	}
 	cycle := &recursive{Value: 1}
 	cycle.Next = cycle
-	if err := Validate(cycle); err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, Validate(cycle))
 
 }
 
@@ -285,14 +278,10 @@ func TestStandaloneNoAutomaticIO(t *testing.T) {
 	if _, err := Defaults[memoryOnly](); err != nil {
 		t.Fatal(err)
 	}
-	if err := Validate(memoryOnly{}); err != nil {
-		t.Fatal(err)
-	}
-	if err := Validate(struct {
+	requireNoError(t, Validate(memoryOnly{}))
+	requireNoError(t, Validate(struct {
 		Value memoryScalar `default:"unparsed"`
-	}{}); err != nil {
-		t.Fatal(err)
-	}
+	}{}))
 	type params struct {
 		Host      string `env:"BOA_MEMORY_HOST" default:"default"`
 		File      string `file:"true" default:"/boa/does-not-exist"`
@@ -308,12 +297,8 @@ func TestStandaloneNoAutomaticIO(t *testing.T) {
 	if err != nil || p.Host != "default" || p.Token != "" {
 		t.Fatalf("defaults sourced: %+v, %v", p, err)
 	}
-	if err := p.Bind.UnmarshalText([]byte("0.0.0.0:8080")); err != nil {
-		t.Fatal(err)
-	}
-	if err := Validate(&p); err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, p.Bind.UnmarshalText([]byte("0.0.0.0:8080")))
+	requireNoError(t, Validate(&p))
 	if p.Host != "default" || p.Token != "" {
 		t.Fatal("validation sourced values")
 	}
@@ -324,9 +309,7 @@ func TestStandaloneNoAutomaticIO(t *testing.T) {
 	if err != nil || p2.URL.Host != "example.com" {
 		t.Fatalf("pointer scalar default: %v", err)
 	}
-	if err := Validate(p2); err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, Validate(p2))
 }
 
 func TestDefaultsConfiguredAndNamed(t *testing.T) {
@@ -346,13 +329,9 @@ func TestDefaultsConfiguredAndNamed(t *testing.T) {
 		}
 	}
 	a, err := Defaults[params](configure)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	b, err := Defaults[params](configure)
-	if err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, err)
 	a.Values["a"][0] = 9
 	if b.Values["a"][0] != 1 || source["a"][0] != 1 {
 		t.Fatal("configured defaults aliased")
@@ -360,11 +339,9 @@ func TestDefaultsConfiguredAndNamed(t *testing.T) {
 	if !reflect.DeepEqual(a.Names, []name{"a", "b"}) || a.Children[0].N != 0 {
 		t.Fatalf("typed defaults overlaid: %+v", a)
 	}
-	if err := Validate(struct {
+	requireNoError(t, Validate(struct {
 		N int `min:"1"`
-	}{}, func(_ string, p Parameter) { p.SetIsEnabledFn(func() bool { return false }) }); err != nil {
-		t.Fatal(err)
-	}
+	}{}, func(_ string, p Parameter) { p.SetIsEnabledFn(func() bool { return false }) }))
 }
 
 func TestFieldSchemaErrors(t *testing.T) {
@@ -395,7 +372,5 @@ func TestFieldSchemaErrors(t *testing.T) {
 		Private int `min:"1"`
 		hidden  int `min:"1"`
 	}
-	if err := Validate(ignored{hidden: 0}, func(_ string, p Parameter) { p.SetIgnored(true) }); err != nil {
-		t.Fatal(err)
-	}
+	requireNoError(t, Validate(ignored{hidden: 0}, func(_ string, p Parameter) { p.SetIgnored(true) }))
 }

@@ -16,35 +16,14 @@ func TestParseConfigBytesManualPipeline(t *testing.T) {
 		Mode    string `default:"tcp" alts:"tcp,http"`
 	}
 	for _, data := range []string{`{}`, `{"Count":0,"Enabled":false,"Name":"","Port":null}`, `{"Count":-1,"Mode":"bad"}`} {
-		t.Run(data, func(t *testing.T) {
-			manual, err := Defaults[config]()
-			if err != nil {
-				t.Fatal(err)
-			}
-			if err := json.Unmarshal([]byte(data), &manual); err != nil {
-				t.Fatal(err)
-			}
-			manualErr := Validate(manual)
-			calls := 0
-			wantPort := 80
-			parsed, err := ParseConfigBytes[config]([]byte(data), func(data []byte, dst any) error {
-				calls++
-				if !reflect.DeepEqual(dst, &config{Count: 3, Enabled: true, Name: "fresh", Port: &wantPort, Mode: "tcp"}) {
-					t.Fatalf("decoder did not receive defaults: %+v", dst)
-				}
-				return json.Unmarshal(data, dst)
-			})
-			if calls != 1 || !reflect.DeepEqual(parsed, manual) {
-				t.Fatalf("pipeline differs: %+v / %+v, calls %d", parsed, manual, calls)
-			}
-			if manualErr == nil {
-				if err != nil {
-					t.Fatal(err)
-				}
-			} else if !reflect.DeepEqual(failures(t, err).Fields, failures(t, manualErr).Fields) || err.Error() != manualErr.Error() {
-				t.Fatalf("structured validation error changed: %v / %v", err, manualErr)
-			}
-		})
+		manual, err := Defaults[config]()
+		requireNoError(t, err)
+		requireNoError(t, json.Unmarshal([]byte(data), &manual))
+		manualErr := Validate(manual)
+		parsed, err := ParseConfigBytes[config]([]byte(data), json.Unmarshal)
+		if !reflect.DeepEqual(parsed, manual) || !reflect.DeepEqual(err, manualErr) {
+			t.Fatalf("pipeline differs for %s: %+v, %v / %+v, %v", data, parsed, err, manual, manualErr)
+		}
 	}
 }
 
