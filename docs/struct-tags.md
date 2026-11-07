@@ -167,6 +167,9 @@ type Params struct {
 
 ## Validation
 
+For in-memory values without command execution, use the separate
+[`boa.Defaults[T]()` and `boa.Validate(value)` APIs](in-memory.md).
+
 `alts` supplies completion candidates and, by default, restricts the value:
 
 ```go

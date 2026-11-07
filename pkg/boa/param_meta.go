@@ -267,10 +267,8 @@ func (f *paramMeta) defaultValuePtr() any {
 	// Return a pointer to a copy of the default value
 	ptr := reflect.New(f.fieldType)
 	ptr.Elem().Set(*f.defaultVal)
-	// Decoders can reuse a slice's backing array; keep the declared default intact.
-	if f.fieldType.Kind() == reflect.Slice && !ptr.Elem().IsNil() {
-		ptr.Elem().Set(cloneConfigValue(ptr.Elem(), make(map[configCopyKey]reflect.Value)))
-	}
+	// Keep mutable defaults independent of callers and decoder storage.
+	ptr.Elem().Set(cloneConfigValue(ptr.Elem(), make(map[configCopyKey]reflect.Value)))
 	return ptr.Interface()
 }
 

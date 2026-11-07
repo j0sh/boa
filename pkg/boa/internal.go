@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"reflect"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -601,7 +600,7 @@ func (b command) validate(ctx *processingContext, structPtr any) error {
 			envHint = fmt.Sprintf(" (env: %s)", param.GetEnv())
 		}
 
-		if param.IsRequired() && !param.HasValue() {
+		if err := validateRequired(param, param.HasValue()); err != nil {
 			return fmt.Errorf("missing required param '%s'%s", param.GetName(), envHint)
 		}
 
@@ -615,32 +614,10 @@ func (b command) validate(ctx *processingContext, structPtr any) error {
 				param.setValuePtr(value)
 			}
 
-			if alts := param.GetAlternatives(); alts != nil && param.GetStrictAlts() {
-
-				ptrVal := param.valuePtrF()
-				// check if it is a slice param
-				kind := reflect.TypeOf(ptrVal).Elem().Kind()
-				if kind == reflect.Slice {
-					// run the validation for each slice element
-					sliceVal := reflect.ValueOf(ptrVal).Elem()
-					for i := 0; i < sliceVal.Len(); i++ {
-						elem := sliceVal.Index(i)
-						strVal := fmt.Sprintf("%v", elem.Interface())
-						if !slices.Contains(alts, strVal) {
-							return fmt.Errorf("invalid value for param '%s': '%s' is not in the list of allowed values: %v", param.GetName(), strVal, alts)
-						}
-					}
-				} else {
-					if ptrVal != nil {
-						strVal := ptrToAnyToString(ptrVal)
-						if !slices.Contains(alts, strVal) {
-							return fmt.Errorf("invalid value for param '%s': '%s' is not in the list of allowed values: %v", param.GetName(), strVal, alts)
-						}
-					}
-				}
+			if err := validateAlternatives(param, param.valuePtrF()); err != nil {
+				return fmt.Errorf("invalid value for param '%s': %s", param.GetName(), err.(*FieldError).Err)
 			}
-
-			if err := param.customValidatorOfPtr()(param.valuePtrF()); err != nil {
+			if err := validateCustom(param, param.valuePtrF()); err != nil {
 				return fmt.Errorf("invalid value for param '%s': %s", param.GetName(), err.Error())
 			}
 
@@ -722,75 +699,6 @@ func parseBoundTag(bk boundKind, s string) (any, error) {
 		return &n, nil
 	}
 	return nil, nil
-}
-
-// validateMinMaxPattern checks min/max/pattern tag constraints. It dispatches
-// on the field's boundKind and compares against the typed-pointer bound stored
-// in pm.minVal / pm.maxVal. The storage type is guaranteed to match the field
-// kind (coerceBound enforces this at set time), so the type assertions here
-// never panic on a valid mirror.
-func validateMinMaxPattern(pm *paramMeta, valPtr any) error {
-	if pm.minVal == nil && pm.maxVal == nil && pm.pattern == "" {
-		return nil
-	}
-
-	v := reflect.ValueOf(valPtr)
-	if v.Kind() == reflect.Pointer && !v.IsNil() {
-		v = v.Elem()
-	}
-
-	switch pm.boundKind() {
-	case signedIntBound:
-		val := v.Int()
-		if minP, ok := pm.minVal.(*int64); ok && minP != nil && val < *minP {
-			return fmt.Errorf("value %d is below min %d", val, *minP)
-		}
-		if maxP, ok := pm.maxVal.(*int64); ok && maxP != nil && val > *maxP {
-			return fmt.Errorf("value %d exceeds max %d", val, *maxP)
-		}
-	case unsignedIntBound:
-		val := v.Uint()
-		if minP, ok := pm.minVal.(*uint64); ok && minP != nil && val < *minP {
-			return fmt.Errorf("value %d is below min %d", val, *minP)
-		}
-		if maxP, ok := pm.maxVal.(*uint64); ok && maxP != nil && val > *maxP {
-			return fmt.Errorf("value %d exceeds max %d", val, *maxP)
-		}
-	case floatBound:
-		val := v.Float()
-		if minP, ok := pm.minVal.(*float64); ok && minP != nil && val < *minP {
-			return fmt.Errorf("value %v is below min %v", val, *minP)
-		}
-		if maxP, ok := pm.maxVal.(*float64); ok && maxP != nil && val > *maxP {
-			return fmt.Errorf("value %v exceeds max %v", val, *maxP)
-		}
-	case lengthBound:
-		var l int
-		switch v.Kind() {
-		case reflect.String:
-			l = len(v.String())
-		case reflect.Slice, reflect.Map:
-			l = v.Len()
-		}
-		if minP, ok := pm.minVal.(*int); ok && minP != nil && l < *minP {
-			return fmt.Errorf("length %d is below min %d", l, *minP)
-		}
-		if maxP, ok := pm.maxVal.(*int); ok && maxP != nil && l > *maxP {
-			return fmt.Errorf("length %d exceeds max %d", l, *maxP)
-		}
-	}
-
-	if pm.pattern != "" && v.Kind() == reflect.String {
-		matched, err := regexp.MatchString(pm.pattern, v.String())
-		if err != nil {
-			return fmt.Errorf("invalid pattern %q: %w", pm.pattern, err)
-		}
-		if !matched {
-			return fmt.Errorf("value %q does not match pattern %q", v.String(), pm.pattern)
-		}
-	}
-
-	return nil
 }
 
 func ptrToAnyToString(ptr any) string {
@@ -2295,7 +2203,7 @@ func newParam(field *reflect.StructField, t reflect.Type) (parameter, error) {
 	for _, key := range []string{"required", "optional"} {
 		if value, ok := field.Tag.Lookup(key); ok {
 			if value != "true" && value != "false" {
-				panic(fmt.Errorf("invalid value for field %s's %s tag: %s", field.Name, key, value))
+				return nil, fmt.Errorf("invalid value for field %s's %s tag: %s", field.Name, key, value)
 			}
 			isRequired = (value == "true") == (key == "required")
 		}
