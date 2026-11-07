@@ -7,9 +7,9 @@ import (
 	"reflect"
 )
 
-// Field is a type-safe view of one field in a command's parameter struct.
-// Obtain it with Param; the embedded Parameter exposes metadata
-// methods that do not depend on the field's Go type.
+// Field is a type-safe view of field metadata. Obtain it with Param in a
+// command hook, or wrap a Parameter from ConfigureField. The embedded Parameter
+// exposes methods that do not depend on the field's Go type.
 type Field[T any] struct{ Parameter }
 
 // Param returns the type-safe view for fieldPtr. It returns nil, after logging
@@ -47,12 +47,20 @@ func (p *Field[T]) SetCustomValidator(fn func(T) error) {
 			// Parameter mirrors use normalized primitive types. Convert those
 			// values back to named field types before invoking the validator.
 			rv := reflect.ValueOf(value)
-			if rv.Kind() == reflect.Pointer && !rv.IsNil() {
+			target := reflect.TypeFor[T]()
+			if rv.Kind() == reflect.Pointer && target.Kind() != reflect.Pointer && !rv.IsNil() {
 				rv = rv.Elem()
 			}
-			target := reflect.TypeFor[T]()
-			if rv.IsValid() && rv.Type().ConvertibleTo(target) {
-				return fn(rv.Convert(target).Interface().(T))
+			if rv.IsValid() {
+				if rv.Type().ConvertibleTo(target) {
+					return fn(rv.Convert(target).Interface().(T))
+				}
+				if normalizeType(target) == rv.Type() ||
+					rv.Kind() == reflect.Pointer && target.Kind() == reflect.Pointer && normalizeType(target.Elem()) == rv.Type().Elem() {
+					copy := reflect.New(rv.Type()).Elem()
+					copy.Set(rv)
+					return fn(reinterpretAs(copy, target).Interface().(T))
+				}
 			}
 			slog.Warn("boa.Field.SetCustomValidator: unexpected value type", "expected", target, "got", reflect.TypeOf(value))
 			return fn(value.(T))

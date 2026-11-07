@@ -177,14 +177,14 @@ func TestSetMinMaxT_TypeAlias(t *testing.T) {
 
 func TestValidationTag_MinMax_RejectsFloatOnIntField(t *testing.T) {
 	type Params struct {
-		N int `descr:"n" min:"1.5"`
+		N int `name:"number" descr:"n" min:"1.5"`
 	}
 	err := (Cmd[Params]{
 		Use:         "test",
 		ParamEnrich: ParamEnricherName,
 		RunFunc:     func(p *Params, cmd *cobra.Command, args []string) {},
 	}).RunArgsE([]string{"--n", "5"})
-	if err == nil || !strings.Contains(err.Error(), "invalid min") {
+	if err == nil || !strings.Contains(err.Error(), "invalid min") || !strings.Contains(err.Error(), "N: (number)") {
 		t.Errorf("expected tag parse error, got: %v", err)
 	}
 }

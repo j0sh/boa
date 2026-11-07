@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"math"
 	"reflect"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -47,6 +48,7 @@ type paramMeta struct {
 	// (e.g., the configfile tag handler) that have a *paramMeta can read its
 	// path directly instead of scanning pathOrder.
 	pathKey fieldPath
+	goPath  string
 
 	// Default value — stored as typed reflect.Value
 	defaultVal *reflect.Value
@@ -267,10 +269,8 @@ func (f *paramMeta) defaultValuePtr() any {
 	// Return a pointer to a copy of the default value
 	ptr := reflect.New(f.fieldType)
 	ptr.Elem().Set(*f.defaultVal)
-	// Decoders can reuse a slice's backing array; keep the declared default intact.
-	if f.fieldType.Kind() == reflect.Slice && !ptr.Elem().IsNil() {
-		ptr.Elem().Set(cloneConfigValue(ptr.Elem(), make(map[configCopyKey]reflect.Value)))
-	}
+	// Keep mutable defaults independent of callers and decoder storage.
+	ptr.Elem().Set(cloneConfigValue(ptr.Elem(), make(map[configCopyKey]reflect.Value)))
 	return ptr.Interface()
 }
 
@@ -500,81 +500,44 @@ func (f *paramMeta) supportsPattern() bool {
 // message if the input is the wrong shape (e.g. float bound on an int field,
 // or negative length).
 func coerceBound(raw any, bk boundKind) (any, error) {
-	if raw == nil {
+	value := reflect.Indirect(reflect.ValueOf(raw))
+	if !value.IsValid() {
 		return nil, fmt.Errorf("nil bound")
 	}
-	rv := reflect.ValueOf(raw)
-	// Unwrap a single level of pointer, e.g. caller passed *int64.
-	if rv.Kind() == reflect.Pointer {
-		if rv.IsNil() {
-			return nil, fmt.Errorf("nil bound")
-		}
-		rv = rv.Elem()
+	source := boundKindOf(value.Type())
+	if source < signedIntBound || source > floatBound || bk == unsupportedBound {
+		return nil, fmt.Errorf("unsupported bound value of type %T", raw)
 	}
-	switch bk {
-	case signedIntBound:
-		switch rv.Kind() {
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			v := rv.Int()
-			return &v, nil
-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			u := rv.Uint()
-			if u > math.MaxInt64 {
-				return nil, fmt.Errorf("bound %d overflows int64", u)
-			}
-			v := int64(u)
-			return &v, nil
-		case reflect.Float32, reflect.Float64:
+	if source == floatBound && bk != floatBound {
+		switch bk {
+		case signedIntBound:
 			return nil, fmt.Errorf("float bound on signed-int field is lossy; pass an int value instead")
-		}
-	case unsignedIntBound:
-		switch rv.Kind() {
-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			v := rv.Uint()
-			return &v, nil
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			i := rv.Int()
-			if i < 0 {
-				return nil, fmt.Errorf("negative bound %d on unsigned-int field", i)
-			}
-			v := uint64(i)
-			return &v, nil
-		case reflect.Float32, reflect.Float64:
+		case unsignedIntBound:
 			return nil, fmt.Errorf("float bound on unsigned-int field is lossy; pass an int value instead")
-		}
-	case floatBound:
-		switch rv.Kind() {
-		case reflect.Float32, reflect.Float64:
-			v := rv.Float()
-			return &v, nil
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			v := float64(rv.Int())
-			return &v, nil
-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			v := float64(rv.Uint())
-			return &v, nil
-		}
-	case lengthBound:
-		switch rv.Kind() {
-		case reflect.Int, reflect.Int8, reflect.Int16, reflect.Int32, reflect.Int64:
-			i := rv.Int()
-			if i < 0 {
-				return nil, fmt.Errorf("negative length bound %d", i)
-			}
-			v := int(i)
-			return &v, nil
-		case reflect.Uint, reflect.Uint8, reflect.Uint16, reflect.Uint32, reflect.Uint64:
-			u := rv.Uint()
-			if u > math.MaxInt {
-				return nil, fmt.Errorf("length bound %d overflows int", u)
-			}
-			v := int(u)
-			return &v, nil
-		case reflect.Float32, reflect.Float64:
+		case lengthBound:
 			return nil, fmt.Errorf("float length bound is not allowed; pass an int")
 		}
 	}
-	return nil, fmt.Errorf("unsupported bound value of type %T", raw)
+	if source == signedIntBound && value.Int() < 0 {
+		switch bk {
+		case unsignedIntBound:
+			return nil, fmt.Errorf("negative bound %d on unsigned-int field", value.Int())
+		case lengthBound:
+			return nil, fmt.Errorf("negative length bound %d", value.Int())
+		}
+	}
+	if source == unsignedIntBound {
+		if bk == signedIntBound && value.Uint() > math.MaxInt64 {
+			return nil, fmt.Errorf("bound %d overflows int64", value.Uint())
+		}
+		if bk == lengthBound && value.Uint() > math.MaxInt {
+			return nil, fmt.Errorf("length bound %d overflows int", value.Uint())
+		}
+	}
+	types := [...]reflect.Type{nil, reflect.TypeFor[int64](), reflect.TypeFor[uint64](), reflect.TypeFor[float64](), reflect.TypeFor[int]()}
+	result := reflect.New(types[bk])
+	result.Elem().Set(value.Convert(types[bk]))
+	return result.Interface(), nil
 }
 
 // GetMin returns a copy of the current lower bound, or nil if none is set.
@@ -587,34 +550,15 @@ func (f *paramMeta) GetMin() any { return copyBound(f.minVal) }
 func (f *paramMeta) GetMax() any { return copyBound(f.maxVal) }
 
 // copyBound returns a defensive copy of a stored typed-pointer bound.
-func copyBound(b any) any {
-	switch v := b.(type) {
-	case nil:
-		return nil
-	case *int64:
-		if v == nil {
-			return nil
+func copyBound(bound any) any {
+	switch bound.(type) {
+	case *int64, *uint64, *float64, *int:
+		value := reflect.ValueOf(bound)
+		if !value.IsNil() {
+			copy := reflect.New(value.Type().Elem())
+			copy.Elem().Set(value.Elem())
+			return copy.Interface()
 		}
-		out := *v
-		return &out
-	case *uint64:
-		if v == nil {
-			return nil
-		}
-		out := *v
-		return &out
-	case *float64:
-		if v == nil {
-			return nil
-		}
-		out := *v
-		return &out
-	case *int:
-		if v == nil {
-			return nil
-		}
-		out := *v
-		return &out
 	}
 	return nil
 }
@@ -623,33 +567,25 @@ func copyBound(b any) any {
 // storage type that matches the field's boundKind. Panics if the field type
 // cannot carry a bound or if the provided value has the wrong shape. Use
 // ClearMin to remove a previously set bound.
-func (f *paramMeta) SetMin(val any) {
-	bk := f.boundKind()
-	if bk == unsupportedBound {
-		panic(fmt.Errorf("boa: SetMin on %q: type %s is not a numeric, string, slice, or map — min is only meaningful on those", f.name, f.fieldType.Kind()))
-	}
-	coerced, err := coerceBound(val, bk)
-	if err != nil {
-		panic(fmt.Errorf("boa: SetMin on %q: %w", f.name, err))
-	}
-	f.minVal = coerced
-}
+func (f *paramMeta) SetMin(val any) { f.setBound(&f.minVal, val, "Min") }
 
 // ClearMin removes any lower bound previously set on this parameter. Safe to
 // call on any type.
 func (f *paramMeta) ClearMin() { f.minVal = nil }
 
 // SetMax sets an upper bound. See SetMin for the type rules.
-func (f *paramMeta) SetMax(val any) {
+func (f *paramMeta) SetMax(val any) { f.setBound(&f.maxVal, val, "Max") }
+
+func (f *paramMeta) setBound(dest *any, val any, name string) {
 	bk := f.boundKind()
 	if bk == unsupportedBound {
-		panic(fmt.Errorf("boa: SetMax on %q: type %s is not a numeric, string, slice, or map — max is only meaningful on those", f.name, f.fieldType.Kind()))
+		panic(fmt.Errorf("boa: Set%s on %q: type %s is not a numeric, string, slice, or map — %s is only meaningful on those", name, f.name, f.fieldType.Kind(), strings.ToLower(name)))
 	}
-	coerced, err := coerceBound(val, bk)
+	bound, err := coerceBound(val, bk)
 	if err != nil {
-		panic(fmt.Errorf("boa: SetMax on %q: %w", f.name, err))
+		panic(fmt.Errorf("boa: Set%s on %q: %w", name, f.name, err))
 	}
-	f.maxVal = coerced
+	*dest = bound
 }
 
 // ClearMax removes any upper bound previously set on this parameter. Safe to

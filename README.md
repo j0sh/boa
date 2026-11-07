@@ -98,6 +98,7 @@ Values resolve in the following order:
 - [Getting started](https://j0sh.github.io/boa/getting-started/)
 - [Parameters and struct tags](https://j0sh.github.io/boa/struct-tags/)
 - [Configuration files](https://j0sh.github.io/boa/configuration/)
+- [Loading from bytes](https://j0sh.github.io/boa/configuration/#loading-from-bytes)
 - [Lifecycle and errors](https://j0sh.github.io/boa/lifecycle/)
 - [Cobra interoperability](https://j0sh.github.io/boa/cobra-interop/)
 - [Recipes and runnable examples](https://j0sh.github.io/boa/recipes/)

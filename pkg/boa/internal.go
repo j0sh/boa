@@ -10,7 +10,6 @@ import (
 	"net/url"
 	"os"
 	"reflect"
-	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -383,64 +382,6 @@ type processingContext struct {
 	watchMu       sync.RWMutex
 }
 
-// preallocateStructPtrs walks the struct tree and allocates any nil struct pointer fields,
-// tracking them in ctx.PreallocatedPtrs so they can be nil'd back after parsing if unused.
-// This must be called before the first traverse so that traverse discovers the child fields.
-// The list is built depth-first (innermost first) for correct cleanup ordering.
-//
-// path is the declared-index path from the root to the struct being walked, using
-// reflect.StructField.Index numbering. Ignored fields retain their slot.
-func preallocateStructPtrs(ctx *processingContext, structPtr any, path []int) error {
-	visiting := map[reflect.Type]bool{}
-	var walk func(reflect.Value, []int) error
-	walk = func(ptr reflect.Value, path []int) error {
-		if !ptr.IsValid() || ptr.Kind() != reflect.Pointer || ptr.IsNil() || ptr.Type().Elem().Kind() != reflect.Struct {
-			return fmt.Errorf("expected non-nil pointer to struct")
-		}
-		value := ptr.Elem()
-		t := value.Type()
-		if visiting[t] {
-			return fmt.Errorf("recursive parameter group %s at %s: mark the recursive field boa:\"ignore\" or register a scalar parser", t, joinPath(path))
-		}
-		visiting[t] = true
-		defer delete(visiting, t)
-		for i := 0; i < t.NumField(); i++ {
-			field := t.Field(i)
-			if isBoaIgnored(field) || isSupportedType(field.Type) {
-				continue
-			}
-			if tag, ok := field.Tag.Lookup("basedir"); ok && strings.TrimSpace(tag) != "false" {
-				return fmt.Errorf("basedir on field %s requires a string field", field.Name)
-			}
-			current := value.Field(i)
-			childPath := append(slices.Clone(path), i)
-			allocated := false
-			switch current.Kind() {
-			case reflect.Struct:
-				current = current.Addr()
-			case reflect.Pointer:
-				if current.Type().Elem().Kind() != reflect.Struct {
-					continue
-				}
-				if current.IsNil() {
-					current.Set(reflect.New(current.Type().Elem()))
-					allocated = true
-				}
-			default:
-				continue
-			}
-			if err := walk(current, childPath); err != nil {
-				return err
-			}
-			if allocated {
-				ctx.PreallocatedPtrs = append(ctx.PreallocatedPtrs, preallocatedPtrInfo{path: joinPath(childPath)})
-			}
-		}
-		return nil
-	}
-	return walk(reflect.ValueOf(structPtr), path)
-}
-
 // cleanupPreallocatedPtrs nils back any preallocated struct pointers whose fields
 // were never explicitly set (via CLI, env, or config injection). Processes innermost
 // first so that nested struct pointers are cleaned before their parents.
@@ -539,18 +480,10 @@ func removeMirrorsForSubtree(ctx *processingContext, prefix fieldPath) {
 			delete(ctx.mirrorByPath, p)
 		}
 	}
-	// Rebuild pathOrder without the removed entries
-	kept := ctx.pathOrder[:0]
-	for _, p := range ctx.pathOrder {
-		if _, still := ctx.mirrorByPath[p]; still {
-			kept = append(kept, p)
-		}
-	}
-	// Zero out tail references so GC can reclaim the removed fieldPath strings
-	for i := len(kept); i < len(ctx.pathOrder); i++ {
-		ctx.pathOrder[i] = ""
-	}
-	ctx.pathOrder = kept
+	ctx.pathOrder = slices.DeleteFunc(ctx.pathOrder, func(path fieldPath) bool {
+		_, present := ctx.mirrorByPath[path]
+		return !present
+	})
 	// Invalidate reverse address index — addresses inside the removed subtree are now stale
 	ctx.addrToPath = nil
 }
@@ -581,93 +514,53 @@ func parseEnv(ctx *processingContext, structPtr any) error {
 }
 
 func (b command) validate(ctx *processingContext, structPtr any) error {
-
+	failures := processFields(structPtr, false, ctx, nil)
+	if failures != nil {
+		first := failures.Fields[0]
+		lookup := first.Path
+		if first.Code == CodeAlternatives && strings.HasSuffix(lookup, "]") {
+			lookup = lookup[:strings.LastIndex(lookup, "[")]
+		}
+		name, envHint := first.Path, ""
+		for _, param := range ctx.mirrorByPath {
+			meta := param.(*paramMeta)
+			if meta.goPath == lookup {
+				name = meta.GetName()
+				if meta.GetEnv() != "" && !meta.IsNoEnv() {
+					envHint = " (env: " + meta.GetEnv() + ")"
+				}
+				break
+			}
+		}
+		if first.Code == CodeRequired {
+			failures.message = fmt.Sprintf("missing required param '%s'%s", name, envHint)
+		} else {
+			failures.message = fmt.Sprintf("invalid value for param '%s': %s", name, first.Err)
+		}
+		return NewUserInputError(failures)
+	}
+	// Source conversion, path/HTTPBind policy and filesystem checks belong to
+	// the command pipeline, outside the shared validation engine.
 	err := traverse(ctx, structPtr, func(param parameter, _ string, _ reflect.StructTag) error {
-
-		if !param.IsEnabled() {
+		if !param.IsEnabled() || param.IsIgnored() || !param.HasValue() || param.valuePtrF() == nil {
 			return nil
 		}
-
-		// Fully ignored params are skipped end-to-end: no required check,
-		// no conversion, no alt/min/max/pattern/custom validation. Config
-		// files write directly to the raw struct field via unmarshal, so
-		// their values still land — just without any boa-layer processing.
-		if param.IsIgnored() {
-			return nil
+		meta := param.(*paramMeta)
+		allow := b.UnsafeHTTPBind
+		if meta.unsafeHTTPBind != nil {
+			allow = *meta.unsafeHTTPBind
 		}
-
-		envHint := ""
-		if param.GetEnv() != "" && !param.IsNoEnv() {
-			envHint = fmt.Sprintf(" (env: %s)", param.GetEnv())
-		}
-
-		if param.IsRequired() && !param.HasValue() {
-			return fmt.Errorf("missing required param '%s'%s", param.GetName(), envHint)
-		}
-
-		// Post-parse conversion for types stored as strings in cobra (time.Time, *url.URL, JSON fallback, etc.)
-		if param.HasValue() {
-			if h := handlerFor(param); h != nil && h.convert != nil {
-				value, err := h.convert(param.GetName(), param.valuePtrF())
-				if err != nil {
-					return err
-				}
-				param.setValuePtr(value)
-			}
-
-			if alts := param.GetAlternatives(); alts != nil && param.GetStrictAlts() {
-
-				ptrVal := param.valuePtrF()
-				// check if it is a slice param
-				kind := reflect.TypeOf(ptrVal).Elem().Kind()
-				if kind == reflect.Slice {
-					// run the validation for each slice element
-					sliceVal := reflect.ValueOf(ptrVal).Elem()
-					for i := 0; i < sliceVal.Len(); i++ {
-						elem := sliceVal.Index(i)
-						strVal := fmt.Sprintf("%v", elem.Interface())
-						if !slices.Contains(alts, strVal) {
-							return fmt.Errorf("invalid value for param '%s': '%s' is not in the list of allowed values: %v", param.GetName(), strVal, alts)
-						}
-					}
-				} else {
-					if ptrVal != nil {
-						strVal := ptrToAnyToString(ptrVal)
-						if !slices.Contains(alts, strVal) {
-							return fmt.Errorf("invalid value for param '%s': '%s' is not in the list of allowed values: %v", param.GetName(), strVal, alts)
-						}
-					}
-				}
-			}
-
-			if err := param.customValidatorOfPtr()(param.valuePtrF()); err != nil {
-				return fmt.Errorf("invalid value for param '%s': %s", param.GetName(), err.Error())
-			}
-
-			// min/max/pattern tag validation
-			if pm, ok := param.(*paramMeta); ok {
-				allow := b.UnsafeHTTPBind
-				if pm.unsafeHTTPBind != nil {
-					allow = *pm.unsafeHTTPBind
-				}
-				if !allow {
-					if err := validateHTTPBinds(reflect.ValueOf(param.valuePtrF()), make(map[configCopyKey]bool)); err != nil {
-						return fmt.Errorf("invalid value for param '%s': %w", param.GetName(), err)
-					}
-				}
-				if err := validateMinMaxPattern(pm, param.valuePtrF()); err != nil {
-					return fmt.Errorf("invalid value for param '%s': %s", param.GetName(), err.Error())
-				}
-			}
-
-			if param.IsFile() {
-				value := reflect.Indirect(reflect.ValueOf(param.valuePtrF()))
-				if err := validateFile(value.String()); err != nil && (!param.IsFileOptional() || !errors.Is(err, os.ErrNotExist)) {
-					return fmt.Errorf("invalid value for param '%s': %w", param.GetName(), err)
-				}
+		if !allow {
+			if err := validateHTTPBinds(reflect.ValueOf(param.valuePtrF()), make(map[configCopyKey]bool)); err != nil {
+				return fmt.Errorf("invalid value for param '%s': %w", param.GetName(), err)
 			}
 		}
-
+		if param.IsFile() {
+			value := reflect.Indirect(reflect.ValueOf(param.valuePtrF()))
+			if err := validateFile(value.String()); err != nil && (!param.IsFileOptional() || !errors.Is(err, os.ErrNotExist)) {
+				return fmt.Errorf("invalid value for param '%s': %w", param.GetName(), err)
+			}
+		}
 		return nil
 	}, nil)
 	return NewUserInputError(err)
@@ -724,75 +617,6 @@ func parseBoundTag(bk boundKind, s string) (any, error) {
 	return nil, nil
 }
 
-// validateMinMaxPattern checks min/max/pattern tag constraints. It dispatches
-// on the field's boundKind and compares against the typed-pointer bound stored
-// in pm.minVal / pm.maxVal. The storage type is guaranteed to match the field
-// kind (coerceBound enforces this at set time), so the type assertions here
-// never panic on a valid mirror.
-func validateMinMaxPattern(pm *paramMeta, valPtr any) error {
-	if pm.minVal == nil && pm.maxVal == nil && pm.pattern == "" {
-		return nil
-	}
-
-	v := reflect.ValueOf(valPtr)
-	if v.Kind() == reflect.Pointer && !v.IsNil() {
-		v = v.Elem()
-	}
-
-	switch pm.boundKind() {
-	case signedIntBound:
-		val := v.Int()
-		if minP, ok := pm.minVal.(*int64); ok && minP != nil && val < *minP {
-			return fmt.Errorf("value %d is below min %d", val, *minP)
-		}
-		if maxP, ok := pm.maxVal.(*int64); ok && maxP != nil && val > *maxP {
-			return fmt.Errorf("value %d exceeds max %d", val, *maxP)
-		}
-	case unsignedIntBound:
-		val := v.Uint()
-		if minP, ok := pm.minVal.(*uint64); ok && minP != nil && val < *minP {
-			return fmt.Errorf("value %d is below min %d", val, *minP)
-		}
-		if maxP, ok := pm.maxVal.(*uint64); ok && maxP != nil && val > *maxP {
-			return fmt.Errorf("value %d exceeds max %d", val, *maxP)
-		}
-	case floatBound:
-		val := v.Float()
-		if minP, ok := pm.minVal.(*float64); ok && minP != nil && val < *minP {
-			return fmt.Errorf("value %v is below min %v", val, *minP)
-		}
-		if maxP, ok := pm.maxVal.(*float64); ok && maxP != nil && val > *maxP {
-			return fmt.Errorf("value %v exceeds max %v", val, *maxP)
-		}
-	case lengthBound:
-		var l int
-		switch v.Kind() {
-		case reflect.String:
-			l = len(v.String())
-		case reflect.Slice, reflect.Map:
-			l = v.Len()
-		}
-		if minP, ok := pm.minVal.(*int); ok && minP != nil && l < *minP {
-			return fmt.Errorf("length %d is below min %d", l, *minP)
-		}
-		if maxP, ok := pm.maxVal.(*int); ok && maxP != nil && l > *maxP {
-			return fmt.Errorf("length %d exceeds max %d", l, *maxP)
-		}
-	}
-
-	if pm.pattern != "" && v.Kind() == reflect.String {
-		matched, err := regexp.MatchString(pm.pattern, v.String())
-		if err != nil {
-			return fmt.Errorf("invalid pattern %q: %w", pm.pattern, err)
-		}
-		if !matched {
-			return fmt.Errorf("value %q does not match pattern %q", v.String(), pm.pattern)
-		}
-	}
-
-	return nil
-}
-
 func ptrToAnyToString(ptr any) string {
 	if ptr == nil {
 		panic("ptrToAnyToString called with nil")
@@ -823,33 +647,6 @@ func doParsePositional(f parameter, strVal string) error {
 	f.markSetPositionally()
 
 	return nil
-}
-
-func toTypedSlice[T any](slice any) []T {
-	if slice == nil {
-		return nil
-	}
-	// Try direct type assertion first
-	if typed, ok := slice.([]T); ok {
-		return typed
-	}
-	// Convert named primitive types through their underlying representation.
-	sliceVal := reflect.ValueOf(slice)
-	if sliceVal.Kind() == reflect.Slice {
-		result := make([]T, sliceVal.Len())
-		targetElemType := reflect.TypeFor[T]()
-		for i := 0; i < sliceVal.Len(); i++ {
-			elem := sliceVal.Index(i)
-			if elem.Type().ConvertibleTo(targetElemType) {
-				result[i] = elem.Convert(targetElemType).Interface().(T)
-			} else {
-				result[i] = elem.Interface().(T)
-			}
-		}
-		return result
-	}
-	// Fallback to original behavior (will panic with clear message)
-	return slice.([]T)
 }
 
 func connect(f parameter, cmd *cobra.Command, posArgs []parameter, ctx *processingContext) error {
@@ -1176,17 +973,7 @@ func camelToKebabCase(in string) string {
 }
 
 func kebabCaseToUpperSnakeCase(in string) string {
-	var result strings.Builder
-
-	for _, char := range in {
-		if char == '-' {
-			result.WriteRune('_')
-		} else {
-			result.WriteRune(char)
-		}
-	}
-
-	return strings.ToUpper(result.String())
+	return strings.ToUpper(strings.ReplaceAll(in, "-", "_"))
 }
 
 func getBoaTags(field reflect.StructField) []string {
@@ -1219,7 +1006,7 @@ func positionalSkipError(name, skipKind string) error {
 //     implementation state owned by the declaring package. Embedding an
 //     unexported type (e.g. `type Wrapper struct { internalCfg }`) creates
 //     such a field; silently skipping it is friendlier than panicking deep
-//     in preallocateStructPtrs with `reflect.Value.Interface: cannot return
+//     during discovery with `reflect.Value.Interface: cannot return
 //     value obtained from unexported field`.
 //
 // `boa:"configonly"` produces a mirror and runs validation, but is suppressed
@@ -1233,152 +1020,68 @@ func isBoaIgnored(field reflect.StructField) bool {
 	return slices.Contains(boaTags, "ignore")
 }
 
-// traverse walks from the root parameters struct with an empty field-name prefix.
+// traverse adapts shared field discovery to command mirrors and lifecycle hooks.
 func traverse(
 	ctx *processingContext,
 	structPtr any,
-	fParam func(param parameter, paramFieldName string, tags reflect.StructTag) error,
-	fStruct func(structPtr any) error,
+	fParam func(parameter, string, reflect.StructTag) error,
+	fStruct func(any) error,
 ) error {
-	return traverseAt(ctx, structPtr, nil, fParam, fStruct, "")
-}
-
-// traverseAt walks the struct tree while carrying the declared-index path from
-// the root. The path is what identifies each leaf mirror in mirrorByPath.
-// Ignored fields retain their declared index slot; only the loop variable i is
-// used for path construction (never a visit counter), so interleaved ignored
-// fields cannot drift the key.
-func traverseAt(
-	ctx *processingContext,
-	structPtr any,
-	path []int,
-	fParam func(param parameter, paramFieldName string, tags reflect.StructTag) error,
-	fStruct func(structPtr any) error,
-	prefix string,
-) error {
-	if reflect.TypeOf(structPtr).Kind() != reflect.Pointer {
+	root := reflect.ValueOf(structPtr)
+	if !root.IsValid() || root.Kind() != reflect.Pointer || root.IsNil() || root.Type().Elem().Kind() != reflect.Struct {
 		return fmt.Errorf("expected pointer to struct")
 	}
-
-	if reflect.TypeOf(structPtr).Elem().Kind() != reflect.Struct {
-		return fmt.Errorf("expected pointer to struct")
+	walker := fieldWalker{active: make(map[configCopyKey]bool), remaining: -1}
+	if ctx.mirrorByPath == nil {
+		ctx.mirrorByPath = make(map[fieldPath]parameter)
+		walker.preallocated = &ctx.PreallocatedPtrs
 	}
-
 	if fStruct != nil {
-		err := fStruct(structPtr)
-		if err != nil {
-			return err
-		}
+		walker.onStruct = func(v reflect.Value) error { return fStruct(v.Addr().Interface()) }
 	}
-
-	// use reflection to iterate over all fields of the struct
-	fields := reflect.TypeOf(structPtr).Elem()
-	rootValue := reflect.ValueOf(structPtr).Elem()
-	for i := 0; i < fields.NumField(); i++ {
-		field := fields.Field(i)
-
-		if isBoaIgnored(field) {
-			continue
+	return walker.walk(root.Elem(), "", 0, func(field reflect.StructField, value reflect.Value, goPath string) (bool, error) {
+		param, isParam := value.Addr().Interface().(parameter)
+		if !isParam {
+			if !isSupportedType(field.Type) {
+				if tag, ok := field.Tag.Lookup("basedir"); walker.preallocated != nil && ok && strings.TrimSpace(tag) != "false" {
+					return false, fmt.Errorf("basedir on field %s requires a string field", field.Name)
+				}
+				t := field.Type
+				if t.Kind() == reflect.Pointer {
+					t = t.Elem()
+				}
+				if t.Kind() == reflect.Struct {
+					return true, nil
+				}
+				slog.Warn(fmt.Sprintf("field %s has no CLI or environment binding", field.Name))
+				return false, nil
+			}
+			path := joinPath(walker.indices)
+			var found bool
+			if param, found = ctx.mirrorByPath[path]; !found {
+				meta, failure := newField(field, goPath)
+				if failure != nil {
+					return false, failure
+				}
+				meta.name = ""
+				param = meta
+				meta.pathKey = path
+				if walker.prefix != "" {
+					meta.flagPrefix = camelToKebabCase(walker.prefix) + "-"
+					meta.envPrefix = kebabCaseToUpperSnakeCase(strings.TrimSuffix(meta.flagPrefix, "-")) + "_"
+				}
+				ctx.pathOrder = append(ctx.pathOrder, path)
+				ctx.mirrorByPath[path] = param
+				if ctx.addrToPath != nil {
+					ctx.addrToPath[value.Addr().UnsafePointer()] = path
+				}
+			}
 		}
-
-		// childPath is the declared-index path to this field from the root.
-		// Use declared index (i), not a visit counter, so ignored fields do not
-		// drift subsequent siblings.
-		//
-		// Single allocation: len(path)+1 explicitly sized. The old
-		// append(append([]int(nil), path...), i) form did two allocations per
-		// field visit, which matters during init of larger parameter trees.
-		childPath := make([]int, len(path)+1)
-		copy(childPath, path)
-		childPath[len(path)] = i
-
-		fieldAddr := rootValue.Field(i).Addr()
-		// check if field is a param
-		param, isParam := fieldAddr.Interface().(parameter)
-		prefixedName := prefix + field.Name
-		if isParam {
-			if fParam != nil {
-				err := fParam(param, prefixedName, field.Tag)
-				if err != nil {
-					return err
-				}
-			}
-		} else {
-
-			// check if it is a struct (but not registered types like time.Time or custom types)
-			if field.Type.Kind() == reflect.Struct && !isSupportedType(field.Type) {
-				// Named (non-anonymous) struct fields get auto-prefixed
-				childPrefix := prefix
-				if !field.Anonymous {
-					childPrefix = prefix + field.Name
-				}
-				if err := traverseAt(ctx, fieldAddr.Interface(), childPath, fParam, fStruct, childPrefix); err != nil {
-					return err
-				}
-				continue
-			}
-
-			// check if it is a pointer to a struct (but not *url.URL or pointer-to-supported-type)
-			if field.Type.Kind() == reflect.Pointer && field.Type.Elem().Kind() == reflect.Struct && !isSupportedType(field.Type) {
-				if !fieldAddr.IsNil() && !fieldAddr.Elem().IsNil() {
-					childPrefix := prefix
-					if !field.Anonymous {
-						childPrefix = prefix + field.Name
-					}
-					if err := traverseAt(ctx, fieldAddr.Elem().Interface(), childPath, fParam, fStruct, childPrefix); err != nil {
-						return err
-					}
-				}
-				continue
-			}
-
-			// For raw fields, store parameter mirrors keyed by field-index path.
-			if isSupportedType(field.Type) {
-
-				// check if we already have a mirror for this field
-				pathKey := joinPath(childPath)
-				var ok bool
-				if param, ok = ctx.mirrorByPath[pathKey]; !ok {
-					var err error
-					param, err = newParam(&field, field.Type)
-					if err != nil {
-						return err
-					}
-					// Set prefix for named struct nesting, and stash the path
-					// key on the mirror so callers that have a *paramMeta can
-					// read it without scanning pathOrder.
-					if pm, ok := param.(*paramMeta); ok {
-						pm.pathKey = pathKey
-						if prefix != "" {
-							pm.flagPrefix = camelToKebabCase(prefix) + "-"
-							pm.envPrefix = kebabCaseToUpperSnakeCase(pm.flagPrefix[:len(pm.flagPrefix)-1]) + "_"
-						}
-					}
-					ctx.pathOrder = append(ctx.pathOrder, pathKey)
-					ctx.mirrorByPath[pathKey] = param
-					// Maintain the reverse address index for boa.Param(ctx, &field).
-					// This is a non-authoritative cache — mirrorByPath is the source of truth.
-					if ctx.addrToPath != nil {
-						ctx.addrToPath[fieldAddr.UnsafePointer()] = pathKey
-					}
-				}
-
-				if fParam != nil {
-					err := fParam(param, prefixedName, field.Tag)
-					if err != nil {
-						return err
-					}
-				}
-
-				continue
-			}
-
-			slog.Warn(fmt.Sprintf("field %s is not a type that is interpretable as a boa.Parameter. It will be ignored", field.Name))
-			continue // not a param
+		if fParam != nil {
+			return false, fParam(param, walker.prefix+field.Name, field.Tag)
 		}
-	}
-
-	return nil
+		return false, nil
+	})
 }
 
 // prependPersistentPipelineToDescendants composes a declaring command's Boa
@@ -1595,51 +1298,34 @@ func (b command) toCobraBase() (*cobra.Command, *processingContext, error) {
 	ctx := &processingContext{
 		Context:       context.Background(), // prepare to override later?
 		rootStructPtr: b.Params,
-		mirrorByPath:  map[fieldPath]parameter{},
 		pathOrder:     []fieldPath{},
 		addrToPath:    map[unsafe.Pointer]fieldPath{},
 	}
 
-	// Preallocate nil struct pointer fields so traverse can discover their children.
-	// This must happen before the first traverse and before init hooks so users can
-	// access fields like &params.DB.Port in InitFunc/InitFuncCtx.
+	// Discover fields and allocate nil groups before Init hooks use their addresses.
 	if b.Params != nil {
-		if err := preallocateStructPtrs(ctx, b.Params, nil); err != nil {
-			return nil, nil, err
-		}
-	}
-
-	// build mirrors
-	if b.Params != nil {
-		if err := traverse(ctx, b.Params, nil, func(innerParams any) error {
-			return nil
-		}); err != nil {
+		if err := traverse(ctx, b.Params, nil, nil); err != nil {
 			return nil, nil, err
 		}
 	}
 
 	syncMirrors(ctx)
 
-	// if b.params or any inner struct implements CfgStructInit, call it
 	if b.Params != nil {
-		err := traverse(ctx, b.Params, nil, func(innerParams any) error {
-			if toInit, ok := innerParams.(CfgStructInit); ok {
-				err := toInit.Init()
-				if err != nil {
-					return fmt.Errorf("error in CfgStructInit.Init(): %w", err)
-				}
-			}
-			// context-aware interface
-			if toInitCtx, ok := innerParams.(CfgStructInitCtx); ok {
-				hookCtx := newHookContext(ctx)
-				err := toInitCtx.InitCtx(hookCtx)
-				if err != nil {
-					return fmt.Errorf("error in CfgStructInitCtx.InitCtx(): %w", err)
-				}
+		if err := traverse(ctx, b.Params, func(param parameter, _ string, tags reflect.StructTag) error {
+			if err := applyDefaultTag(param, tags); err != nil {
+				return schemaError(param.(*paramMeta).goPath, tags, err)
 			}
 			return nil
-		})
-		if err != nil {
+		}, nil); err != nil {
+			return nil, nil, fmt.Errorf("error parsing tags: %w", err)
+		}
+	}
+
+	if b.Params != nil {
+		if err := traverse(ctx, b.Params, nil, structHooks(ctx,
+			"CfgStructInit.Init()", "CfgStructInitCtx.InitCtx()",
+			CfgStructInit.Init, CfgStructInitCtx.InitCtx)); err != nil {
 			return nil, nil, err
 		}
 	}
@@ -1695,7 +1381,6 @@ func (b command) toCobraBase() (*cobra.Command, *processingContext, error) {
 		err := traverse(ctx, b.Params, func(param parameter, _ string, tags reflect.StructTag) error {
 			return ctx.applyTags(param, tags)
 		}, nil)
-
 		if err != nil {
 			return nil, nil, fmt.Errorf("error parsing tags: %w", err)
 		}
@@ -1788,18 +1473,12 @@ func (b command) toCobraBase() (*cobra.Command, *processingContext, error) {
 			return nil, nil, fmt.Errorf("error connecting params: %w", err)
 		}
 
-		// if b.Params implements CfgStructPostCreate, call it
-		if postCreate, ok := b.Params.(CfgStructPostCreate); ok {
-			if err := postCreate.PostCreate(); err != nil {
-				return nil, nil, fmt.Errorf("error in CfgStructPostCreate.PostCreate(): %w", err)
-			}
+		if err := structHooks(ctx,
+			"CfgStructPostCreate.PostCreate()", "CfgStructPostCreateCtx.PostCreateCtx()",
+			CfgStructPostCreate.PostCreate, CfgStructPostCreateCtx.PostCreateCtx)(b.Params); err != nil {
+			return nil, nil, err
 		}
-		if postCreateCtx, ok := b.Params.(CfgStructPostCreateCtx); ok {
-			hookCtx := newHookContext(ctx)
-			if err := postCreateCtx.PostCreateCtx(hookCtx); err != nil {
-				return nil, nil, fmt.Errorf("error in CfgStructPostCreateCtx.PostCreateCtx(): %w", err)
-			}
-		}
+
 		if b.PostCreateFunc != nil {
 			err := b.PostCreateFunc(b.Params, cmd)
 			if err != nil {
@@ -1977,7 +1656,7 @@ func (ctx *processingContext) resolveFieldValue(path fieldPath) (reflect.Value, 
 	}
 	// For the final value, if it is a pointer-to-struct we do NOT auto-deref:
 	// mirror types may themselves be pointers (e.g., *url.URL), and pointer-field
-	// semantics are handled by syncPointerField.
+	// semantics are handled by syncField.
 	return v, true
 }
 
@@ -2035,8 +1714,24 @@ type configCopyKey struct {
 }
 
 func cloneConfigValue(value reflect.Value, seen map[configCopyKey]reflect.Value) reflect.Value {
-	// Addr is immutable; cloning its interned zone handles breaks address identity.
-	if value.Type() == reflect.TypeFor[netip.Addr]() {
+	return (&configCloner{seen: seen}).clone(value, 0)
+}
+
+// A zero maxDepth leaves decoder/default copying unrestricted. Validation sets
+// a bound and discards the partial copy if exceeded is true.
+type configCloner struct {
+	seen     map[configCopyKey]reflect.Value
+	maxDepth int
+	exceeded bool
+}
+
+func (c *configCloner) clone(value reflect.Value, depth int) reflect.Value {
+	if c.exceeded || c.maxDepth > 0 && depth > c.maxDepth {
+		c.exceeded = true
+		return value
+	}
+	// Preserve identity for immutable interned addresses and lazy timezones.
+	if value.Type() == reflect.TypeFor[netip.Addr]() || value.Type() == reflect.TypeFor[*time.Location]() {
 		return value
 	}
 	copy := reflect.New(value.Type()).Elem()
@@ -2049,39 +1744,39 @@ func cloneConfigValue(value reflect.Value, seen map[configCopyKey]reflect.Value)
 		if kind == reflect.Slice {
 			key.len = value.Len()
 		}
-		if prior, ok := seen[key]; ok {
+		if prior, ok := c.seen[key]; ok {
 			return prior
 		}
-		seen[key] = copy
+		c.seen[key] = copy
 	}
 	switch value.Kind() {
 	case reflect.Pointer:
 		copy.Set(reflect.New(value.Type().Elem()))
-		copy.Elem().Set(cloneConfigValue(value.Elem(), seen))
+		copy.Elem().Set(c.clone(value.Elem(), depth+1))
 	case reflect.Interface:
 		if !value.IsNil() {
-			copy.Set(cloneConfigValue(value.Elem(), seen))
+			copy.Set(c.clone(value.Elem(), depth+1))
 		}
 	case reflect.Slice:
 		copy.Set(reflect.MakeSlice(value.Type(), value.Len(), value.Len()))
 		for i := range value.Len() {
-			copy.Index(i).Set(cloneConfigValue(value.Index(i), seen))
+			copy.Index(i).Set(c.clone(value.Index(i), depth+1))
 		}
 	case reflect.Map:
 		copy.Set(reflect.MakeMapWithSize(value.Type(), value.Len()))
 		for it := value.MapRange(); it.Next(); {
-			copy.SetMapIndex(cloneConfigValue(it.Key(), seen), cloneConfigValue(it.Value(), seen))
+			copy.SetMapIndex(c.clone(it.Key(), depth+1), c.clone(it.Value(), depth+1))
 		}
 	case reflect.Struct:
 		for i := range copy.NumField() {
 			field := copy.Field(i)
 			// Native scalar decoders such as big.Rat mutate unexported storage too.
 			field = reflect.NewAt(field.Type(), field.Addr().UnsafePointer()).Elem()
-			field.Set(cloneConfigValue(field, seen))
+			field.Set(c.clone(field, depth+1))
 		}
 	case reflect.Array:
 		for i := range value.Len() {
-			copy.Index(i).Set(cloneConfigValue(value.Index(i), seen))
+			copy.Index(i).Set(c.clone(value.Index(i), depth+1))
 		}
 	}
 	return copy
@@ -2107,84 +1802,42 @@ func (ctx *processingContext) storeValue(param parameter, value reflect.Value) {
 }
 
 func syncMirrors(ctx *processingContext) {
-	// 1. First, copy non-zero values from the raw fields -> mirrors as injected values.
-	// 2. Then copy back cli & env set values to the raw fields
-
-	for _, p := range ctx.pathOrder {
-		mirror, ok := ctx.mirrorByPath[p]
-		if !ok {
-			continue
-		}
-		// Ignored mirrors are opt-out-of-boa: we must not inject raw-field
-		// values into them, and must not push mirror values back out. Config
-		// files write directly to the raw struct via unmarshal, so the user's
-		// data still lands — but the mirror stays untouched, which mirrors
-		// the `boa:"ignore"` tag behavior where no mirror ever existed.
-		if pm, isPM := mirror.(*paramMeta); isPM && pm.ignored {
-			continue
-		}
-		rawFieldVal, resolved := ctx.resolveFieldValue(p)
-		if !resolved {
-			// The substruct housing this field has been nil'd out by cleanup — skip.
-			continue
-		}
-
-		// Check if this is a pointer field (e.g., *string, *int)
-		pm, isParamMeta := mirror.(*paramMeta)
-		if isParamMeta && pm.isPointer {
-			// Reinterpret as a pointer to the underlying type so named types round-trip.
-			ptrView := reinterpretAs(rawFieldVal, reflect.PointerTo(mirror.GetType()))
-			syncPointerField(ptrView, mirror)
-			continue
-		}
-
-		// Reinterpret as the underlying type (matters for named primitives).
-		underlying := reinterpretAs(rawFieldVal, mirror.GetType())
-
-		if !mirror.wasSetOnCli() && !mirror.wasSetByEnv() && !underlying.IsZero() {
-			mirror.injectValuePtr(underlying.Addr().Interface())
-		}
-
-		if mirror.wasSetOnCli() || mirror.wasSetByEnv() || (mirror.HasValue() && underlying.IsZero()) {
-			mirrorValue := reflect.ValueOf(mirror.valuePtrF()).Elem()
-
-			// Skip if types don't match (e.g., string vs *url.URL before conversion)
-			// This allows syncing to work before and after validation/conversion
-			if !mirrorValue.Type().AssignableTo(underlying.Type()) {
-				continue
-			}
-
-			// Make sure the destination is settable
-			if underlying.CanSet() {
-				underlying.Set(mirrorValue)
-			} else {
-				panic(fmt.Errorf("could not set value for parameter %s", mirror.GetName()))
-			}
+	for _, path := range ctx.pathOrder {
+		mirror := ctx.mirrorByPath[path]
+		field, live := ctx.resolveFieldValue(path)
+		if mirror != nil && live && !mirror.IsIgnored() {
+			syncField(field, mirror)
 		}
 	}
 }
 
-// syncPointerField handles bidirectional sync for pointer fields like *string, *int.
-// rawFieldVal is the *string field value itself (an addressable reflect.Value of
-// pointer kind). The mirror stores the element type (string).
-func syncPointerField(rawFieldVal reflect.Value, mirror parameter) {
-	// Raw → Mirror: if the user's pointer is non-nil, inject the pointed-to value
-	if !mirror.wasSetOnCli() && !mirror.wasSetByEnv() && !rawFieldVal.IsNil() {
-		// rawFieldVal.Interface() is *string — same type cobra uses
-		mirror.injectValuePtr(rawFieldVal.Interface())
+// syncField uses the same typed transfer for pointer fields and value fields.
+func syncField(field reflect.Value, mirror parameter) {
+	pointer := mirror.(*paramMeta).isPointer
+	target := mirror.GetType()
+	if pointer {
+		target = reflect.PointerTo(target)
 	}
-
-	// Mirror → Raw: if mirror has a value, set the pointer field
-	if mirror.wasSetOnCli() || mirror.wasSetByEnv() || (mirror.HasValue() && rawFieldVal.IsNil()) {
-		valPtr := mirror.valuePtrF()
-		if valPtr != nil {
-			mirrorVal := reflect.ValueOf(valPtr) // *string from cobra
-			// Skip if types don't match (e.g., string vs *url.URL before conversion)
-			if mirrorVal.Type().AssignableTo(rawFieldVal.Type()) {
-				if rawFieldVal.CanSet() {
-					rawFieldVal.Set(mirrorVal)
-				}
-			}
+	field = reinterpretAs(field, target)
+	sourced := mirror.wasSetOnCli() || mirror.wasSetByEnv()
+	if !sourced && !field.IsZero() {
+		value := field
+		if !pointer {
+			value = field.Addr()
+		}
+		mirror.injectValuePtr(value.Interface())
+	}
+	if sourced || mirror.HasValue() && field.IsZero() {
+		value := reflect.ValueOf(mirror.valuePtrF())
+		if !value.IsValid() {
+			return
+		}
+		if !pointer {
+			value = value.Elem()
+		}
+		// String-backed flags become assignable after conversion.
+		if value.Type().AssignableTo(field.Type()) {
+			field.Set(value)
 		}
 	}
 }
@@ -2269,7 +1922,10 @@ func normalizeType(t reflect.Type) reflect.Type {
 	return t
 }
 
-func newParam(field *reflect.StructField, t reflect.Type) (parameter, error) {
+// newField builds the existing metadata and tag baseline for every caller.
+func newField(field reflect.StructField, path string) (*paramMeta, *FieldError) {
+	t := field.Type
+
 	// Determine if this is a pointer-to-value field (e.g., *string, *int)
 	// Exact registered pointer types own their pointer semantics.
 	isPtr := t.Kind() == reflect.Pointer && exactTypeHandlers[t] == nil
@@ -2282,9 +1938,9 @@ func newParam(field *reflect.StructField, t reflect.Type) (parameter, error) {
 	// underlying built-in type (for example, *string rather than *MyString).
 	valueType = normalizeType(valueType)
 
-	// Pointer, map, and nested slice fields default to optional (nil = not set)
+	// Pointer, interface, map, and nested slice fields default to optional.
 	isRequired := !cfg.defaultOptional
-	if isPtr || valueType.Kind() == reflect.Map {
+	if isPtr || valueType.Kind() == reflect.Map || valueType.Kind() == reflect.Interface {
 		isRequired = false
 	}
 	// Nested slices ([][]T) default to optional — flat slices keep the global default
@@ -2295,7 +1951,7 @@ func newParam(field *reflect.StructField, t reflect.Type) (parameter, error) {
 	for _, key := range []string{"required", "optional"} {
 		if value, ok := field.Tag.Lookup(key); ok {
 			if value != "true" && value != "false" {
-				panic(fmt.Errorf("invalid value for field %s's %s tag: %s", field.Name, key, value))
+				return nil, schemaError(path, field.Tag, fmt.Errorf("invalid value for field %s's %s tag: %s", field.Name, key, value))
 			}
 			isRequired = (value == "true") == (key == "required")
 		}
@@ -2310,14 +1966,14 @@ func newParam(field *reflect.StructField, t reflect.Type) (parameter, error) {
 		var err error
 		baseDir, err = parseBaseDirTag(value)
 		if err != nil {
-			return nil, fmt.Errorf("basedir on field %s: %w", field.Name, err)
+			return nil, schemaError(path, field.Tag, fmt.Errorf("basedir on field %s: %w", field.Name, err))
 		}
 	}
 	var basePath BasePath
 	if value, ok := field.Tag.Lookup("basepath"); ok {
 		basePath = BasePath(value)
 		if basePath != BasePathDir && basePath != BasePathSource {
-			return nil, fmt.Errorf("basepath on field %s: invalid value %q", field.Name, value)
+			return nil, schemaError(path, field.Tag, fmt.Errorf("basepath on field %s: invalid value %q", field.Name, value))
 		}
 	}
 	var file, config fileOptions
@@ -2328,23 +1984,57 @@ func newParam(field *reflect.StructField, t reflect.Type) (parameter, error) {
 		if value, ok := field.Tag.Lookup(tag.name); ok {
 			parsed, err := parseFileTag(tag.name, value)
 			if err != nil {
-				return nil, fmt.Errorf("%s on field %s: %w", tag.name, field.Name, err)
+				return nil, schemaError(path, field.Tag, fmt.Errorf("%s on field %s: %w", tag.name, field.Name, err))
 			}
 			*tag.options = parsed
 		}
 	}
-	return &paramMeta{
+	meta := &paramMeta{
+		name:            path,
+		goPath:          path,
 		fieldType:       valueType,
 		isPointer:       isPtr,
 		defaultRequired: isRequired,
-		noConfig:        slices.Contains(getBoaTags(*field), "noconfig") || field.Tag.Get("secret") == "true",
+		noConfig:        slices.Contains(getBoaTags(field), "noconfig") || field.Tag.Get("secret") == "true",
 		secretName:      secretName,
 		secretFile:      field.Tag.Get("secretfor") != "",
 		file:            file,
 		configFile:      config,
 		baseDir:         baseDir,
 		basePath:        basePath,
-	}, nil
+	}
+
+	if value, ok := field.Tag.Lookup("alts"); ok {
+		var alternatives []string
+		for _, item := range strings.Split(strings.TrimSuffix(strings.TrimPrefix(strings.TrimSpace(value), "["), "]"), ",") {
+			if item = strings.TrimSpace(item); item != "" {
+				alternatives = append(alternatives, item)
+			}
+		}
+		meta.SetAlternatives(alternatives)
+	}
+	if value, ok := field.Tag.Lookup("strict"); ok {
+		meta.SetStrictAlts(value == "true")
+	}
+
+	for _, bound := range []struct {
+		tag  string
+		dest *any
+	}{{"min", &meta.minVal}, {"max", &meta.maxVal}} {
+		if value, ok := field.Tag.Lookup(bound.tag); ok {
+			parsed, err := parseBoundTag(meta.boundKind(), value)
+			if err != nil {
+				return nil, schemaError(path, field.Tag, fmt.Errorf("invalid %s value: %w", bound.tag, err))
+			}
+			if parsed != nil {
+				*bound.dest = parsed
+			}
+		}
+	}
+	if pattern, ok := field.Tag.Lookup("pattern"); ok {
+		meta.pattern = pattern
+	}
+	return meta, nil
 }
 
 var timeType = reflect.TypeOf(time.Time{})

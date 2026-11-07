@@ -140,7 +140,12 @@ func TestHTTPBindPolicy(t *testing.T) {
 		override *bool
 		args     []string
 		reject   bool
+		late     bool
 	}{
+
+		{name: "late loopback", late: true, args: []string{"--bind=127.0.0.1:8000"}},
+		{name: "late wildcard", late: true, args: []string{"--bind=0.0.0.0:8000"}, reject: true},
+		{name: "late invalid", late: true, args: []string{"--bind=bad-address"}, reject: true},
 		{name: "default", reject: true},
 		{name: "command allows", allow: true},
 		{name: "field allows", override: &yes},
@@ -153,15 +158,21 @@ func TestHTTPBindPolicy(t *testing.T) {
 		{name: "acknowledged collections", args: []string{"--bind=:8000", "--binds=unsafe@0.0.0.0:8001", "--named=public=unsafe@0.0.0.0:8001", "--pointer=unsafe@0.0.0.0:8001", `--nested=[["unsafe@0.0.0.0:8001"]]`}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			cmd := Cmd[Params]{RawArgs: append([]string{}, tc.args...), UnsafeHTTPBind: tc.allow,
+			p := Params{}
+			enabled := !tc.late
+			cmd := Cmd[Params]{Params: &p, ParamEnrich: ParamEnricherName, RawArgs: append([]string{}, tc.args...), UnsafeHTTPBind: tc.allow,
 				InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
+					if tc.late {
+						Param(ctx, &p.Bind).SetIsEnabledFn(func() bool { return enabled })
+					}
 					if tc.override != nil {
 						Param(ctx, &p.Bind).SetUnsafeHTTPBind(*tc.override)
 					}
 					return nil
 				},
+				PreValidateFunc: func(*Params, *cobra.Command, []string) error { enabled = true; return nil },
 			}
-			if err := cmd.Validate(); (err != nil) != tc.reject {
+			if err := cmd.Validate(); (err != nil) != tc.reject || tc.late && !tc.reject && p.Bind.String() != "127.0.0.1:8000" {
 				t.Fatalf("Validate() = %v, reject = %v", err, tc.reject)
 			}
 		})

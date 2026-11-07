@@ -1,6 +1,24 @@
 # Configuration Files
 
-BOA loads JSON by default and can dispatch additional formats by file extension. Automatic loading participates in BOA's normal precedence rules; explicit helpers are available when the application owns the loading policy.
+Load configuration from bytes, or let a command load files with BOA's normal source precedence.
+
+## Defaults and decoding
+
+Command loading and `ParseConfigBytes` apply defaults, decode supplied values, then validate. The `LoadConfig*` helpers decode into an existing value without applying defaults or validating.
+
+When decoding onto defaults, omitted fields retain them; decoded `0`, `false`, and empty strings replace them. Collection merging follows the decoder: for example, JSON replaces slices and merges map entries.
+
+For nil pointers, behavior depends on the loading path: `ParseConfigBytes` keeps a nil assigned by the decoder, while command loading can restore a pointer default.
+
+## Loading from bytes
+
+```go
+cfg, err := boa.ParseConfigBytes[Config](data, toml.Unmarshal)
+```
+
+The supplied decoder determines the format; no extension or format registration is needed. The result is a new struct. No environment lookup, filesystem access, path or secret resolution, or lifecycle hooks run automatically.
+
+For custom flows, use `boa.Defaults[T]()` and `boa.Validate(value)` separately; see the [validation reference](struct-tags.md#validation). To decode into an existing value without defaults or validation, use [`LoadConfigBytes`](#explicit-file-and-byte-loading).
 
 ## Automatic loading
 
@@ -76,7 +94,7 @@ type Params struct {
 // app --config-files base.json,production.json
 ```
 
-Later files replace keys they mention; absent keys preserve earlier values. Collection behavior follows the selected decoder. With built-in JSON, slices are replaced and map members merge according to `encoding/json` semantics. Empty path entries are skipped. The missing-file policy above applies to each path; `optional-default` matches against any path in the default list.
+Later files replace keys they mention; absent keys preserve earlier values. Empty path entries are skipped. The missing-file policy above applies to each path; `optional-default` matches against any path in the default list.
 
 Each nested struct may have its own overlay chain. All nested chains load before the root chain. If strict checking rejects a file, earlier files remain applied.
 

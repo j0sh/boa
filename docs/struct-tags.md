@@ -49,9 +49,10 @@ Plain scalar and flat-slice fields are required by default. These field shapes d
 
 - pointers, because `nil` represents absence;
 - maps;
+- interfaces;
 - nested slices such as `[][]int`.
 
-`required:"true"` and `optional:"true"` override the default. A declared default also satisfies a required field.
+`required:"true"` and `optional:"true"` override the default. For commands, a declared default also satisfies a required field; `boa.Validate` checks the value itself.
 
 ```go
 type Params struct {
@@ -187,6 +188,71 @@ type Params struct {
 }
 ```
 
+CLI validation and `boa.Validate` check nested structs and collections. Fields with a registered parser or text unmarshaler are treated as single values; ignored and disabled fields are skipped. Custom validators receive copies; bounds, patterns, and nested fields are checked on original values.
+
+| Shape | Rules |
+|---|---|
+| String, slice, map | Min/max constrain length |
+| Slice | Alternatives check each element; nested structs are traversed |
+| Array | Nested structs are traversed; min/max are ignored; alternatives check the whole formatted value |
+| Map | Nested structs are traversed; non-nil maps with non-string keys produce `boa.CodeSchema` |
+
+For example, a `Port int` field tagged `min:"1"` rejects `Rows[0].Port = 0`, and an enum rule on `Mode` also applies at `Groups["west"].Mode`.
+
+### Validating existing values
+
+```go
+err := boa.Validate(cfg)
+```
+
+`Validate` accepts a struct or non-nil pointer to one without applying defaults or changing the input. To load defaults and decode first, see [Loading from bytes](configuration.md#loading-from-bytes).
+
+| Go value | Presence |
+|---|---|
+| Scalar, including `0`, `false`, or `""` | Present |
+| Nil pointer, map, slice, or interface | Absent |
+| Non-nil pointer or collection, including an empty collection | Present |
+| Value struct | Present; fields are traversed |
+
+`required` checks presence; it cannot distinguish an omitted scalar from an explicit zero. Use bounds, patterns, or custom validators to reject empty values. Default tags do not make absent values present. Absent optional values skip other rules and traversal. Commands use source presence instead, so an explicitly supplied nil secret counts as supplied.
+
+### Structured errors and limits
+
+CLI errors display the first failure; `errors.As` retrieves the full `*boa.ValidationError` from either entry point:
+
+```go
+var validation *boa.ValidationError
+if errors.As(err, &validation) {
+    for _, field := range validation.Fields {
+        fmt.Println(field.Path, field.Code, field.Err)
+    }
+}
+```
+
+Paths use Go field names, dots, indices, and quoted map keys: `Apps[2].HTTP.Port`, `Groups["west"].Port`. Custom causes support `errors.Is`. Both entry points report the first failed rule per field.
+
+| Code | Meaning |
+|---|---|
+| `boa.CodeRequired` | Required value is absent |
+| `boa.CodeAlternatives` | Value is not an allowed alternative |
+| `boa.CodeMin`, `boa.CodeMax` | Value or length is out of bounds |
+| `boa.CodePattern` | Pattern check failed |
+| `boa.CodeCustom` | Custom validator failed |
+| `boa.CodeSchema` | Invalid metadata or input shape |
+| `boa.CodeLimit` | Traversal or copying exceeded a limit |
+
+| Shared limit | Purpose |
+|---|---|
+| 100 errors | Bounds diagnostics; `Truncated` marks the cap |
+| 128 recursive traversal or copy steps | Bounds stack growth, including pointer/interface dereferences |
+| 10,000 structural visits | Bounds repeated visits to shared graphs |
+
+Cycles are skipped on the active branch; separate aliases are checked independently. Scalar leaves and scalar-only `[]any` values are not traversed. The visit limit does not bound copying width, map sorting, alternatives scans, decoding, or application callbacks. Field-local depth and schema errors allow sibling checks to continue.
+
+### Command-only checks
+
+`boa.Validate` performs no automatic environment or filesystem access, path or secret resolution, command HTTPBind policy checks, or lifecycle hooks. Application callbacks may have their own side effects.
+
 `file:"true"` requires string paths to resolve to existing regular files; `file:"optional"` also accepts missing paths. Symlinks are followed, and other filesystem errors still fail. An absent optional pointer skips validation; a present pointer is validated normally. Paths are preserved except for [base-directory resolution](#base-directories), and validation does not create files. `secretfor` remains strict even with `file:"optional"`.
 
 Both `file` and [`configfile`](configuration.md#automatic-loading) accept `true`, `false` (disabled), or `optional`; `true,optional` is equivalent to `optional`. `configfile` also accepts [`optional-default`](configuration.md#automatic-loading), optionally combined with `true`. Unknown or repeated options, combining `false` with other options, or combining `optional` with `optional-default` are setup errors. These options do not change [whether a parameter is required](#required-and-optional). When both file tags are present, both constraints apply, so `file:"true"` still requires existence with `configfile:"optional"`.
@@ -212,7 +278,7 @@ type Params struct {
 | `autocreate` | Create `basedir` and missing parents after loading config |
 | `false` | Disable the tag |
 
-Combine options as `basedir:"required,autocreate"`. Directory creation runs only during command execution; help, completion, `Validate()`, and reload never create directories. With `required`, validation and reload fail if the directory is missing.
+Combine options as `basedir:"required,autocreate"`. Directory creation runs only during command execution; help, completion, `Cmd.Validate()`, and reload never create directories. With `required`, validation and reload fail if the directory is missing.
 
 A config file can set `basedir` with normal [source precedence](#source-precedence). Config filenames use the `basedir` set before config loading. Changing `basedir` through config applies to other paths and does not trigger another config load. Directory checks and creation happen after config loading succeeds.
 
@@ -398,7 +464,19 @@ Typed methods catch the common type errors at compile time:
 
 The embedded `Parameter` also exposes name, shorthand, environment, alternatives, collection mode, required/enabled functions, processing directives, pattern, persistence, config-file status, and untyped min/max controls.
 
-Programmatic metadata must be set during initialization. Later hooks run after binding and cannot retroactively add flags or environment bindings.
+For standalone field configuration, pass a `boa.ConfigureField` callback to `Defaults` or `Validate`. Paths use Go field names, including collection indices:
+
+```go
+err := boa.Validate(cfg, func(path string, p boa.Parameter) {
+    if path == "Port" {
+        p.SetMin(1024)
+    }
+})
+```
+
+Tags establish defaults and rules; callback and `Init` settings override them. In commands, programmatic collection settings apply to the whole collection; fields inside its elements use their tags. Wrap a callback's `Parameter` in `boa.Field[T]` for typed validators.
+
+For commands, set metadata during initialization; later hooks cannot add flags or environment bindings.
 
 `ctx.HasValue(&p.Field)` reports whether any source supplied a value. `ctx.AllMirrors()` supports bulk inspection and custom enrichers.
 
@@ -410,6 +488,6 @@ For types you own, implement `encoding.TextUnmarshaler` and preferably `encoding
 
 Command validation requires `unsafe@` for non-loopback addresses, including wildcard and private IPs (for example, `unsafe@0.0.0.0:8080`). Set `Cmd.UnsafeHTTPBind` to permit unmarked addresses. During initialization, `boa.Param(ctx, &p.Metrics).SetUnsafeHTTPBind(false)` can guard one field while the command permits public listeners; `true` permits a field under a strict command. Overrides also cover collection elements.
 
-Enforcement covers every input source, collections, `Validate()`, and reload, after `PreValidate` hooks. Standalone decoding checks syntax and ports without enforcing command policy, like `min`/`max`. Applications that start servers without a Boa command must retain their own validation.
+Enforcement covers every input source, collections, `Cmd.Validate()`, and reload, after `PreValidate` hooks. `ParseConfigBytes` and `Validate` do not enforce command exposure policy. Applications that start servers without a Boa command must enforce that policy themselves.
 
 `String()` returns the plain listener address. Text serialization preserves an explicit `unsafe@` prefix and never adds acknowledgment.

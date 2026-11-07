@@ -210,15 +210,62 @@ func TestPreValidateSeesParsedTextValues(t *testing.T) {
 		At      time.Time
 		Timeout Text[time.Duration]
 	}
-	err := (Cmd[Params]{Use: "test", RawArgs: []string{"--at", "2026-09-17", "--timeout", "2.5h"},
-		PreValidateFunc: func(p *Params, _ *cobra.Command, _ []string) error {
-			if p.At.Format(time.DateOnly) != "2026-09-17" || p.Timeout.Value != 150*time.Minute {
-				return fmt.Errorf("hook saw unparsed fields: %+v", p)
-			}
+	for _, tc := range []struct {
+		late   bool
+		at     string
+		reject bool
+	}{
+		{false, "2026-09-17", false}, {true, "2026-09-17", false}, {true, "bad-date", true},
+	} {
+		p := Params{}
+		enabled, called := !tc.late, false
+		err := (Cmd[Params]{Params: &p, ParamEnrich: ParamEnricherName, RawArgs: []string{"--at", tc.at, "--timeout", "2.5h"},
+			InitFuncCtx: func(ctx *HookContext, p *Params, _ *cobra.Command) error {
+				Param(ctx, &p.At).SetIsEnabledFn(func() bool { return enabled })
+				return nil
+			}, PreValidateFunc: func(p *Params, _ *cobra.Command, _ []string) error {
+				called = true
+				if p.Timeout.Value != 150*time.Minute || !tc.late && p.At.Format(time.DateOnly) != tc.at || tc.late && !p.At.IsZero() {
+					return fmt.Errorf("hook saw wrong conversion stage: %+v", p)
+				}
+				enabled = true
+				return nil
+			},
+		}).Validate()
+		if !called || (err != nil) != tc.reject || !tc.reject && p.At.Format(time.DateOnly) != tc.at {
+			t.Fatalf("late=%v at=%q result=%+v error=%v", tc.late, tc.at, p, err)
+		}
+	}
+}
+
+func TestConfigOnlyNullSkipsOptionalValidator(t *testing.T) {
+	type params struct {
+		Config string `configfile:"true"`
+		Port   *int   `boa:"configonly"`
+	}
+	path := writeFile(t, t.TempDir(), "config.json", `{"Port":null}`)
+	requireNoError(t, (Cmd[params]{InitFuncCtx: func(ctx *HookContext, p *params, _ *cobra.Command) error {
+		Param(ctx, &p.Port).Parameter.SetCustomValidator(func(any) error { t.Fatal("validated absent optional value"); return nil })
+		return nil
+	}, RunFunc: func(*params, *cobra.Command, []string) {}}).RunArgsE([]string{"--config", path}))
+}
+
+func TestConversionSkipsRemovedGroup(t *testing.T) {
+	type group struct {
+		Enabled bool      `default:"false"`
+		At      time.Time `optional:"true"`
+	}
+	type params struct{ Group *group }
+	p := params{}
+	err := (Cmd[params]{Params: &p, ParamEnrich: ParamEnricherName,
+		InitFuncCtx: func(ctx *HookContext, p *params, _ *cobra.Command) error {
+			Param(ctx, &p.Group.At).SetIsEnabledFn(func() bool { return p.Group.Enabled })
 			return nil
 		},
+		PreValidateFunc: func(p *params, _ *cobra.Command, _ []string) error { p.Group = nil; return nil },
+		RawArgs:         []string{"--group-at", "bad-date"},
 	}).Validate()
-	if err != nil {
-		t.Fatal(err)
+	if err != nil || p.Group != nil {
+		t.Fatalf("removed group was converted: %+v, %v", p, err)
 	}
 }
