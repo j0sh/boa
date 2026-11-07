@@ -12,13 +12,14 @@ import (
 // fieldWalker discovers fields for commands, defaults, and validation. Adapters
 // decide which fields are leaves and supply metadata, hooks, and error policy.
 type fieldWalker struct {
-	indices   []int
-	prefix    string
-	onStruct  func(reflect.Value) error
-	active    map[configCopyKey]bool
-	remaining int
-	exhausted bool
-	failures  *ValidationError
+	preallocated *[]preallocatedPtrInfo // non-nil only during initial command discovery
+	indices      []int
+	prefix       string
+	onStruct     func(reflect.Value) error
+	active       map[configCopyKey]bool
+	remaining    int
+	exhausted    bool
+	failures     *ValidationError
 }
 
 func (w *fieldWalker) done() bool {
@@ -54,15 +55,31 @@ func (w *fieldWalker) walk(v reflect.Value, path string, depth int, visit func(r
 		return nil
 	}
 	switch v.Kind() {
+	case reflect.Struct:
+		if w.preallocated == nil {
+			break
+		}
+		key := configCopyKey{typ: v.Type()}
+		if w.active[key] {
+			return fmt.Errorf("recursive parameter group %s at %s: mark the recursive field boa:\"ignore\" or register a scalar parser", v.Type(), joinPath(w.indices))
+		}
+		w.active[key] = true
+		defer delete(w.active, key)
 	case reflect.Pointer, reflect.Map, reflect.Slice:
 		if v.IsNil() {
-			return nil
+			if w.preallocated == nil || v.Kind() != reflect.Pointer || v.Type().Elem().Kind() != reflect.Struct {
+				return nil
+			}
+			v.Set(reflect.New(v.Type().Elem()))
+			defer func() {
+				*w.preallocated = append(*w.preallocated, preallocatedPtrInfo{path: joinPath(w.indices)})
+			}()
 		}
 		key := configCopyKey{typ: v.Type(), ptr: v.UnsafePointer()}
 		if v.Kind() == reflect.Slice {
 			key.len = v.Len()
 		}
-		if w.active[key] {
+		if w.active[key] && w.preallocated == nil {
 			return nil
 		}
 		w.active[key] = true

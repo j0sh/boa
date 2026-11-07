@@ -219,13 +219,9 @@ func nativeHandler[T any](bind func(*pflag.FlagSet, string, string, T, string) *
 }
 
 func nativeSliceHandler[T any](bind func(*pflag.FlagSet, string, string, []T, string) *[]T, parse func(string) (T, error)) *typeHandler {
-	return &typeHandler{
-		baseType: reflect.TypeFor[[]T](),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			return bind(cmd.Flags(), name, short, toTypedSlice[T](derefSliceDefault(defaultVal)), descr)
-		},
-		parse: func(name, text string) (any, error) { return parseSliceWith(text, parse) },
-	}
+	handler := nativeHandler(bind, nil)
+	handler.parse = func(name, text string) (any, error) { return parseSliceWith(text, parse) }
+	return handler
 }
 
 func parseString(s string) (string, error) { return s, nil }
@@ -403,37 +399,16 @@ func lookupMapHandler(t reflect.Type) *typeHandler {
 // buildMapBindFlag returns a bindFlag function for map[string]V.
 // Uses pflag's native methods for string/int/int64, falls back to StringP for others.
 func buildMapBindFlag(mapType, valType reflect.Type) func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-	// Check for pflag's native map support
 	switch valType {
-	case reflect.TypeOf(""):
-		return func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			var def map[string]string
-			if defaultVal != nil {
-				def = reflect.ValueOf(defaultVal).Elem().Interface().(map[string]string)
-			}
-			return cmd.Flags().StringToStringP(name, short, def, descr)
-		}
-	case reflect.TypeOf(0):
-		return func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			var def map[string]int
-			if defaultVal != nil {
-				def = reflect.ValueOf(defaultVal).Elem().Interface().(map[string]int)
-			}
-			return cmd.Flags().StringToIntP(name, short, def, descr)
-		}
-	case reflect.TypeOf(int64(0)):
-		return func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			var def map[string]int64
-			if defaultVal != nil {
-				def = reflect.ValueOf(defaultVal).Elem().Interface().(map[string]int64)
-			}
-			return cmd.Flags().StringToInt64P(name, short, def, descr)
-		}
+	case reflect.TypeFor[string]():
+		return nativeHandler((*pflag.FlagSet).StringToStringP, nil).bindFlag
+	case reflect.TypeFor[int]():
+		return nativeHandler((*pflag.FlagSet).StringToIntP, nil).bindFlag
+	case reflect.TypeFor[int64]():
+		return nativeHandler((*pflag.FlagSet).StringToInt64P, nil).bindFlag
 	default:
-		// Fall back to string flag with custom parsing
 		return func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			def := ""
-			return cmd.Flags().StringP(name, short, def, descr)
+			return cmd.Flags().StringP(name, short, "", descr)
 		}
 	}
 }
@@ -469,177 +444,95 @@ func buildMapParse(mapType, valType reflect.Type, valHandler *typeHandler) func(
 	}
 }
 
-// typedIntSliceValue is a pflag.Value / pflag.SliceValue implementation for integer
-// slice types pflag has no native slice flag for (uint8, uint16, uint32, uint64,
-// int8, int16). Same outward behavior as Int32SliceP / Int64SliceP: comma-split,
-// repeated-flag, CSV-with-quotes — pflag handles all of that via Set().
-type typedIntSliceValue[T any] struct {
-	value      *[]T
-	changed    bool
-	parseElem  func(string) (T, error)
-	formatElem func(T) string
-	typeName   string
-}
-
-func (s *typedIntSliceValue[T]) Set(val string) error {
-	parts, err := readAsCSV(val)
-	if err != nil {
-		return err
-	}
-	parsed := make([]T, 0, len(parts))
-	for _, p := range parts {
-		v, err := s.parseElem(p)
-		if err != nil {
-			return err
-		}
-		parsed = append(parsed, v)
-	}
-	if !s.changed {
-		*s.value = parsed
-	} else {
-		*s.value = append(*s.value, parsed...)
-	}
-	s.changed = true
-	return nil
-}
-
-func (s *typedIntSliceValue[T]) Type() string { return s.typeName }
-
-func (s *typedIntSliceValue[T]) String() string {
-	parts := make([]string, len(*s.value))
-	for i, v := range *s.value {
-		parts[i] = s.formatElem(v)
-	}
-	return "[" + strings.Join(parts, ",") + "]"
-}
-
-func (s *typedIntSliceValue[T]) Append(val string) error {
-	v, err := s.parseElem(val)
-	if err != nil {
-		return err
-	}
-	*s.value = append(*s.value, v)
-	return nil
-}
-
-func (s *typedIntSliceValue[T]) Replace(vals []string) error {
-	parsed := make([]T, 0, len(vals))
-	for _, str := range vals {
-		v, err := s.parseElem(str)
-		if err != nil {
-			return err
-		}
-		parsed = append(parsed, v)
-	}
-	*s.value = parsed
-	return nil
-}
-
-func (s *typedIntSliceValue[T]) GetSlice() []string {
-	parts := make([]string, len(*s.value))
-	for i, v := range *s.value {
-		parts[i] = s.formatElem(v)
-	}
-	return parts
-}
-
-// makeIntSliceFallbackHandler builds a slice handler for integer types pflag has no
-// native slice flag for. Uses Var() with a typedIntSliceValue so the resulting flag
-// is a proper typed slice (same shape as Int32SliceP) — no string round-trip, no
-// convert function needed.
-func makeIntSliceFallbackHandler[T any](
-	elemType reflect.Type,
-	typeName string,
-	parseElem func(string) (T, error),
-	formatElem func(T) string,
-) *typeHandler {
-	return &typeHandler{
-		baseType: reflect.SliceOf(elemType),
-		bindFlag: func(cmd *cobra.Command, name, short, descr string, defaultVal any) any {
-			storage := new([]T)
-			if defaultVal != nil {
-				if typed := toTypedSlice[T](derefSliceDefault(defaultVal)); typed != nil {
-					*storage = typed
-				}
-			}
-			v := &typedIntSliceValue[T]{
-				value:      storage,
-				parseElem:  parseElem,
-				formatElem: formatElem,
-				typeName:   typeName,
-			}
-			cmd.Flags().VarP(v, name, short, descr)
-			return storage
+// makeIntSliceFallbackHandler retains typed storage for integer slices without
+// a native pflag helper. Array and CSV modes share the same SliceValue backend.
+func makeIntSliceFallbackHandler[T any](elemType reflect.Type, typeName string, parseElem func(string) (T, error), formatElem func(T) string) *typeHandler {
+	element := &typeHandler{
+		parse: func(_ string, text string) (any, error) {
+			value, err := parseElem(text)
+			return new(value), err
 		},
-		parse: func(name, strVal string) (any, error) {
-			return parseSliceWith(strVal, parseElem)
-		},
+		format: func(value reflect.Value) string { return formatElem(value.Interface().(T)) },
 	}
+	return nativeSliceHandler(func(flags *pflag.FlagSet, name, short string, defaults []T, descr string) *[]T {
+		storage := new(defaults)
+		flags.VarP(&reflectSliceValue{value: reflect.ValueOf(storage), elemHandler: element, name: name, typeName: typeName, csv: true}, name, short, descr)
+		return storage
+	}, parseElem)
 }
 
-// reflectArrayValue implements pflag.Value for array collection mode. Unlike
-// the normal slice values, Set parses its entire argument as one scalar. The
-// first CLI occurrence replaces defaults and later occurrences append, which
-// matches pflag's native StringArray behavior.
-type reflectArrayValue struct {
-	value       reflect.Value // pointer to a canonical []T
-	elemHandler *typeHandler
-	name        string
-	typeName    string
-	changed     bool
+// reflectSliceValue preserves pflag's first-set/repeated-set behavior, with CSV
+// splitting for integer slices and one scalar per occurrence for array mode.
+type reflectSliceValue struct {
+	value          reflect.Value
+	elemHandler    *typeHandler
+	name, typeName string
+	changed, csv   bool
 }
 
-func (v *reflectArrayValue) Set(raw string) error {
-	parsed, err := v.elemHandler.parse(v.name, raw)
-	if err != nil {
-		return err
-	}
-	elem := reflect.ValueOf(parsed).Elem()
-	slice := v.value.Elem()
-	if !v.changed {
-		slice = reflect.MakeSlice(slice.Type(), 0, 1)
-	}
-	v.value.Elem().Set(reflect.Append(slice, elem))
-	v.changed = true
-	return nil
-}
-
-func (v *reflectArrayValue) Type() string { return v.typeName + "Array" }
-
-func (v *reflectArrayValue) String() string {
-	parts := v.GetSlice()
-	return "[" + strings.Join(parts, ",") + "]"
-}
-
-func (v *reflectArrayValue) Append(raw string) error {
-	parsed, err := v.elemHandler.parse(v.name, raw)
-	if err != nil {
-		return err
-	}
-	v.value.Elem().Set(reflect.Append(v.value.Elem(), reflect.ValueOf(parsed).Elem()))
-	return nil
-}
-
-func (v *reflectArrayValue) Replace(values []string) error {
-	v.value.Elem().Set(reflect.MakeSlice(v.value.Elem().Type(), 0, len(values)))
+func (v *reflectSliceValue) appendValues(dst reflect.Value, values []string) error {
 	for _, raw := range values {
 		parsed, err := v.elemHandler.parse(v.name, raw)
 		if err != nil {
 			return err
 		}
-		v.value.Elem().Set(reflect.Append(v.value.Elem(), reflect.ValueOf(parsed).Elem()))
+		dst.Set(reflect.Append(dst, reflect.ValueOf(parsed).Elem()))
 	}
 	return nil
 }
 
-func (v *reflectArrayValue) GetSlice() []string {
-	slice := v.value.Elem()
-	parts := make([]string, slice.Len())
+func (v *reflectSliceValue) Set(raw string) error {
+	values := []string{raw}
+	if v.csv {
+		var err error
+		values, err = readAsCSV(raw)
+		if err != nil {
+			return err
+		}
+	}
+	parsed := reflect.MakeSlice(v.value.Elem().Type(), 0, len(values))
+	// Slice headers must be settable while elements are appended.
+	dst := reflect.New(parsed.Type()).Elem()
+	dst.Set(parsed)
+	if err := v.appendValues(dst, values); err != nil {
+		return err
+	}
+	if v.changed {
+		dst.Set(reflect.AppendSlice(v.value.Elem(), dst))
+	}
+	v.value.Elem().Set(dst)
+	v.changed = true
+	return nil
+}
+
+func (v *reflectSliceValue) Type() string   { return v.typeName }
+func (v *reflectSliceValue) String() string { return "[" + strings.Join(v.GetSlice(), ",") + "]" }
+func (v *reflectSliceValue) Append(raw string) error {
+	return v.appendValues(v.value.Elem(), []string{raw})
+}
+
+func (v *reflectSliceValue) Replace(values []string) error {
+	dst := v.value.Elem()
+	// CSV replacement is transactional; array mode retains its partial-write semantics.
+	if v.csv {
+		dst = reflect.New(dst.Type()).Elem()
+	}
+	dst.Set(reflect.MakeSlice(dst.Type(), 0, len(values)))
+	if err := v.appendValues(dst, values); err != nil {
+		return err
+	}
+	v.value.Elem().Set(dst)
+	return nil
+}
+
+func (v *reflectSliceValue) GetSlice() []string {
+	values := v.value.Elem()
+	parts := make([]string, values.Len())
 	for i := range parts {
 		if format := v.elemHandler.format; format != nil {
-			parts[i] = format(slice.Index(i))
+			parts[i] = format(values.Index(i))
 		} else {
-			parts[i] = fmt.Sprint(slice.Index(i).Interface())
+			parts[i] = fmt.Sprint(values.Index(i).Interface())
 		}
 	}
 	return parts
@@ -647,11 +540,11 @@ func (v *reflectArrayValue) GetSlice() []string {
 
 // bindArrayFlag binds one-value-per-occurrence semantics for every scalar
 // slice type Boa supports. []string deliberately uses pflag's native helper;
-// other scalar slices use reflectArrayValue because pflag has no matching
+// other scalar slices use reflectSliceValue because pflag has no matching
 // Array helpers.
 func bindArrayFlag(cmd *cobra.Command, name, short, descr string, elemType reflect.Type, defaultVal any) (any, error) {
 	if elemType == reflect.TypeOf("") {
-		return cmd.Flags().StringArrayP(name, short, toTypedSlice[string](derefSliceDefault(defaultVal)), descr), nil
+		return nativeHandler((*pflag.FlagSet).StringArrayP, nil).bindFlag(cmd, name, short, descr, defaultVal), nil
 	}
 
 	elemHandler := lookupHandler(elemType)
@@ -666,11 +559,11 @@ func bindArrayFlag(cmd *cobra.Command, name, short, descr string, elemType refle
 			storage.Elem().Set(def.Convert(storageType))
 		}
 	}
-	value := &reflectArrayValue{
+	value := &reflectSliceValue{
 		value:       storage,
 		elemHandler: elemHandler,
 		name:        name,
-		typeName:    elemHandler.baseType.String(),
+		typeName:    elemHandler.baseType.String() + "Array",
 	}
 	cmd.Flags().VarP(value, name, short, descr)
 	return storage.Interface(), nil
@@ -685,19 +578,6 @@ func readAsCSV(val string) ([]string, error) {
 	}
 	stringReader := csv.NewReader(strings.NewReader(val))
 	return stringReader.Read()
-}
-
-// derefSliceDefault dereferences a defaultVal pointer (e.g., *[]string → []string) for slice handlers.
-// defaultVal comes from paramMeta.defaultValuePtr() which always returns a pointer.
-func derefSliceDefault(defaultVal any) any {
-	if defaultVal == nil {
-		return nil
-	}
-	v := reflect.ValueOf(defaultVal)
-	if v.Kind() == reflect.Pointer && !v.IsNil() {
-		return v.Elem().Interface()
-	}
-	return defaultVal
 }
 
 // parseSliceWith is a generic helper that parses a bracketed string "[a,b,c]" into a typed slice.

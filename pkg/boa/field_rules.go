@@ -1,6 +1,7 @@
 package boa
 
 import (
+	"cmp"
 	"fmt"
 	"reflect"
 	"regexp"
@@ -72,45 +73,19 @@ func validateMinMaxPattern(pm *paramMeta, valPtr any) *FieldError {
 		v = v.Elem()
 	}
 
+	var failure *FieldError
 	switch pm.boundKind() {
 	case signedIntBound:
-		val := v.Int()
-		if minP, ok := pm.minVal.(*int64); ok && minP != nil && val < *minP {
-			return ruleError(CodeMin, fmt.Errorf("value %d is below min %d", val, *minP))
-		}
-		if maxP, ok := pm.maxVal.(*int64); ok && maxP != nil && val > *maxP {
-			return ruleError(CodeMax, fmt.Errorf("value %d exceeds max %d", val, *maxP))
-		}
+		failure = validateBounds(v.Int(), pm.minVal, pm.maxVal, "value")
 	case unsignedIntBound:
-		val := v.Uint()
-		if minP, ok := pm.minVal.(*uint64); ok && minP != nil && val < *minP {
-			return ruleError(CodeMin, fmt.Errorf("value %d is below min %d", val, *minP))
-		}
-		if maxP, ok := pm.maxVal.(*uint64); ok && maxP != nil && val > *maxP {
-			return ruleError(CodeMax, fmt.Errorf("value %d exceeds max %d", val, *maxP))
-		}
+		failure = validateBounds(v.Uint(), pm.minVal, pm.maxVal, "value")
 	case floatBound:
-		val := v.Float()
-		if minP, ok := pm.minVal.(*float64); ok && minP != nil && val < *minP {
-			return ruleError(CodeMin, fmt.Errorf("value %v is below min %v", val, *minP))
-		}
-		if maxP, ok := pm.maxVal.(*float64); ok && maxP != nil && val > *maxP {
-			return ruleError(CodeMax, fmt.Errorf("value %v exceeds max %v", val, *maxP))
-		}
+		failure = validateBounds(v.Float(), pm.minVal, pm.maxVal, "value")
 	case lengthBound:
-		var l int
-		switch v.Kind() {
-		case reflect.String:
-			l = len(v.String())
-		case reflect.Slice, reflect.Map:
-			l = v.Len()
-		}
-		if minP, ok := pm.minVal.(*int); ok && minP != nil && l < *minP {
-			return ruleError(CodeMin, fmt.Errorf("length %d is below min %d", l, *minP))
-		}
-		if maxP, ok := pm.maxVal.(*int); ok && maxP != nil && l > *maxP {
-			return ruleError(CodeMax, fmt.Errorf("length %d exceeds max %d", l, *maxP))
-		}
+		failure = validateBounds(v.Len(), pm.minVal, pm.maxVal, "length")
+	}
+	if failure != nil {
+		return failure
 	}
 
 	if pm.pattern != "" && v.Kind() == reflect.String {
@@ -123,5 +98,15 @@ func validateMinMaxPattern(pm *paramMeta, valPtr any) *FieldError {
 		}
 	}
 
+	return nil
+}
+
+func validateBounds[T cmp.Ordered](value T, min, max any, label string) *FieldError {
+	if bound, ok := min.(*T); ok && bound != nil && value < *bound {
+		return ruleError(CodeMin, fmt.Errorf("%s %v is below min %v", label, value, *bound))
+	}
+	if bound, ok := max.(*T); ok && bound != nil && value > *bound {
+		return ruleError(CodeMax, fmt.Errorf("%s %v exceeds max %v", label, value, *bound))
+	}
 	return nil
 }
