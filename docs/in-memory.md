@@ -46,9 +46,9 @@ semantics.
 
 ## Validation
 
-`Validate` accepts a struct or a non-nil pointer to one. Presence is based on
-the Go value, so an omitted scalar cannot be distinguished from an explicit
-zero after decoding.
+`Validate` accepts a struct or a non-nil pointer to one and does not mutate it.
+Presence is based on the Go value, so an omitted scalar cannot be distinguished
+from an explicit zero after decoding.
 
 | Value | Presence |
 |---|---|

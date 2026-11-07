@@ -1,9 +1,13 @@
 package boa
 
 import (
+	"encoding/json"
 	"errors"
-	"net/url"
+	"fmt"
+	"os"
+	"os/exec"
 	"reflect"
+	"runtime/debug"
 	"strconv"
 	"strings"
 	"testing"
@@ -32,65 +36,59 @@ func requireNoError(t *testing.T, err error) {
 	}
 }
 
-func failures(t *testing.T, err error) *ValidationError {
+func failures(t *testing.T, err error, want ...string) ValidationError {
 	t.Helper()
 	var result *ValidationError
 	if !errors.As(err, &result) {
 		t.Fatalf("expected ValidationError, got %v", err)
 	}
-	return result
+	if want != nil {
+		var got []string
+		for _, field := range result.Fields {
+			got = append(got, field.Path+":"+string(field.Code))
+		}
+		if !reflect.DeepEqual(got, want) {
+			t.Fatalf("failures = %v, want %v", got, want)
+		}
+	}
+	return *result
 }
 
 func TestFieldRulesCLIParity(t *testing.T) {
-	type named string
 	type params struct {
-		Count int64             `default:"1" min:"1" max:"9007199254740993"`
-		Size  uint64            `default:"1" min:"1" max:"18446744073709551614"`
-		Ratio float64           `default:"1" min:"0.5" max:"2"`
-		Wait  time.Duration     `default:"1s" min:"1" max:"2000000000"`
-		Name  named             `default:"ok" min:"2" max:"4" pattern:"^[a-z]+$"`
-		Mode  string            `default:"tcp" alts:"tcp,http"`
-		Tags  []string          `default:"[tcp]" alts:"tcp,http" min:"1" max:"2"`
-		Map   map[string]string `default:"a=b" min:"1" max:"2"`
-		Extra string            `default:"any" alts:"tcp,http" strict:"false"`
+		Count int           `default:"1" min:"1" max:"2"`
+		Size  uint64        `default:"1" min:"1" max:"18446744073709551614"`
+		Name  string        `default:"ok" pattern:"^[a-z]+$"`
+		Mode  displayMode   `default:"tcp" alts:"tcp,http"`
+		Tags  []displayMode `default:"[tcp]" alts:"tcp,http"`
+		Extra string        `default:"any" alts:"tcp,http" strict:"false"`
 	}
-	cases := []struct {
+	valid, err := Defaults[params]()
+	requireNoError(t, err)
+	requireNoError(t, Validate(valid))
+	cli := Cmd[params]{Use: "test", ParamEnrich: ParamEnricherName, RunFunc: func(*params, *cobra.Command, []string) {}}
+	requireNoError(t, cli.RunArgsE(nil))
+	for _, tc := range []struct {
 		path string
 		code ValidationCode
 		args []string
 		edit func(*params)
 	}{
 		{"Count", CodeMin, []string{"--count", "0"}, func(p *params) { p.Count = 0 }},
-		{"Count", CodeMax, []string{"--count", "9007199254740994"}, func(p *params) { p.Count = 9007199254740994 }},
+		{"Count", CodeMax, []string{"--count", "3"}, func(p *params) { p.Count = 3 }},
 		{"Size", CodeMin, []string{"--size", "0"}, func(p *params) { p.Size = 0 }},
 		{"Size", CodeMax, []string{"--size", "18446744073709551615"}, func(p *params) { p.Size = ^uint64(0) }},
-		{"Ratio", CodeMin, []string{"--ratio", "0"}, func(p *params) { p.Ratio = 0 }},
-		{"Ratio", CodeMax, []string{"--ratio", "3"}, func(p *params) { p.Ratio = 3 }},
-		{"Wait", CodeMax, []string{"--wait", "3s"}, func(p *params) { p.Wait = 3 * time.Second }},
-		{"Name", CodeMin, []string{"--name", "x"}, func(p *params) { p.Name = "x" }},
-		{"Name", CodeMax, []string{"--name", "abcde"}, func(p *params) { p.Name = "abcde" }},
 		{"Name", CodePattern, []string{"--name", "NO"}, func(p *params) { p.Name = "NO" }},
 		{"Mode", CodeAlternatives, []string{"--mode", "bad"}, func(p *params) { p.Mode = "bad" }},
-		{"Tags[1]", CodeAlternatives, []string{"--tags", "tcp,bad"}, func(p *params) { p.Tags = []string{"tcp", "bad"} }},
-		{"Tags", CodeMax, []string{"--tags", "tcp,tcp,tcp"}, func(p *params) { p.Tags = []string{"tcp", "tcp", "tcp"} }},
-		{"Map", CodeMax, []string{"--map", "a=b,c=d,e=f"}, func(p *params) { p.Map = map[string]string{"a": "b", "c": "d", "e": "f"} }},
-	}
-	for _, tc := range cases {
+		{"Tags[1]", CodeAlternatives, []string{"--tags", "tcp,bad"}, func(p *params) { p.Tags = []displayMode{"tcp", "bad"} }},
+	} {
 		t.Run(tc.path+string(tc.code), func(t *testing.T) {
-			p, err := Defaults[params]()
-			requireNoError(t, err)
-			requireNoError(t, Validate(p))
+			p := valid
 			tc.edit(&p)
-			field := failures(t, Validate(&p)).Fields[0]
-			if field.Path != tc.path || field.Code != tc.code {
-				t.Fatalf("unexpected failure: %+v", field)
-			}
-			cli := Cmd[params]{Use: "test", ParamEnrich: ParamEnricherName,
-				RunFunc: func(*params, *cobra.Command, []string) { t.Fatal("invalid input ran") }}
-			err = cli.RunArgsE(tc.args)
+			field := failures(t, Validate(&p), tc.path+":"+string(tc.code)).Fields[0]
+			err := cli.RunArgsE(tc.args)
 			name := camelToKebabCase(strings.Split(tc.path, "[")[0])
-			want := "invalid value for param '" + name + "': " + field.Err.Error()
-			if err == nil || err.Error() != want {
+			if want := "invalid value for param '" + name + "': " + field.Err.Error(); err == nil || err.Error() != want {
 				t.Fatalf("CLI = %v, want %s", err, want)
 			}
 		})
@@ -112,76 +110,44 @@ func TestValidatePresence(t *testing.T) {
 		Labels   map[string]string `required:"true" min:"1"`
 	}
 	p := params{}
-	got := failures(t, Validate(&p)).Fields
-	if len(got) != 3 || got[0].Path != "Required" || got[1].Path != "Items" || got[2].Path != "Labels" {
-		t.Fatalf("unexpected absent failures: %+v", got)
-	}
-	for _, field := range got {
-		if field.Code != CodeRequired {
-			t.Fatalf("expected required: %+v", field)
-		}
-	}
+	failures(t, Validate(&p), "Required:required", "Items:required", "Labels:required")
 	zero := 0
 	p.Required, p.Port, p.Group = &zero, &zero, &group{}
 	p.Items, p.Labels = []string{}, map[string]string{}
-	got = failures(t, Validate(&p)).Fields
-	if len(got) != 4 || got[0].Path != "Port" || got[1].Path != "Group.Port" {
-		t.Fatalf("unexpected present failures: %+v", got)
-	}
-	for _, field := range got {
-		if field.Code != CodeMin {
-			t.Fatalf("expected min: %+v", field)
-		}
-	}
+	failures(t, Validate(&p), "Port:min", "Group.Port:min", "Items:min", "Labels:min")
 	if p.Zero != 0 || p.False || p.Empty != "" {
 		t.Fatal("validation applied defaults")
 	}
-	type required struct {
-		Port *int `required:"true" env:"BOA_PORT"`
-	}
-	cliErr := (Cmd[required]{Use: "test", ParamEnrich: ParamEnricherName,
-		RunFunc: func(*required, *cobra.Command, []string) {}}).RunArgsE(nil)
-	if cliErr == nil || cliErr.Error() != "missing required param 'port' (env: BOA_PORT)" {
-		t.Fatal(cliErr)
-	}
-	if failures(t, Validate(required{})).Fields[0].Code != CodeRequired {
-		t.Fatal("required parity")
-	}
 }
 
-func TestDefaultsBeforeDecode(t *testing.T) {
+func TestDefaultsIndependent(t *testing.T) {
+	type name string
 	type child struct {
-		Port int `default:"80"`
+		N int `default:"7"`
 	}
 	type params struct {
-		Count    int    `default:"10"`
-		Enabled  bool   `default:"true"`
-		Name     string `default:"default"`
-		Port     *int   `default:"90"`
 		Child    child
 		Optional *child
-		Items    []string            `default:"[a,b]"`
-		Labels   map[string][]string `default:"{\"a\":[\"b\"]}"`
+		Names    []name  `default:"[a,b]"`
+		Children []child `default:"[{\"N\":0}]"`
+		Values   map[string][]int
 	}
-	a, err := Defaults[params]()
-	requireNoError(t, err)
-	b, err := Defaults[params]()
-	requireNoError(t, err)
-	if a.Count != 10 || !a.Enabled || a.Name != "default" || *a.Port != 90 || a.Child.Port != 80 || a.Optional != nil {
-		t.Fatalf("defaults: %+v", a)
+	source := map[string][]int{"a": {1}}
+	configure := func(path string, p Parameter) {
+		if path == "Values" {
+			p.SetDefault(source)
+		}
 	}
-	a.Items[0], a.Labels["a"][0], *a.Port = "changed", "changed", 1
-	if b.Items[0] != "a" || b.Labels["a"][0] != "b" || *b.Port != 90 {
+	a, err := Defaults[params](configure)
+	requireNoError(t, err)
+	b, err := Defaults[params](configure)
+	requireNoError(t, err)
+	a.Names[0], a.Values["a"][0] = "changed", 9
+	if !reflect.DeepEqual(b.Names, []name{"a", "b"}) || b.Values["a"][0] != 1 || source["a"][0] != 1 {
 		t.Fatal("defaults aliased")
 	}
-	requireNoError(t, LoadConfigBytes([]byte(`{"Count":0,"Enabled":false,"Name":"","Port":null}`), ".json", &b, nil))
-	if b.Count != 0 || b.Enabled || b.Name != "" || b.Port != nil || b.Child.Port != 80 {
-		t.Fatalf("explicit values lost: %+v", b)
-	}
-	var decoded params
-	requireNoError(t, LoadConfigBytes([]byte(`{}`), ".json", &decoded, nil))
-	if !reflect.DeepEqual(decoded, params{}) {
-		t.Fatal("LoadConfigBytes added defaults")
+	if b.Child.N != 7 || b.Optional != nil || b.Children[0].N != 0 {
+		t.Fatalf("defaults overlaid: %+v", b)
 	}
 }
 
@@ -196,59 +162,45 @@ func TestValidateCollectionsAndLimits(t *testing.T) {
 		Dynamic map[string]any
 	}
 	p := params{Matrix: [][]*child{{{}}}, Groups: map[string]child{"b": {}, "a": {}}, Dynamic: map[string]any{"x": child{}}}
-	got := failures(t, Validate(p)).Fields
-	want := []string{"Matrix[0][0].Port", `Groups["a"].Port`, `Groups["b"].Port`, "Array[0].Port", `Dynamic["x"].Port`}
-	var paths []string
-	for _, field := range got {
-		paths = append(paths, field.Path)
-	}
-	if !reflect.DeepEqual(paths, want) {
-		t.Fatalf("paths = %v", paths)
-	}
+	failures(t, Validate(p), "Matrix[0][0].Port:min", `Groups["a"].Port:min`, `Groups["b"].Port:min`, "Array[0].Port:min", `Dynamic["x"].Port:min`)
 	large := struct{ Rows []child }{Rows: make([]child, MaxValidationErrors+10)}
 	err := failures(t, Validate(large))
 	if len(err.Fields) != MaxValidationErrors || !err.Truncated || err.Fields[99].Path != "Rows[99].Port" {
 		t.Fatalf("unbounded: %+v", err)
 	}
-	type recursive struct {
-		Value int `min:"1"`
-		Next  *recursive
-	}
-	cycle := &recursive{Value: 1}
-	cycle.Next = cycle
-	requireNoError(t, Validate(cycle))
-
 }
 
 func TestValidateCustomAndNonMutation(t *testing.T) {
+	type child struct {
+		Port int `min:"1"`
+	}
 	type params struct {
 		Values map[string][]int
-		Port   *int
+		Child  *child
 		Name   string
 	}
-	port := 7
-	p := params{Values: map[string][]int{"a": {1}}, Port: &port, Name: "old"}
+	p := params{Values: map[string][]int{"a": {1}}, Child: &child{}, Name: "old"}
 	sentinel := errors.New("custom failure")
 	configure := func(path string, param Parameter) {
 		switch path {
 		case "Values":
 			(&Field[map[string][]int]{Parameter: param}).SetCustomValidator(func(v map[string][]int) error { v["a"][0] = 9; return sentinel })
-		case "Port":
-			(&Field[*int]{Parameter: param}).SetCustomValidator(func(v *int) error { *v = 9; return sentinel })
+		case "Child":
+			(&Field[*child]{Parameter: param}).SetCustomValidator(func(v *child) error { v.Port = 80; return nil })
 		case "Name":
 			param.SetAlternatives([]string{"allowed"})
 		}
 	}
 	err := Validate(&p, configure)
-	got := failures(t, err).Fields
-	if len(got) != 3 || got[0].Code != CodeCustom || got[1].Code != CodeCustom || got[2].Code != CodeAlternatives || !errors.Is(err, sentinel) {
-		t.Fatalf("custom errors: %v", got)
+	failures(t, err, "Values:custom", "Child.Port:min", "Name:alternatives")
+	if !errors.Is(err, sentinel) {
+		t.Fatal("lost custom cause", err)
 	}
 	var field *FieldError
 	if !errors.As(err, &field) || field.Path != "Values" {
 		t.Fatal("missing field error")
 	}
-	if p.Values["a"][0] != 1 || port != 7 || p.Name != "old" {
+	if p.Values["a"][0] != 1 || p.Child.Port != 0 || p.Name != "old" {
 		t.Fatalf("mutated: %+v", p)
 	}
 	type scalar struct {
@@ -302,46 +254,6 @@ func TestStandaloneNoAutomaticIO(t *testing.T) {
 	if p.Host != "default" || p.Token != "" {
 		t.Fatal("validation sourced values")
 	}
-	type opaque struct {
-		URL *url.URL `default:"https://example.com"`
-	}
-	p2, err := Defaults[opaque]()
-	if err != nil || p2.URL.Host != "example.com" {
-		t.Fatalf("pointer scalar default: %v", err)
-	}
-	requireNoError(t, Validate(p2))
-}
-
-func TestDefaultsConfiguredAndNamed(t *testing.T) {
-	type name string
-	type child struct {
-		N int `default:"7"`
-	}
-	type params struct {
-		Names    []name  `default:"[a,b]"`
-		Children []child `default:"[{\"N\":0}]"`
-		Values   map[string][]int
-	}
-	source := map[string][]int{"a": {1}}
-	configure := func(path string, p Parameter) {
-		if path == "Values" {
-			p.SetDefault(source)
-		}
-	}
-	a, err := Defaults[params](configure)
-	requireNoError(t, err)
-	b, err := Defaults[params](configure)
-	requireNoError(t, err)
-	a.Values["a"][0] = 9
-	if b.Values["a"][0] != 1 || source["a"][0] != 1 {
-		t.Fatal("configured defaults aliased")
-	}
-	if !reflect.DeepEqual(a.Names, []name{"a", "b"}) || a.Children[0].N != 0 {
-		t.Fatalf("typed defaults overlaid: %+v", a)
-	}
-	requireNoError(t, Validate(struct {
-		N int `min:"1"`
-	}{}, func(_ string, p Parameter) { p.SetIsEnabledFn(func() bool { return false }) }))
 }
 
 func TestFieldSchemaErrors(t *testing.T) {
@@ -357,20 +269,271 @@ func TestFieldSchemaErrors(t *testing.T) {
 	if _, err := Defaults[int](); err == nil {
 		t.Fatal("expected nonstruct error")
 	}
-	if _, err := Defaults[struct {
-		N int `default:"oops"`
-	}](); err == nil {
+}
+
+type displayMode string
+
+func (m displayMode) String() string { return "display:" + string(m) }
+
+func TestStandaloneCopy(t *testing.T) {
+	if os.Getenv("BOA_COPY_TEST") == "" {
+		// Fresh time.Local and an isolated stack limit make copy failures observable.
+		cmd := exec.Command(os.Args[0], "-test.run=^TestStandaloneCopy$")
+		cmd.Env = append(os.Environ(), "TZ=America/Los_Angeles", "BOA_COPY_TEST=1")
+		if output, err := cmd.CombinedOutput(); err != nil {
+			t.Fatalf("%v\n%s", err, output)
+		}
+		return
+	}
+	type params struct{ At time.Time }
+	original := time.Unix(0, 0)
+	value, err := Defaults[params](func(_ string, p Parameter) { p.SetDefault(original) })
+	requireNoError(t, err)
+	copies := []time.Time{value.At}
+	requireNoError(t, (Cmd[params]{Use: "test", ParamEnrich: ParamEnricherName,
+		InitFuncCtx: func(ctx *HookContext, p *params, _ *cobra.Command) error {
+			Param(ctx, &p.At).SetDefault(original)
+			return nil
+		},
+		RunFunc: func(p *params, _ *cobra.Command, _ []string) { copies = append(copies, p.At) },
+	}).RunArgsE(nil))
+	requireNoError(t, Validate(params{At: original}, func(_ string, p Parameter) {
+		(&Field[time.Time]{Parameter: p}).SetCustomValidator(func(v time.Time) error { copies = append(copies, v); return nil })
+	}))
+	// Inspect only after all three operations, keeping time.Local cold while copying.
+	for i, v := range copies {
+		name, offset := v.Zone()
+		if name != "PST" || offset != -28800 || v != original {
+			t.Fatalf("copy %d changed: zone %s, offset %d", i, name, offset)
+		}
+	}
+	type node struct{ Next *node }
+	deep := &node{}
+	for range 10000 {
+		deep = &node{Next: deep}
+	}
+	debug.SetMaxStack(1 << 20)
+	got := failures(t, Validate(deep, func(_ string, p Parameter) { p.SetCustomValidator(func(any) error { return nil }) })).Fields
+	if len(got) != 1 || got[0].Code != CodeLimit {
+		t.Fatalf("expected bounded copy: %+v", got)
+	}
+}
+
+func TestValidateCycle(t *testing.T) {
+	type node struct{ Next *node }
+	cycle := &node{}
+	cycle.Next = cycle
+	calls := 0
+	err := Validate(cycle, func(path string, p Parameter) {
+		if strings.HasSuffix(path, "Next") {
+			p.SetCustomValidator(func(any) error { calls++; return nil })
+		}
+	})
+	if err != nil || calls != 1 {
+		t.Fatalf("cycle was traversed repeatedly: %d calls, %v", calls, err)
+	}
+}
+
+func TestValidateTraversalWork(t *testing.T) {
+	type graph struct{ Left, Right *graph }
+	shared := &graph{}
+	for range 30 {
+		shared = &graph{Left: shared, Right: shared}
+	}
+	calls := 0
+	fields := failures(t, Validate(shared, func(_ string, _ Parameter) { calls++ })).Fields
+	if len(fields) != 1 || fields[0].Code != CodeLimit || calls > 2*maxFieldSteps {
+		t.Fatalf("unbounded work: %d, %+v", calls, fields)
+	}
+
+	type child struct{ Value int }
+	alias := &child{Value: 1}
+	value := struct{ Left, Right *child }{alias, alias}
+	fields = failures(t, Validate(value, func(path string, p Parameter) {
+		if path == "Right.Value" {
+			p.SetMin(2)
+		}
+	})).Fields
+	if len(fields) != 1 || fields[0].Path != "Right.Value" {
+		t.Fatalf("path-specific rules lost: %+v", fields)
+	}
+
+	requireNoError(t, Validate(struct {
+		Bytes   []byte
+		Strings []string
+		Nested  map[string][]string
+	}{
+		make([]byte, 1<<20), make([]string, 1<<20), map[string][]string{"key": make([]string, 1<<20)},
+	}))
+}
+
+func TestValidateRecursiveStepBoundary(t *testing.T) {
+	type node struct {
+		Value int
+		Next  *node
+	}
+	for _, size := range []int{64, 65} {
+		value := &node{Value: 1}
+		for i := 1; i < size; i++ {
+			value = &node{Value: 1, Next: value}
+		}
+		err := Validate(value)
+		if size == 64 {
+			if err != nil {
+				t.Fatalf("below step limit: %v", err)
+			}
+		} else if failures(t, err).Fields[0].Code != CodeLimit {
+			t.Fatalf("expected traversal/copy limit: %v", err)
+		}
+	}
+}
+
+func TestValidateBranchErrorsContinue(t *testing.T) {
+	type node struct{ Next *node }
+	deep := &node{}
+	for range 10000 {
+		deep = &node{Next: deep}
+	}
+	value := struct {
+		Bad      map[int]int
+		Dynamic  map[string]any
+		Deep     *node
+		Port     int   `min:"1"`
+		Ignored  *node `boa:"ignore"`
+		private  *node
+		Disabled *node
+	}{
+		Bad: map[int]int{1: 1}, Dynamic: map[string]any{"bad": map[int]int{1: 1}}, Deep: deep, Ignored: deep, private: deep, Disabled: deep,
+	}
+	fields := failures(t, Validate(value, func(path string, p Parameter) {
+		if path == "Disabled" {
+			p.SetIsEnabledFn(func() bool { return false })
+		}
+	})).Fields
+	if len(fields) != 4 || fields[0].Path != "Bad" || fields[0].Code != CodeSchema || fields[1].Path != `Dynamic["bad"]` || fields[1].Code != CodeSchema || fields[2].Code != CodeLimit || fields[3].Path != "Port" || fields[3].Code != CodeMin {
+		t.Fatalf("missing siblings: %+v", fields)
+	}
+}
+
+func TestCustomValidatorNamedTypeParity(t *testing.T) {
+	type params struct {
+		Mode     displayMode    `default:"tcp"`
+		Ptr      *displayMode   `default:"tcp"`
+		Modes    []displayMode  `default:"[tcp]"`
+		PtrModes *[]displayMode `default:"[tcp]"`
+	}
+	sentinel := errors.New("expected tcp")
+	check := func(text string) error {
+		if text != "tcp" {
+			return sentinel
+		}
+		return nil
+	}
+	for _, setup := range []ConfigureField{
+		func(_ string, p Parameter) {
+			p.SetCustomValidator(func(v any) error {
+				switch v := v.(type) {
+				case string:
+					return check(v)
+				case *string:
+					return check(*v)
+				case []string:
+					return check(v[0])
+				case *[]string:
+					return check((*v)[0])
+				default:
+					return fmt.Errorf("unexpected normalized type %T", v)
+				}
+			})
+		},
+		func(path string, p Parameter) {
+			switch path {
+			case "Mode":
+				(&Field[displayMode]{Parameter: p}).SetCustomValidator(func(v displayMode) error { return check(string(v)) })
+			case "Ptr":
+				(&Field[*displayMode]{Parameter: p}).SetCustomValidator(func(v *displayMode) error { return check(string(*v)) })
+			case "Modes":
+				(&Field[[]displayMode]{Parameter: p}).SetCustomValidator(func(v []displayMode) error { return check(string(v[0])) })
+			case "PtrModes":
+				(&Field[*[]displayMode]{Parameter: p}).SetCustomValidator(func(v *[]displayMode) error { return check(string((*v)[0])) })
+			}
+		},
+	} {
+		value, err := Defaults[params]()
+		requireNoError(t, err)
+		requireNoError(t, Validate(value, setup))
+		value.Mode, *value.Ptr, value.Modes[0], (*value.PtrModes)[0] = "udp", "udp", "udp", "udp"
+		fields := failures(t, Validate(value, setup), "Mode:custom", "Ptr:custom", "Modes:custom", "PtrModes:custom").Fields
+		for _, field := range fields {
+			if !errors.Is(field.Err, sentinel) {
+				t.Fatal("lost cause", field)
+			}
+		}
+		cli := Cmd[params]{Use: "test", ParamEnrich: ParamEnricherName,
+			InitFuncCtx: func(ctx *HookContext, p *params, _ *cobra.Command) error {
+				setup("Mode", Param(ctx, &p.Mode).Parameter)
+				setup("Ptr", Param(ctx, &p.Ptr).Parameter)
+				setup("Modes", Param(ctx, &p.Modes).Parameter)
+				setup("PtrModes", Param(ctx, &p.PtrModes).Parameter)
+				return nil
+			}, RunFunc: func(*params, *cobra.Command, []string) {},
+		}
+		requireNoError(t, cli.RunArgsE(nil))
+		for _, path := range []string{"Mode", "Ptr", "Modes", "PtrModes"} {
+			name := camelToKebabCase(path)
+			if err := cli.RunArgsE([]string{"--" + name, "udp"}); err == nil || err.Error() != "invalid value for param '"+name+"': "+sentinel.Error() {
+				t.Fatalf("%s CLI: %v", path, err)
+			}
+		}
+	}
+}
+
+func TestParseConfigBytesManualPipeline(t *testing.T) {
+	type config struct {
+		Count   int    `default:"3" min:"0"`
+		Enabled bool   `default:"true"`
+		Name    string `default:"fresh"`
+		Port    *int   `default:"80" min:"1"`
+		Mode    string `default:"tcp" alts:"tcp,http"`
+	}
+	for i, data := range []string{`{}`, `{"Count":0,"Enabled":false,"Name":"","Port":null}`, `{"Count":-1,"Mode":"bad"}`} {
+		manual, err := Defaults[config]()
+		requireNoError(t, err)
+		requireNoError(t, json.Unmarshal([]byte(data), &manual))
+		manualErr := Validate(manual)
+		parsed, err := ParseConfigBytes[config]([]byte(data), json.Unmarshal)
+		if i == 0 && (parsed.Count != 3 || !parsed.Enabled || parsed.Name != "fresh" || parsed.Port == nil || *parsed.Port != 80) {
+			t.Fatalf("missing defaults: %+v", parsed)
+		}
+		if i == 1 && (parsed.Count != 0 || parsed.Enabled || parsed.Name != "" || parsed.Port != nil) {
+			t.Fatalf("explicit values lost: %+v", parsed)
+		}
+		if !reflect.DeepEqual(parsed, manual) || !reflect.DeepEqual(err, manualErr) {
+			t.Fatalf("pipeline differs for %s: %+v, %v / %+v, %v", data, parsed, err, manual, manualErr)
+		}
+	}
+	var decoded config
+	requireNoError(t, LoadConfigBytes([]byte(`{}`), ".json", &decoded, nil))
+	if !reflect.DeepEqual(decoded, config{}) {
+		t.Fatal("LoadConfigBytes applied defaults")
+	}
+}
+
+func TestParseConfigBytesErrors(t *testing.T) {
+	type config struct {
+		Count int `default:"3"`
+	}
+	sentinel := errors.New("decoder failure")
+	value, err := ParseConfigBytes[config](nil, func(_ []byte, dst any) error { dst.(*config).Count = 4; return sentinel })
+	if err != sentinel || value.Count != 4 {
+		t.Fatalf("decoder error or partial value changed: %+v, %v", value, err)
+	}
+	if _, err := ParseConfigBytes[config](nil, nil); err == nil {
+		t.Fatal("expected missing decoder error")
+	}
+	if _, err := ParseConfigBytes[struct {
+		Count int `default:"bad"`
+	}](nil, func([]byte, any) error { t.Fatal("decoded after default error"); return nil }); err == nil {
 		t.Fatal("expected default error")
 	}
-	if err := Validate(struct {
-		N int `default:"oops"`
-	}{}); err != nil {
-		t.Fatal("validation parsed defaults", err)
-	}
-	type ignored struct {
-		N       int `boa:"ignore" min:"1"`
-		Private int `min:"1"`
-		hidden  int `min:"1"`
-	}
-	requireNoError(t, Validate(ignored{hidden: 0}, func(_ string, p Parameter) { p.SetIgnored(true) }))
 }

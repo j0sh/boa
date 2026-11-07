@@ -167,7 +167,7 @@ type Params struct {
 
 ## Validation
 
-For in-memory values without command execution, use the separate
+For in-memory values without command execution, use the
 [`boa.ParseConfigBytes`, `boa.Defaults[T]()` and `boa.Validate` APIs](in-memory.md).
 
 `alts` supplies completion candidates and, by default, restricts the value:
