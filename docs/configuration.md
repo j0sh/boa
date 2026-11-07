@@ -1,6 +1,19 @@
 # Configuration Files
 
-BOA loads JSON by default and can dispatch additional formats by file extension. Automatic loading participates in BOA's normal precedence rules; explicit helpers are available when the application owns the loading policy.
+Load configuration from bytes, or let a command load files with BOA's normal source precedence.
+
+## Loading without a CLI
+
+```go
+cfg, err := boa.ParseConfigBytes[Config](data, toml.Unmarshal)
+```
+
+- Constructs fresh, independent defaults → decodes into them → validates.
+- Omitted fields retain defaults; explicitly decoded `0`, `false`, empty strings, and nil pointers replace them. Collection merging follows the decoder.
+- The supplied decoder controls the format; no extension or format registration is needed.
+- No automatic environment lookup, filesystem access, path or secret resolution, or lifecycle hooks.
+
+`boa.Defaults[T]()` and `boa.Validate(value)` are available separately for custom loading flows; see the [validation reference](struct-tags.md#validation).
 
 ## Automatic loading
 

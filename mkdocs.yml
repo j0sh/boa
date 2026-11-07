@@ -47,7 +47,6 @@ nav:
     - Live Config Reload: live-reload.md
   - Integration:
     - External Structs: external-structs.md
-    - In-memory Defaults and Validation: in-memory.md
     - Cobra Interoperability: cobra-interop.md
   - Recipes: recipes.md
   - Migrating from GiGurra/boa: migration.md
