@@ -47,8 +47,11 @@ func validateAlternatives(param parameter, valPtr any) error {
 }
 
 func validateCustom(param parameter, valPtr any) error {
-	value := reinterpretAs(reflect.ValueOf(valPtr).Elem(), param.GetType())
-	if err := param.customValidatorOfPtr()(value.Addr().Interface()); err != nil {
+	if valPtr != nil {
+		value := reinterpretAs(reflect.ValueOf(valPtr).Elem(), param.GetType())
+		valPtr = value.Addr().Interface()
+	}
+	if err := param.customValidatorOfPtr()(valPtr); err != nil {
 		return ruleError(CodeCustom, err)
 	}
 	return nil

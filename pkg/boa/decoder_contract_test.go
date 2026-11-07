@@ -222,3 +222,27 @@ func TestPreValidateSeesParsedTextValues(t *testing.T) {
 		t.Fatal(err)
 	}
 }
+
+func TestConfigOnlyNullCustomValidator(t *testing.T) {
+	type params struct {
+		Config string `configfile:"true"`
+		Port   *int   `boa:"configonly"`
+	}
+	path := writeFile(t, t.TempDir(), "config.json", `{"Port":null}`)
+	calls := 0
+	err := (Cmd[params]{Use: "test", ParamEnrich: ParamEnricherName, UnsafeHTTPBind: true,
+		InitFuncCtx: func(ctx *HookContext, p *params, _ *cobra.Command) error {
+			Param(ctx, &p.Port).Parameter.SetCustomValidator(func(value any) error {
+				calls++
+				if value != nil {
+					t.Fatalf("validator received %v, want nil", value)
+				}
+				return errors.New("port is null")
+			})
+			return nil
+		}, RunFunc: func(*params, *cobra.Command, []string) {},
+	}).RunArgsE([]string{"--config", path})
+	if calls != 1 || err == nil || err.Error() != "invalid value for param 'port': port is null" {
+		t.Fatalf("calls=%d error=%v", calls, err)
+	}
+}

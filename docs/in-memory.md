@@ -57,16 +57,22 @@ from an explicit zero after decoding.
 | Non-nil pointer or collection, including an empty collection | Present |
 | Value struct | Present; fields are traversed |
 
-`required` checks presence. Use `min`, `pattern`, or a custom validator to
-reject empty or invalid values. Optional absent values skip rules and traversal.
-Registered and text scalar types are treated as scalars. Ignored and disabled
-fields are skipped.
+`required` checks presence; absence does not itself mean a field is optional.
+Flat slices and interface fields are required by default. Tags and the global
+setting can override requiredness; see [Required and optional](struct-tags.md#required-and-optional).
+Unlike command loading, `Validate` does not treat a default tag as a source: a
+default does not satisfy an absent required value. Optional absent values skip
+rules and traversal. Use `min`, `pattern`, or a custom validator to reject empty
+or invalid values.
+
+Registered and text scalar types, including root types, are treated as scalars.
+Ignored and disabled fields are skipped.
 
 | Type | Rules and traversal |
 |---|---|
 | String, slice, or map | Min/max bounds apply to length |
 | Slice | Alternatives check each element; nested structs are traversed |
-| Array | Nested structs are traversed; collection rules do not apply |
+| Array | Nested structs are traversed; min/max bounds are ignored, and alternatives compare the whole formatted value |
 | Map | Nested structs are traversed; non-nil maps with non-string keys produce `boa.CodeSchema` |
 
 Both `Defaults` and `Validate` accept `ConfigureField` callbacks after tags are

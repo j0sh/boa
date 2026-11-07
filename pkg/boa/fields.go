@@ -144,7 +144,7 @@ func Validate(value any, configure ...ConfigureField) error {
 		stopped: func() bool { return errs.Truncated },
 		report:  func(failure *FieldError) { add(failure.Path, failure.Code, failure.Err) },
 	}
-	err := walker.walk(root, "", 0, func(field reflect.StructField, v reflect.Value, path string) (bool, error) {
+	_ = walker.walk(root, "", 0, func(field reflect.StructField, v reflect.Value, path string) (bool, error) {
 		meta, err := fieldMetadata(field, path, false, configure)
 		if err != nil {
 			add(path, CodeSchema, err)
@@ -191,10 +191,6 @@ func Validate(value any, configure ...ConfigureField) error {
 		}
 		return true, nil
 	})
-	if err != nil {
-		failure := err.(*FieldError)
-		add(failure.Path, failure.Code, failure.Err)
-	}
 	if len(errs.Fields) != 0 {
 		return errs
 	}

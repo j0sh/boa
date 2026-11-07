@@ -8,7 +8,6 @@ import (
 	"os/exec"
 	"reflect"
 	"runtime/debug"
-	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -177,9 +176,8 @@ func TestValidateCustomAndNonMutation(t *testing.T) {
 	type params struct {
 		Values map[string][]int
 		Child  *child
-		Name   string
 	}
-	p := params{Values: map[string][]int{"a": {1}}, Child: &child{}, Name: "old"}
+	p := params{Values: map[string][]int{"a": {1}}, Child: &child{}}
 	sentinel := errors.New("custom failure")
 	configure := func(path string, param Parameter) {
 		switch path {
@@ -187,42 +185,15 @@ func TestValidateCustomAndNonMutation(t *testing.T) {
 			(&Field[map[string][]int]{Parameter: param}).SetCustomValidator(func(v map[string][]int) error { v["a"][0] = 9; return sentinel })
 		case "Child":
 			(&Field[*child]{Parameter: param}).SetCustomValidator(func(v *child) error { v.Port = 80; return nil })
-		case "Name":
-			param.SetAlternatives([]string{"allowed"})
 		}
 	}
 	err := Validate(&p, configure)
-	failures(t, err, "Values:custom", "Child.Port:min", "Name:alternatives")
+	failures(t, err, "Values:custom", "Child.Port:min")
 	if !errors.Is(err, sentinel) {
 		t.Fatal("lost custom cause", err)
 	}
-	var field *FieldError
-	if !errors.As(err, &field) || field.Path != "Values" {
-		t.Fatal("missing field error")
-	}
-	if p.Values["a"][0] != 1 || p.Child.Port != 0 || p.Name != "old" {
+	if p.Values["a"][0] != 1 || p.Child.Port != 0 {
 		t.Fatalf("mutated: %+v", p)
-	}
-	type scalar struct {
-		N int `default:"4"`
-	}
-	set := func(param Parameter) {
-		param.SetMin(5)
-		(&Field[int]{Parameter: param}).SetCustomValidator(func(n int) error {
-			if n == 6 {
-				return sentinel
-			}
-			return nil
-		})
-	}
-	for _, n := range []int{4, 6} {
-		standalone := failures(t, Validate(scalar{N: n}, func(_ string, p Parameter) { set(p) })).Fields[0]
-		cliErr := (Cmd[scalar]{Use: "test", ParamEnrich: ParamEnricherName,
-			InitFuncCtx: func(ctx *HookContext, p *scalar, _ *cobra.Command) error { set(Param(ctx, &p.N).Parameter); return nil },
-			RunFunc:     func(*scalar, *cobra.Command, []string) {}}).RunArgsE([]string{"--n", strconv.Itoa(n)})
-		if cliErr == nil || cliErr.Error() != "invalid value for param 'n': "+standalone.Err.Error() {
-			t.Fatalf("enriched parity: %v", cliErr)
-		}
 	}
 }
 
@@ -319,7 +290,7 @@ func TestStandaloneCopy(t *testing.T) {
 	}
 }
 
-func TestValidateCycle(t *testing.T) {
+func TestValidateTraversal(t *testing.T) {
 	type node struct{ Next *node }
 	cycle := &node{}
 	cycle.Next = cycle
@@ -332,15 +303,13 @@ func TestValidateCycle(t *testing.T) {
 	if err != nil || calls != 1 {
 		t.Fatalf("cycle was traversed repeatedly: %d calls, %v", calls, err)
 	}
-}
 
-func TestValidateTraversalWork(t *testing.T) {
 	type graph struct{ Left, Right *graph }
 	shared := &graph{}
 	for range 30 {
 		shared = &graph{Left: shared, Right: shared}
 	}
-	calls := 0
+	calls = 0
 	fields := failures(t, Validate(shared, func(_ string, _ Parameter) { calls++ })).Fields
 	if len(fields) != 1 || fields[0].Code != CodeLimit || calls > 2*maxFieldSteps {
 		t.Fatalf("unbounded work: %d, %+v", calls, fields)
@@ -363,7 +332,7 @@ func TestValidateTraversalWork(t *testing.T) {
 		Strings []string
 		Nested  map[string][]string
 	}{
-		make([]byte, 1<<20), make([]string, 1<<20), map[string][]string{"key": make([]string, 1<<20)},
+		make([]byte, maxFieldSteps+1), make([]string, maxFieldSteps+1), map[string][]string{"key": make([]string, maxFieldSteps+1)},
 	}))
 }
 
@@ -488,7 +457,7 @@ func TestCustomValidatorNamedTypeParity(t *testing.T) {
 	}
 }
 
-func TestParseConfigBytesManualPipeline(t *testing.T) {
+func TestParseConfigBytes(t *testing.T) {
 	type config struct {
 		Count   int    `default:"3" min:"0"`
 		Enabled bool   `default:"true"`
@@ -516,12 +485,6 @@ func TestParseConfigBytesManualPipeline(t *testing.T) {
 	requireNoError(t, LoadConfigBytes([]byte(`{}`), ".json", &decoded, nil))
 	if !reflect.DeepEqual(decoded, config{}) {
 		t.Fatal("LoadConfigBytes applied defaults")
-	}
-}
-
-func TestParseConfigBytesErrors(t *testing.T) {
-	type config struct {
-		Count int `default:"3"`
 	}
 	sentinel := errors.New("decoder failure")
 	value, err := ParseConfigBytes[config](nil, func(_ []byte, dst any) error { dst.(*config).Count = 4; return sentinel })

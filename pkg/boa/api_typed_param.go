@@ -48,24 +48,19 @@ func (p *Field[T]) SetCustomValidator(fn func(T) error) {
 			// values back to named field types before invoking the validator.
 			rv := reflect.ValueOf(value)
 			target := reflect.TypeFor[T]()
-			if rv.IsValid() && rv.Type().ConvertibleTo(target) {
-				return fn(rv.Convert(target).Interface().(T))
-			}
-			if rv.Kind() == reflect.Pointer && target.Kind() == reflect.Pointer && normalizeType(target.Elem()) == rv.Type().Elem() {
-				pointer := reflect.New(rv.Type()).Elem()
-				pointer.Set(rv)
-				return fn(reinterpretAs(pointer, target).Interface().(T))
-			}
-			if rv.Kind() == reflect.Pointer && !rv.IsNil() {
+			if rv.Kind() == reflect.Pointer && target.Kind() != reflect.Pointer && !rv.IsNil() {
 				rv = rv.Elem()
 			}
-			if rv.IsValid() && rv.Type().ConvertibleTo(target) {
-				return fn(rv.Convert(target).Interface().(T))
-			}
-			if rv.IsValid() && normalizeType(target) == rv.Type() {
-				copy := reflect.New(rv.Type()).Elem()
-				copy.Set(rv)
-				return fn(reinterpretAs(copy, target).Interface().(T))
+			if rv.IsValid() {
+				if rv.Type().ConvertibleTo(target) {
+					return fn(rv.Convert(target).Interface().(T))
+				}
+				if normalizeType(target) == rv.Type() ||
+					rv.Kind() == reflect.Pointer && target.Kind() == reflect.Pointer && normalizeType(target.Elem()) == rv.Type().Elem() {
+					copy := reflect.New(rv.Type()).Elem()
+					copy.Set(rv)
+					return fn(reinterpretAs(copy, target).Interface().(T))
+				}
 			}
 			slog.Warn("boa.Field.SetCustomValidator: unexpected value type", "expected", target, "got", reflect.TypeOf(value))
 			return fn(value.(T))
